@@ -1,0 +1,12 @@
+membutuhkan metode fingerprint 1 akun gsuite pakai fingerprint berbeda agar bersih, jadi setelah sukses 1 akun maka browser di close dan perlu fingerprint baru
+opsional ada opsi proxy namun itu nanti saja
+
+untuk format vcc seperti ini nanti didalam file vcc.txt
+
+card number | exp date | cvv
+
+untuk format akun gsuite nanti nya seperti ini
+
+email:password
+
+untuk format proxy nanti saja belum butuh

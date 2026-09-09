@@ -1,0 +1,1295 @@
+<html
+  lang="en-US"
+  data-brand="codebuddy"
+  style="background-color: rgb(24, 22, 26)"
+  class="is-intl-region"
+>
+  <head>
+    <script data-cb-injected="runtime-env">
+      window.APP_EDITION = "standard";
+      window.RUN_ENV = "prod";
+      window.PRODUCT_FEATURES = "__PRODUCT_FEATURES__";
+      window.IS_INTERNATIONAL_EDITION = "true";
+      window.__toCdnUrl = (url) => {
+        const BASE_URL =
+          "//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899";
+        return (/__.*?__$/.test(BASE_URL) ? "" : BASE_URL) + "/" + url;
+      };
+
+      // 腾讯云页面统计脚本：私有化(内网)环境无法访问外网，跳过加载，避免同步请求阻塞首屏；
+      // 其余环境异步注入，不 render-blocking。
+      if (window.APP_EDITION !== "enterprisePrivate") {
+        var qcStat = document.createElement("script");
+        qcStat.src =
+          "https://dscache.tencent-cloud.cn/ecache/qcstat/qcloud/qcloudStatApi.js";
+        qcStat.async = true;
+        document.head.appendChild(qcStat);
+      }
+    </script>
+    <script
+      src="https://dscache.tencent-cloud.cn/ecache/qcstat/qcloud/qcloudStatApi.js"
+      async=""
+    ></script>
+
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1.0,maximum-scale=1.0,minimum-scale=1.0,user-scalable=no,shrink-to-fit=no"
+    />
+    <!-- title / keywords / description / <html lang> 全部由 usercenter-inject-common-html 注入的
+       运行时 bootstrap 按 brand(hostname)×region(IS_INTERNATIONAL_EDITION) 决定；
+       不再有静态 SEO 出口（个人中心是登录后场景，静态注入拿不到 hostname 会写错品牌）。
+       此处 lang="zh-CN" 仅为运行时覆盖前的安全默认（intl 由 bootstrap 改为 en-US）。
+       env（APP_EDITION/RUN_ENV/PRODUCT_FEATURES/IS_INTERNATIONAL_EDITION/__toCdnUrl + qcStat）
+       也由该插件注入到 <head> 最前。数据源见 src/head/tkd.ts。 -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <!-- 微信 JS-SDK：在小程序 WebView 中提供 wx.miniProgram API -->
+    <script
+      type="text/javascript"
+      src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"
+      defer=""
+    ></script>
+
+    <!-- vConsole: 移动端调试面板，仅分享页 / ?debug=1 时启用 -->
+    <!--
+  <script>
+    (function () {
+      var href = window.location.href;
+      var needDebug = /\/share\//.test(href) || /[?&]debug=1/.test(href);
+      if (!needDebug) return;
+      var s = document.createElement('script');
+      s.src = 'https://unpkg.com/vconsole@3.15.1/dist/vconsole.min.js';
+      s.onload = function () {
+        // eslint-disable-next-line no-new
+        new window.VConsole();
+      };
+      document.head.appendChild(s);
+    })();
+  </script>
+  -->
+
+    <link
+      rel="icon"
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/logo.svg"
+    />
+    <script>
+      if (APP_EDITION === "standard") {
+        document.title = "腾讯云代码助手 CodeBuddy - AI 时代的智能编程伙伴";
+        const link = document.querySelector("link[rel='icon']");
+        link.href = __toCdnUrl("assets/logo.svg");
+      }
+    </script>
+    <title>Tencent Cloud CodeBuddy - Account</title>
+    <!-- 品牌主题首帧落地：在解析 HTML 时（早于 JS bundle）同步判定品牌，
+       写入 <html data-brand> 并设置根背景色，避免刷新时先闪一下深色底。
+       判定逻辑须与 src/utils/brand.ts getBrand() 保持一致。 -->
+    <script>
+      (function () {
+        try {
+          var STORAGE_KEY = "cb_brand_override";
+          var VALID = { codebuddy: 1, workbuddy: 1 };
+          var host = window.location.hostname;
+          var overrideAllowed =
+            host === "localhost" ||
+            host.indexOf("127.") === 0 ||
+            host.indexOf("192.168.") === 0 ||
+            host.indexOf("staging") !== -1 ||
+            host.indexOf("test") !== -1;
+
+          var brand = null;
+          if (overrideAllowed) {
+            var q = new URLSearchParams(window.location.search).get("brand");
+            if (q && VALID[q]) {
+              brand = q;
+              try {
+                window.localStorage.setItem(STORAGE_KEY, q);
+              } catch (e) {}
+            }
+            if (!brand) {
+              try {
+                var s = window.localStorage.getItem(STORAGE_KEY);
+                if (s && VALID[s]) brand = s;
+              } catch (e) {}
+            }
+          }
+          if (!brand)
+            brand =
+              host.indexOf(".workbuddy.") !== -1 ? "workbuddy" : "codebuddy";
+
+          document.documentElement.dataset.brand = brand;
+
+          // iframe 三方回跳中转页（/profile/iframe-callback）跳过品牌底色 + 打 data-callback：
+          //   - 该路由是 iframe 里加载的过渡页，视觉需求是纯净的 #ededed 灰底（组件内联）+
+          //     spinner，不能带主题底色（否则 iframe 里会闪深色/浅色主题底）。
+          //   - <html> 上的行内 style 优先级最高，任何 CSS 都盖不住，所以只能在源头这里判定
+          //     并跳过设置。同时把 data-callback 打上，让 app.less 里 :root[data-callback]
+          //   规则把 body / #root 的 --cb-surface-page 也一并透明化。
+          // - 用 endsWith 而非等值：BrowserRouter basename='/profile'，实际路径是
+          //     /profile/iframe-callback；endsWith 也扛得住未来 basename 调整。
+          //   - main.tsx 顶部还会再幂等打一次 data-callback，双保险（bundle 顺序万一被 CDN
+          //     缓存或 HTML 修改打乱时兜底）。
+          if (window.location.pathname.indexOf("/iframe-callback") !== -1) {
+            document.documentElement.setAttribute("data-callback", "");
+            document.documentElement.style.backgroundColor = "transparent";
+          } else {
+            // 与 brand-tokens.less 的 --cb-surface-page 保持一致
+            document.documentElement.style.backgroundColor =
+              brand === "workbuddy" ? "#f5f7fa" : "#18161a";
+          }
+        } catch (e) {
+          /* 判定失败时留给 JS bundle 的 applyBrandToRoot() 兜底 */
+        }
+      })();
+    </script>
+    <script data-cb-injected="head-bootstrap">
+      (function () {
+        try {
+          var DATA = {
+            tkd: {
+              codebuddy: {
+                cn: {
+                  title: "腾讯云代码助手 CodeBuddy - 个人中心",
+                  keywords: "CodeBuddy,腾讯云代码助手,个人中心,订阅管理,计费",
+                  description:
+                    "腾讯云代码助手 CodeBuddy 个人中心，管理您的订阅、用量及账户信息。",
+                },
+                intl: {
+                  title: "Tencent Cloud CodeBuddy - Account",
+                  keywords: "CodeBuddy,account,subscription,usage,billing",
+                  description:
+                    "Manage your Tencent Cloud CodeBuddy subscription, usage, and account settings.",
+                },
+              },
+              workbuddy: {
+                cn: {
+                  title: "WorkBuddy - 个人中心",
+                  keywords: "WorkBuddy,AI办公,个人中心,订阅管理,计费",
+                  description:
+                    "WorkBuddy 个人中心，管理您的订阅、用量及账户信息。",
+                },
+                intl: {
+                  title: "WorkBuddy - Account",
+                  keywords: "WorkBuddy,account,subscription,usage,billing",
+                  description:
+                    "Manage your WorkBuddy subscription, usage, and account settings.",
+                },
+              },
+            },
+            favicon: {
+              codebuddy: {
+                icon: "assets/logo.svg",
+                appleTouch: "apple-touch-icon.png",
+              },
+              workbuddy: {
+                icon: "assets/logo.svg",
+                appleTouch: "apple-touch-icon.png",
+              },
+            },
+            lang: { cn: "zh-CN", intl: "en-US" },
+            isDev: false,
+            useToCdnUrl: true,
+          };
+          var host = window.location.hostname;
+          var search = window.location.search;
+
+          var overrideAllowed =
+            DATA.isDev ||
+            host.indexOf("staging") !== -1 ||
+            host.indexOf("test") !== -1 ||
+            host === "localhost" ||
+            host.indexOf("127.") === 0 ||
+            host.indexOf("192.168.") === 0;
+
+          var brand = null;
+          if (overrideAllowed) {
+            try {
+              var q = new URLSearchParams(search).get("brand");
+              if (q === "codebuddy" || q === "workbuddy") {
+                brand = q;
+                try {
+                  window.localStorage.setItem("cb_brand_override", q);
+                } catch (e) {}
+              }
+            } catch (e) {}
+            if (!brand) {
+              try {
+                var s = window.localStorage.getItem("cb_brand_override");
+                if (s === "codebuddy" || s === "workbuddy") {
+                  brand = s;
+                }
+              } catch (e) {}
+            }
+          }
+          if (!brand) {
+            brand =
+              host.indexOf(".workbuddy.") !== -1 ? "workbuddy" : "codebuddy";
+          }
+
+          var flag = window.IS_INTERNATIONAL_EDITION;
+          var region = "cn";
+          if (flag === true) {
+            region = "intl";
+          } else if (
+            typeof flag === "string" &&
+            !/__.*?__$/.test(flag) &&
+            (flag === "true" || flag === "1")
+          ) {
+            region = "intl";
+          }
+
+          var brandData =
+            DATA.tkd[brand] || DATA.tkd.codebuddy || DATA.tkd.workbuddy;
+          var tkd = brandData ? brandData[region] : null;
+          var lang = DATA.lang[region];
+
+          if (lang) {
+            document.documentElement.lang = lang;
+          }
+          if (tkd) {
+            if (tkd.title) {
+              document.title = tkd.title;
+            }
+            setMeta("name", "keywords", tkd.keywords);
+            setMeta("name", "description", tkd.description);
+            setMeta("property", "og:title", tkd.title);
+            setMeta("property", "og:description", tkd.description);
+            if (tkd.ogUrl) {
+              setMeta("property", "og:url", tkd.ogUrl);
+              setLink("canonical", tkd.ogUrl);
+            }
+          }
+
+          var fav = DATA.favicon[brand];
+          if (fav && fav.icon) {
+            var iconHref = fav.icon;
+            if (DATA.useToCdnUrl && typeof window.__toCdnUrl === "function") {
+              try {
+                iconHref = window.__toCdnUrl(fav.icon);
+              } catch (e) {}
+            } else {
+              iconHref = "/" + fav.icon;
+            }
+            setLink("icon", iconHref);
+          }
+
+          function setMeta(attr, key, content) {
+            if (!content) {
+              return;
+            }
+            var el = document.querySelector("meta[" + attr + '="' + key + '"]');
+            if (!el) {
+              el = document.createElement("meta");
+              el.setAttribute(attr, key);
+              document.head.appendChild(el);
+            }
+            el.setAttribute("content", content);
+          }
+          function setLink(rel, href) {
+            if (!href) {
+              return;
+            }
+            var el = document.querySelector('link[rel="' + rel + '"]');
+            if (!el) {
+              el = document.createElement("link");
+              el.setAttribute("rel", rel);
+              document.head.appendChild(el);
+            }
+            el.setAttribute("href", href);
+          }
+        } catch (e) {
+          /* 判定失败留给 React 侧 resolveHead 兜底 */
+        }
+      })();
+    </script>
+    <meta
+      name="keywords"
+      content="CodeBuddy,account,subscription,usage,billing"
+    />
+    <meta
+      name="description"
+      content="Manage your Tencent Cloud CodeBuddy subscription, usage, and account settings."
+    />
+    <meta property="og:title" content="Tencent Cloud CodeBuddy - Account" />
+    <meta
+      property="og:description"
+      content="Manage your Tencent Cloud CodeBuddy subscription, usage, and account settings."
+    />
+    <script
+      type="module"
+      crossorigin=""
+      src="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/index-jvwNNl1v.js"
+    ></script>
+    <link
+      rel="modulepreload"
+      crossorigin=""
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/vendor-react-Cyq0qwcu.js"
+    />
+    <link
+      rel="modulepreload"
+      crossorigin=""
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/vendor-utils-Cp2zQtRs.js"
+    />
+    <link
+      rel="modulepreload"
+      crossorigin=""
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/config-ChQvWuPu.js"
+    />
+    <link
+      rel="modulepreload"
+      crossorigin=""
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/vendor-tdesign-0HW8U-n9.js"
+    />
+    <link
+      rel="modulepreload"
+      crossorigin=""
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/vendor-monitoring-DIjgSk5U.js"
+    />
+    <link
+      rel="stylesheet"
+      crossorigin=""
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/config-D1M3AIAK.css"
+    />
+    <link
+      rel="stylesheet"
+      crossorigin=""
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/vendor-tdesign-BZ0J0zcW.css"
+    />
+    <link
+      rel="stylesheet"
+      crossorigin=""
+      href="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/index-C-KnJfsI.css"
+    />
+    <style id="__TDESIGN_ICON_STYLE__">
+      @keyframes t-spin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .t-icon {
+        display: inline-block;
+        vertical-align: middle;
+        width: 1em;
+        height: 1em;
+      }
+      .t-icon::before {
+        font-family: unset;
+      }
+      .t-icon-loading {
+        animation: t-spin 1s linear infinite;
+      }
+      .t-icon.t-size-s,
+      i.t-size-s {
+        font-size: 14px;
+      }
+      .t-icon.t-size-m,
+      i.t-size-m {
+        font-size: 16px;
+      }
+      .t-icon.t-size-l,
+      i.t-size-l {
+        font-size: 18px;
+      }
+    </style>
+  </head>
+
+  <body style="margin: 0; padding: 0">
+    <div id="root">
+      <div class="user-center__container">
+        <div class="layout">
+          <header class="header">
+            <div class="header__container">
+              <div class="header__left">
+                <button
+                  type="button"
+                  class="header__logo-container"
+                  aria-label="CodeBuddy Logo"
+                >
+                  <img
+                    src="//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/logo-CFtllmiM.png"
+                    alt="CodeBuddy Logo"
+                    class="header__logo"
+                  />
+                </button>
+              </div>
+              <div class="header__right">
+                <div class="header-intl__lang-wrap">
+                  <button
+                    type="button"
+                    class="header-intl__lang-btn"
+                    aria-label="Language switcher"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      class="lucide lucide-globe header-intl__lang-icon"
+                      aria-hidden="true"
+                    >
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <path
+                        d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"
+                      ></path>
+                      <path d="M2 12h20"></path></svg
+                    ><span class="header-intl__lang-label">Intl - 中文</span
+                    ><svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      class="lucide lucide-chevron-down header-intl__lang-arrow"
+                      aria-hidden="true"
+                    >
+                      <path d="m6 9 6 6 6-6"></path>
+                    </svg>
+                  </button>
+                  <div class="header-intl__lang-menu" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="header-intl__lang-menu-item"
+                    >
+                      Intl - English</button
+                    ><button
+                      type="button"
+                      role="menuitem"
+                      class="header-intl__lang-menu-item is-active has-divider"
+                    >
+                      Intl - 中文</button
+                    ><button
+                      type="button"
+                      role="menuitem"
+                      class="header-intl__lang-menu-item"
+                    >
+                      中国站
+                    </button>
+                  </div>
+                </div>
+                <div class="header__avatar-wrap">
+                  <button
+                    type="button"
+                    class="header__avatar-btn"
+                    aria-label="退出登录"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="32"
+                      height="32"
+                      viewBox="0 0 32 32"
+                      fill="none"
+                    >
+                      <g clip-path="url(#clip0_830_6638)">
+                        <rect
+                          width="32"
+                          height="32"
+                          rx="6.90526"
+                          fill="url(#paint0_linear_830_6638)"
+                        ></rect>
+                        <g filter="url(#filter0_f_830_6638)">
+                          <circle
+                            cx="10.0861"
+                            cy="27.9835"
+                            r="11.2648"
+                            fill="#28B894"
+                            fill-opacity="0.4"
+                          ></circle>
+                        </g>
+                        <g filter="url(#filter1_f_830_6638)">
+                          <circle
+                            cx="26.6723"
+                            cy="34.895"
+                            r="10.2963"
+                            fill="#28B894"
+                          ></circle>
+                        </g>
+                        <path
+                          d="M24.4736 2.50224C24.7872 2.22094 24.8063 2.20926 25.0362 2.19546C25.4089 2.16822 25.7503 2.34741 26.3314 2.87637C27.6892 4.11019 29.5803 6.64682 30.7558 8.81306L31.2096 9.65385L31.8518 9.9732C32.4712 10.2862 33.4867 10.9279 33.9109 11.272C34.1027 11.4306 34.13 11.4338 34.3294 11.3562C35.2298 11.0056 36.5196 11.4703 37.6573 12.5618C38.6815 13.5434 39.6628 15.2201 40.0386 16.6199C40.0935 16.8452 40.1656 17.3298 40.1921 17.6905C40.2778 18.9568 39.8722 19.9685 39.0902 20.4264C38.9304 20.5186 38.9197 20.5434 38.9242 20.9417C38.9603 22.8383 38.4489 24.7316 37.4219 26.5778C36.2625 28.6509 34.1977 30.7958 31.4037 32.8162C29.9032 33.9081 26.3539 35.9762 24.7491 36.7022C20.9046 38.4331 17.8221 39.0965 15.145 38.7685C13.5483 38.5749 11.7415 37.9516 10.6721 37.2282C10.3906 37.0336 10.3455 37.0216 10.1305 37.0831C8.98558 37.412 7.48603 36.7359 6.21222 35.3219C5.70416 34.7565 4.88467 33.3691 4.61888 32.6266C4.00401 30.8887 4.1254 29.3203 4.94436 28.3837C5.15595 28.1425 5.16291 28.1326 5.11671 27.7272C5.04038 27.0631 5.00615 26.0799 5.04102 25.4457L5.06891 24.8533L4.17863 23.2801C2.80144 20.8296 1.92687 18.7717 1.58932 17.1996C1.41119 16.3377 1.42249 15.9551 1.64114 15.6721C1.77434 15.5012 2.21128 15.3234 2.73792 15.2261C4.06379 14.9934 6.95525 15.2039 10.1717 15.7718L10.5056 15.8305L11.2401 15.1809C12.459 14.1012 13.2686 13.4957 14.7613 12.5649C16.3172 11.5914 18.0733 10.7902 20.0507 10.1561L20.6856 9.95303L21.034 9.03695C22.2826 5.74089 23.5617 3.31103 24.4736 2.50224ZM14.0131 19.394C12.6022 20.2085 11.897 20.6164 11.3785 21.0729C9.27869 22.922 8.49391 25.8508 9.38789 28.502C9.60867 29.1567 10.0158 29.8629 10.8305 31.2742C11.6451 32.6851 12.053 33.3903 12.5095 33.9087C14.3585 36.0086 17.2873 36.7933 19.9386 35.8994C20.5931 35.6786 21.299 35.2718 22.7099 34.4572L30.8289 29.7697C32.2401 28.955 32.9458 28.5468 33.4643 28.0903C35.5641 26.2412 36.3489 23.3124 35.4549 20.6612C35.2342 20.0066 34.8273 19.3008 34.0128 17.8899C33.198 16.4787 32.7899 15.773 32.3333 15.2545C30.4843 13.1546 27.5555 12.3699 24.9042 13.2638C24.2496 13.4846 23.5433 13.8917 22.1321 14.7065L14.0131 19.394Z"
+                          fill="url(#paint1_linear_830_6638)"
+                        ></path>
+                        <rect
+                          x="14.7959"
+                          y="25.0674"
+                          width="3.20723"
+                          height="6.66117"
+                          rx="1.60361"
+                          transform="rotate(-30 14.7959 25.0674)"
+                          fill="white"
+                        ></rect>
+                        <rect
+                          x="23.4492"
+                          y="20.0713"
+                          width="3.20723"
+                          height="6.66117"
+                          rx="1.60361"
+                          transform="rotate(-30 23.4492 20.0713)"
+                          fill="white"
+                        ></rect>
+                      </g>
+                      <defs>
+                        <filter
+                          id="filter0_f_830_6638"
+                          x="-11.9327"
+                          y="5.96479"
+                          width="44.0372"
+                          height="44.0372"
+                          filterUnits="userSpaceOnUse"
+                          color-interpolation-filters="sRGB"
+                        >
+                          <feFlood
+                            flood-opacity="0"
+                            result="BackgroundImageFix"
+                          ></feFlood>
+                          <feBlend
+                            mode="normal"
+                            in="SourceGraphic"
+                            in2="BackgroundImageFix"
+                            result="shape"
+                          ></feBlend>
+                          <feGaussianBlur
+                            stdDeviation="5.37698"
+                            result="effect1_foregroundBlur_830_6638"
+                          ></feGaussianBlur>
+                        </filter>
+                        <filter
+                          id="filter1_f_830_6638"
+                          x="7.57568"
+                          y="15.7983"
+                          width="38.1934"
+                          height="38.1934"
+                          filterUnits="userSpaceOnUse"
+                          color-interpolation-filters="sRGB"
+                        >
+                          <feFlood
+                            flood-opacity="0"
+                            result="BackgroundImageFix"
+                          ></feFlood>
+                          <feBlend
+                            mode="normal"
+                            in="SourceGraphic"
+                            in2="BackgroundImageFix"
+                            result="shape"
+                          ></feBlend>
+                          <feGaussianBlur
+                            stdDeviation="4.40015"
+                            result="effect1_foregroundBlur_830_6638"
+                          ></feGaussianBlur>
+                        </filter>
+                        <linearGradient
+                          id="paint0_linear_830_6638"
+                          x1="16"
+                          y1="0"
+                          x2="16"
+                          y2="32"
+                          gradientUnits="userSpaceOnUse"
+                        >
+                          <stop stop-color="var(--cb-brand-primary)"></stop>
+                          <stop offset="1" stop-color="#583ed3"></stop>
+                        </linearGradient>
+                        <linearGradient
+                          id="paint1_linear_830_6638"
+                          x1="13.3307"
+                          y1="8.86225"
+                          x2="28.3004"
+                          y2="34.7904"
+                          gradientUnits="userSpaceOnUse"
+                        >
+                          <stop stop-color="white" stop-opacity="0.8"></stop>
+                          <stop offset="0.437689" stop-color="white"></stop>
+                        </linearGradient>
+                        <clipPath id="clip0_830_6638">
+                          <rect
+                            width="32"
+                            height="32"
+                            rx="6.90526"
+                            fill="white"
+                          ></rect>
+                        </clipPath>
+                      </defs>
+                    </svg>
+                  </button>
+                  <div class="header__avatar-menu" role="menu">
+                    <button
+                      type="button"
+                      class="header__avatar-menu-item"
+                      role="menuitem"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="lucide lucide-mail header__avatar-menu-icon"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"
+                        ></path>
+                        <rect
+                          x="2"
+                          y="4"
+                          width="20"
+                          height="16"
+                          rx="2"
+                        ></rect></svg
+                      ><span>联系我们</span></button
+                    ><button
+                      type="button"
+                      class="header__avatar-menu-item"
+                      role="menuitem"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        class="lucide lucide-log-out header__avatar-menu-icon"
+                        aria-hidden="true"
+                      >
+                        <path d="m16 17 5-5-5-5"></path>
+                        <path d="M21 12H9"></path>
+                        <path
+                          d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
+                        ></path></svg
+                      ><span>退出登录</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+          <div
+            class="layout__container layout__container--intl"
+            style="
+              --intl-bg-grid: url(//download.codebuddy.ai/web/usercenter/0fadefe472cfb64411edc82a21f5625ea892e899/assets/bg-grid-BHsc8PeA.png);
+            "
+          >
+            <div class="layout__aside">
+              <div class="user-info user-info--intl">
+                <div class="user-info__header">
+                  <div class="user-info__name-section">
+                    <span class="user-info__name">ifqyga@gmail.com</span
+                    ><span class="user-info__personal-badge flex-shrink-0"
+                      >个人版</span
+                    >
+                  </div>
+                </div>
+              </div>
+              <div class="t-default-menu t-menu--dark" style="width: 100%">
+                <div class="t-default-menu__inner">
+                  <ul class="t-menu t-menu--scroll">
+                    <li class="t-menu__item t-is-active">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        class="t-icon"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fill="currentColor"
+                          transform="matrix(1 0 0 1 0.487511 0.899994)"
+                          d="M3.2536 0.1428Q3.0015 0.2855 2.7067 0.7766L0.3613 4.6845Q0 5.2866 0.0259 5.6348Q0.0518 5.983 0.4981 6.525L6.2774 13.5427Q6.2966 13.566 6.3329 13.6101Q6.6376 13.9811 6.783 14.1106Q7.1215 14.4121 7.5125 14.4121Q7.9035 14.4121 8.242 14.1106Q8.2752 14.081 8.3168 14.0388L8.2307 13.8093L8.0729 13.3885L8.0743 13.3879L5.3783 6.1986L13.2411 6.1986L8.7179 11.691L9.2043 12.9881L14.5268 6.525Q14.9732 5.983 14.9991 5.6348Q15.025 5.2866 14.6636 4.6845L12.3183 0.7766Q12.0235 0.2855 11.7713 0.1428Q11.5192 0 10.9464 0L4.0786 0Q3.5058 0 3.2536 0.1428ZM13.4526 4.9986L11.2893 1.3942Q11.2102 1.2623 11.1713 1.2028Q11.1001 1.2 10.9464 1.2L8.573 1.2L10.8522 4.9986L13.4526 4.9986ZM7.1736 1.2L4.0786 1.2Q3.9248 1.2 3.8537 1.2028Q3.8147 1.2623 3.7356 1.3942L1.5723 4.9986L9.4528 4.9986L7.1736 1.2ZM1.7839 6.1986L6.0304 11.3551L4.0967 6.1986L1.7839 6.1986Z"
+                          fill-rule="evenodd"
+                        ></path></svg
+                      ><span class="t-menu__content">套餐与用量</span>
+                    </li>
+                    <li class="t-menu__item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        class="t-icon"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fill="currentColor"
+                          transform="matrix(0.707107 0.707107 -0.707107 0.707107 7.99988 -0.000304222)"
+                          d="M10.7915 2.3866L10.7922 2.3851L10.8082 2.3531L10.8324 2.3046L10.8434 2.2826L10.8509 2.2674Q11.0516 1.8517 10.9643 1.4155Q10.8844 1.0156 10.5912 0.7226Q10.2981 0.4295 9.8983 0.3495Q9.4621 0.2624 9.0509 0.4609L9.034 0.4693L9.0092 0.4817L8.96 0.5062L8.9285 0.5219Q7.3825 1.2844 5.657 1.2845Q3.9315 1.2845 2.3841 0.5215L2.3525 0.5058L2.3047 0.4819L2.2826 0.4709L2.2674 0.4633Q1.8516 0.2627 1.4155 0.3499Q1.0156 0.4298 0.7225 0.7229Q0.4295 1.016 0.3495 1.4159Q0.2623 1.852 0.4608 2.2632L0.4692 2.2802L0.4817 2.3052L0.5062 2.3544L0.5219 2.3859Q1.2843 3.9319 1.2843 5.6573Q1.2843 7.3828 0.5213 8.9301L0.5056 8.9617L0.4817 9.0095L0.4707 9.0316L0.4632 9.0468Q0.2625 9.4625 0.3497 9.8987Q0.4296 10.2985 0.7227 10.5916Q1.0158 10.8847 1.4157 10.9647Q1.8518 11.0519 2.263 10.8534L2.28 10.845L2.305 10.8326L2.3542 10.8079L2.3859 10.7922Q3.9318 10.0299 5.6571 10.03Q7.3824 10.03 8.9297 10.793L8.9615 10.8087L9.0092 10.8326L9.0313 10.8437L9.0466 10.8512Q9.4623 11.0519 9.8984 10.9647Q10.2983 10.8848 10.5914 10.5917Q10.8845 10.2986 10.9644 9.8987Q11.0516 9.4626 10.8532 9.0514L10.8448 9.0343L10.8323 9.0093L10.8076 8.9598L10.7917 8.9278Q10.0296 7.3822 10.0296 5.6572Q10.0296 3.933 10.7915 2.3866ZM9.7333 1.8196L9.7166 1.8531L9.7159 1.8546Q8.8296 3.6525 8.8296 5.6572Q8.8297 7.662 9.7168 9.4613L9.7341 9.4961L9.7589 9.5457L9.7686 9.5651L9.7725 9.5731Q9.8182 9.6678 9.7429 9.7431Q9.6675 9.8185 9.5774 9.775L9.5677 9.7702L9.5456 9.7592L9.495 9.7339L9.4604 9.7167Q7.6622 8.83 5.6571 8.83Q3.6521 8.8299 1.8524 9.7173L1.8179 9.7345L1.7686 9.7591L1.7493 9.7687L1.7413 9.7727Q1.6466 9.8184 1.5713 9.7431Q1.4959 9.6678 1.5394 9.5775L1.5442 9.568L1.5552 9.5459L1.5805 9.4953L1.5975 9.4609Q2.4843 7.6625 2.4843 5.6573Q2.4843 3.6521 1.5967 1.8524L1.5797 1.818L1.5551 1.7687L1.5454 1.7494L1.5415 1.7415Q1.4958 1.6468 1.5711 1.5714Q1.6464 1.4961 1.7366 1.5396L1.7462 1.5443L1.7683 1.5554L1.8189 1.5807L1.8533 1.5977Q3.6518 2.4845 5.6571 2.4845Q7.6624 2.4844 9.4621 1.5967L9.4965 1.5797L9.5456 1.5551L9.5648 1.5454L9.5727 1.5416Q9.6674 1.4958 9.7428 1.5711Q9.8181 1.6465 9.7746 1.7367L9.7699 1.7462L9.7589 1.7683L9.7333 1.8196Z"
+                          fill-rule="evenodd"
+                        ></path></svg
+                      ><span class="t-menu__content">支付方式</span>
+                    </li>
+                    <li class="t-menu__item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        class="t-icon"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fill="currentColor"
+                          transform="matrix(1 0 0 1 1.90002 0.398529)"
+                          d="M5.975 0L6.225 0Q6.8105 0 7.0155 0.0412Q7.6358 0.1659 8.0849 0.6151Q8.5341 1.0643 8.6588 1.6845Q8.7 1.8896 8.7 2.475Q8.7 2.7119 8.6777 2.821Q8.5322 3.5322 7.821 3.6777Q7.7119 3.7 7.475 3.7L4.725 3.7Q4.4881 3.7 4.379 3.6777Q3.6679 3.5322 3.5223 2.821Q3.513 2.7752 3.5075 2.7068Q3.3517 2.7117 3.2856 2.7203Q2.4805 2.8254 1.903 3.403Q1.3254 3.9805 1.2203 4.7856Q1.2 4.9415 1.2 5.5971L1.2 8.6Q1.2 10.6196 1.2737 11.2736Q1.3713 12.1388 1.6957 12.5609Q1.8884 12.8116 2.1391 13.0043Q2.5612 13.3288 3.4264 13.4263Q4.0804 13.5 6.1 13.5Q8.1196 13.5 8.7736 13.4263Q9.6388 13.3288 10.0609 13.0043Q10.3116 12.8116 10.5043 12.5609Q10.8288 12.1388 10.9263 11.2736Q11 10.6196 11 8.6L11 5.6249Q11 4.9327 10.9774 4.7684Q10.8678 3.9737 10.2971 3.403Q10.1106 3.2165 9.9002 3.0792L9.9002 1.7377Q10.5933 2.0022 11.1456 2.5544Q12.0015 3.4103 12.1661 4.6045Q12.2 4.8503 12.2 5.6249L12.2 8.6Q12.2 10.687 12.1187 11.408Q11.9838 12.6052 11.4558 13.2922Q11.1674 13.6674 10.7922 13.9558Q10.1052 14.4838 8.908 14.6187Q8.187 14.7 6.1 14.7Q4.013 14.7 3.292 14.6187Q2.0948 14.4838 1.4078 13.9558Q1.0326 13.6674 0.7442 13.2922Q0.2162 12.6052 0.0813 11.408Q0 10.687 0 8.6L0 5.5971Q0 4.8635 0.0304 4.6304Q0.1883 3.4205 1.0544 2.5544Q1.9205 1.6883 3.1304 1.5304Q3.2691 1.5123 3.5852 1.505Q3.7323 0.9979 4.1151 0.6151Q4.5643 0.1659 5.1845 0.0412Q5.3896 0 5.975 0ZM5.975 1.2Q5.509 1.2 5.421 1.2177Q4.8354 1.3354 4.7177 1.921Q4.7 2.009 4.7 2.475L4.7 2.5L7.5 2.5L7.5 2.475Q7.5 2.009 7.4823 1.921Q7.3646 1.3354 6.779 1.2177Q6.691 1.2 6.225 1.2L5.975 1.2ZM3.6 6.5L8.6 6.5L8.6 7.7L3.6 7.7L3.6 6.5ZM8.6 9.5L3.6 9.5L3.6 10.7L8.6 10.7L8.6 9.5Z"
+                          fill-rule="evenodd"
+                        ></path></svg
+                      ><span class="t-menu__content">账单与发票</span>
+                    </li>
+                    <li class="t-menu__item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        class="t-icon"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fill="currentColor"
+                          transform="matrix(1 0 0 1 0.333008 1.57364)"
+                          d="M15.334 6.4263Q15.3339 7.466 14.7056 8.6204Q14.1008 9.7315 13.0674 10.6698Q10.6634 12.8527 7.667 12.8527Q4.6709 12.8527 2.2665 10.6689Q1.2332 9.7304 0.6284 8.6194Q0 7.4652 0 6.4263Q0 5.3875 0.6284 4.2332Q1.2332 3.1222 2.2665 2.1838Q4.6709 0 7.667 0Q10.6634 0 13.0674 2.1828Q14.1008 3.1211 14.7056 4.2322Q15.3339 5.3866 15.334 6.4263ZM14.1339 6.4263Q14.1339 5.6921 13.6516 4.8059Q13.1438 3.8731 12.2607 3.0713Q10.1999 1.2 7.667 1.2Q5.1345 1.2 3.0733 3.0721Q2.1902 3.8742 1.6823 4.807Q1.2 5.6929 1.2 6.4263Q1.2 7.1597 1.6823 8.0457Q2.1902 8.9785 3.0733 9.7805Q5.1345 11.6527 7.667 11.6526Q10.1999 11.6527 12.2607 9.7814Q13.1438 8.9796 13.6516 8.0467Q14.1339 7.1606 14.1339 6.4263ZM10.6226 6.4263Q10.6226 7.6506 9.7569 8.5163Q8.8913 9.382 7.667 9.382Q6.4427 9.382 5.577 8.5163Q4.7113 7.6506 4.7113 6.4263Q4.7113 5.2021 5.577 4.3364Q6.4427 3.4707 7.667 3.4707Q8.8913 3.4707 9.7569 4.3364Q10.6226 5.2021 10.6226 6.4263ZM9.4227 6.4263Q9.4226 5.6991 8.9084 5.1849Q8.3942 4.6707 7.667 4.6707Q6.9398 4.6707 6.4256 5.1849Q5.9113 5.6991 5.9113 6.4263Q5.9113 7.1535 6.4256 7.6678Q6.9398 8.182 7.667 8.182Q8.3942 8.182 8.9084 7.6678Q9.4226 7.1535 9.4227 6.4263Z"
+                          fill-rule="evenodd"
+                        ></path></svg
+                      ><span class="t-menu__content">API 管理</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <div class="layout__content">
+              <main class="plans-usage plans-usage-intl">
+                <header class="plans-usage__header profile-page-header">
+                  <h1 class="profile-page-header__title">订阅与用量</h1>
+                  <p class="profile-page-header__description">
+                    查看您的套餐、额度和账单信息。
+                  </p>
+                </header>
+                <div class="plans-usage__block-title">订阅计划</div>
+                <section
+                  class="plans-usage__current-card plans-usage-intl__current-card--no-cover"
+                >
+                  <div class="plans-usage__current-main">
+                    <div class="plans-usage__current-topline">
+                      <div class="plans-usage__current-meta">
+                        <h2 class="plans-usage-intl__title-line">
+                          <span>Pro</span
+                          ><span class="plans-usage-intl__trial-tag"
+                            >免费试用</span
+                          >
+                        </h2>
+                        <p class="plans-usage__current-expire">
+                          <span>试用截止时间：2026-09-08 20:01:22</span
+                          ><span class="plans-usage__current-renew-wrap"
+                            ><button
+                              type="button"
+                              class="plans-usage__current-renew"
+                            >
+                              取消订阅
+                            </button></span
+                          >
+                        </p>
+                      </div>
+                      <div
+                        class="custom-btn box-border h-38px flex cursor-pointer items-center justify-center gap-2 rounded-56px text-center text-nowrap text-sm font-600 px-8 py-2 bg-[var(--cb-brand-primary)] text-[var(--cb-brand-on-primary)] hover:bg-[var(--cb-brand-primary-hover)] plans-usage__main-action"
+                      >
+                        立即开通 Pro
+                      </div>
+                    </div>
+                    <div class="plans-usage__quota-block">
+                      <div class="plans-usage__quota-title">
+                        <span>套餐用量</span
+                        ><span class="plans-usage__muted"
+                          >下次权益周期更新时间：2026-09-08 21:01:23</span
+                        >
+                      </div>
+                      <div
+                        class="plans-usage__quota-row plans-usage__quota-row--trial"
+                      >
+                        <span class="flex flex-wrap gap-4 items-center"
+                          ><span class="plans-usage__quota-label"
+                            >体验用量：</span
+                          ><span class="plans-usage__quota-value"
+                            >0 / 500 积分</span
+                          ><span class="plans-usage__chip">使用中</span></span
+                        ><span class="plans-usage__quota-remain">剩余 500</span>
+                      </div>
+                      <div class="plans-usage__bar">
+                        <div
+                          class="plans-usage__bar-fill plans-usage__bar-fill--trial"
+                          style="width: 0%"
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+                <section class="plans-usage__section">
+                  <div class="plans-usage__section-header">
+                    <div class="plans-usage__section-title">
+                      加量包<svg
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        width="1em"
+                        height="1em"
+                        class="t-icon t-icon-error-circle plans-usage__info-icon"
+                        style="fill: none"
+                      >
+                        <g id="error-circle">
+                          <path
+                            id="fill1"
+                            fill="transparent"
+                            d="M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z"
+                          ></path>
+                          <path
+                            id="stroke1"
+                            stroke="currentColor"
+                            d="M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z"
+                            stroke-linecap="square"
+                            stroke-width="2"
+                          ></path>
+                          <path
+                            id="stroke2"
+                            stroke="currentColor"
+                            d="M12 7.5V13M12 16.5H12.0039V16.5039H12V16.5Z"
+                            stroke-linecap="square"
+                            stroke-width="2"
+                          ></path>
+                        </g>
+                      </svg>
+                    </div>
+                    <button
+                      class="plans-usage__small-action custom-btn"
+                      type="button"
+                    >
+                      购买积分
+                    </button>
+                  </div>
+                  <div class="plans-usage__package-card">
+                    <div class="plans-usage__empty">暂无加量包</div>
+                    <button class="plans-usage__view-all" type="button">
+                      <span>查看全部</span
+                      ><svg
+                        class="plans-usage__view-all-icon"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 20 20"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fill="#8F8F8F"
+                          transform="matrix(-1 0 0 1 14.4151 3.61358)"
+                          d="M5.9451 0.1664C6.077 0.0502 6.2308 -0.0052 6.4065 0.0004C6.5822 0.0059 6.7321 0.0708 6.8564 0.1951C6.9807 0.3194 7.0456 0.4694 7.0512 0.6451C7.0567 0.8208 7.0014 0.9745 6.8851 1.1064L1.6071 6.3864L6.8871 11.6664L6.9721 11.7704C7.0585 11.9023 7.0936 12.0467 7.0774 12.2036C7.0612 12.3605 6.9974 12.4946 6.8859 12.6061C6.7743 12.7176 6.6402 12.7815 6.4833 12.7977C6.3265 12.8139 6.1821 12.7788 6.0501 12.6924L5.9451 12.6074L0.1951 6.8574C0.065 6.7274 0 6.5704 0 6.3864C0 6.2025 0.065 6.0455 0.1951 5.9154L5.9451 0.1664Z"
+                        ></path>
+                      </svg>
+                    </button>
+                  </div>
+                </section>
+                <section class="plans-usage__section">
+                  <div class="plans-usage__section-header">
+                    <div class="plans-usage__section-title">
+                      赠送包<svg
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        width="1em"
+                        height="1em"
+                        class="t-icon t-icon-error-circle plans-usage__info-icon"
+                        style="fill: none"
+                      >
+                        <g id="error-circle">
+                          <path
+                            id="fill1"
+                            fill="transparent"
+                            d="M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z"
+                          ></path>
+                          <path
+                            id="stroke1"
+                            stroke="currentColor"
+                            d="M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z"
+                            stroke-linecap="square"
+                            stroke-width="2"
+                          ></path>
+                          <path
+                            id="stroke2"
+                            stroke="currentColor"
+                            d="M12 7.5V13M12 16.5H12.0039V16.5039H12V16.5Z"
+                            stroke-linecap="square"
+                            stroke-width="2"
+                          ></path>
+                        </g>
+                      </svg>
+                    </div>
+                  </div>
+                  <div class="plans-usage__package-card">
+                    <div class="plans-usage__package-list">
+                      <div class="plans-usage__package-row">
+                        <div class="plans-usage__package-row-head">
+                          <div>0/250 积分（已用/总量）</div>
+                          <div class="plans-usage__muted">
+                            到期时间：2026-09-15 19:54:49
+                          </div>
+                        </div>
+                        <div class="plans-usage__package-progress">
+                          <div
+                            class="plans-usage__package-progress-fill"
+                            style="width: 0%"
+                          ></div>
+                        </div>
+                      </div>
+                    </div>
+                    <button class="plans-usage__view-all" type="button">
+                      <span>查看全部</span
+                      ><svg
+                        class="plans-usage__view-all-icon"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 20 20"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fill="#8F8F8F"
+                          transform="matrix(-1 0 0 1 14.4151 3.61358)"
+                          d="M5.9451 0.1664C6.077 0.0502 6.2308 -0.0052 6.4065 0.0004C6.5822 0.0059 6.7321 0.0708 6.8564 0.1951C6.9807 0.3194 7.0456 0.4694 7.0512 0.6451C7.0567 0.8208 7.0014 0.9745 6.8851 1.1064L1.6071 6.3864L6.8871 11.6664L6.9721 11.7704C7.0585 11.9023 7.0936 12.0467 7.0774 12.2036C7.0612 12.3605 6.9974 12.4946 6.8859 12.6061C6.7743 12.7176 6.6402 12.7815 6.4833 12.7977C6.3265 12.8139 6.1821 12.7788 6.0501 12.6924L5.9451 12.6074L0.1951 6.8574C0.065 6.7274 0 6.5704 0 6.3864C0 6.2025 0.065 6.0455 0.1951 5.9154L5.9451 0.1664Z"
+                        ></path>
+                      </svg>
+                    </button>
+                  </div>
+                </section>
+                <section
+                  class="plans-usage__section plans-usage__section--usage"
+                >
+                  <div class="plans-usage__usage-host">
+                    <div
+                      class="request-usage-table request-usage-table--plans-usage text-[var(--cb-text-primary)]"
+                    >
+                      <div class="request-usage-table__toolbar">
+                        <div class="request-usage-table__toolbar-left">
+                          <div class="request-usage-table__title">
+                            用量明细<span
+                              class="request-usage-table__title-tip-trigger"
+                              ><svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="16"
+                                height="16"
+                                viewBox="0 0 16 16"
+                                class="request-usage-table__title-tip-icon"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  fill="currentColor"
+                                  transform="matrix(1 0 0 1 0.899994 0.899994)"
+                                  d="M7.1 1.2Q9.1261 1.2 10.7207 2.4413L11.4578 1.4943Q9.5381 0 7.1 0Q4.1591 0 2.0796 2.0796Q0 4.1591 0 7.1Q0 10.0409 2.0796 12.1205Q4.1591 14.2 7.1 14.2Q10.0409 14.2 12.1205 12.1205Q14.2 10.0409 14.2 7.1Q14.2 4.8675 12.9272 3.0426L11.9429 3.7291Q13 5.2447 13 7.1Q13 9.5439 11.2719 11.2719Q9.5439 13 7.1 13Q4.6561 13 2.9281 11.2719Q1.2 9.5439 1.2 7.1Q1.2 4.6561 2.9281 2.9281Q4.6561 1.2 7.1 1.2ZM7.6986 3.1008L7.6986 4.3008L6.4986 4.3008L6.4986 3.1008L7.6986 3.1008ZM6.4986 5.6011L6.4986 11.1011L7.6986 11.1011L7.6986 5.6011L6.4986 5.6011Z"
+                                  fill-rule="evenodd"
+                                ></path></svg
+                            ></span>
+                          </div>
+                          <div
+                            class="t-radio-group t-size-m request-usage-table__range-tabs t-radio-group--filled t-radio-group--primary-filled"
+                          >
+                            <label tabindex="0" class="t-radio-button"
+                              ><input
+                                type="radio"
+                                class="t-radio-button__former"
+                                tabindex="-1"
+                                data-value="'today'"
+                                value="today"
+                              /><span class="t-radio-button__input"></span
+                              ><span class="t-radio-button__label"
+                                >今天</span
+                              ></label
+                            ><label
+                              tabindex="0"
+                              class="t-radio-button t-is-checked"
+                              ><input
+                                type="radio"
+                                class="t-radio-button__former"
+                                tabindex="-1"
+                                data-value="'7d'"
+                                value="7d"
+                                checked=""
+                              /><span class="t-radio-button__input"></span
+                              ><span class="t-radio-button__label"
+                                >7天</span
+                              ></label
+                            ><label tabindex="0" class="t-radio-button"
+                              ><input
+                                type="radio"
+                                class="t-radio-button__former"
+                                tabindex="-1"
+                                data-value="'30d'"
+                                value="30d"
+                              /><span class="t-radio-button__input"></span
+                              ><span class="t-radio-button__label"
+                                >30天</span
+                              ></label
+                            >
+                            <div
+                              class="t-radio-group__bg-block"
+                              style="
+                                width: 65px;
+                                height: 28px;
+                                left: 67px;
+                                top: 1px;
+                              "
+                            ></div>
+                          </div>
+                        </div>
+                        <div class="request-usage-table__toolbar-right">
+                          <div class="request-usage-table__date-range">
+                            <span class="request-usage-table__date-range-text"
+                              >2026/08/25-2026/09/01</span
+                            ><svg
+                              class="request-usage-table__date-range-icon"
+                              width="16"
+                              height="16"
+                              viewBox="0 0 20 20"
+                              aria-hidden="true"
+                            >
+                              <path
+                                fill="currentColor"
+                                transform="matrix(1 0 0 1 3 3)"
+                                d="M9.4712 14.4692L14.4712 9.448Q14.5647 9.3548 14.6147 9.2326Q14.6655 9.1108 14.665 8.9788L14.665 2Q14.665 0.8961 13.8844 0.1156Q13.1039 -0.665 12 -0.665L2 -0.665Q0.8961 -0.665 0.1156 0.1156Q-0.665 0.8961 -0.665 2L-0.665 12Q-0.665 13.1039 0.1156 13.8844Q0.8961 14.665 2 14.665L9 14.665Q9.1327 14.6655 9.2551 14.6141Q9.3779 14.5636 9.4712 14.4692ZM13.335 8.3166L10.9887 8.3265Q9.8881 8.3312 9.1116 9.1111Q8.335 9.891 8.335 10.9915L8.335 13.335L2 13.335Q1.447 13.335 1.056 12.944Q0.665 12.553 0.665 12L0.665 2Q0.665 1.447 1.056 1.056Q1.447 0.665 2 0.665L12 0.665Q12.553 0.665 12.944 1.056Q13.335 1.447 13.335 2L13.335 8.3166ZM9.665 12.3897L12.3925 9.6506L10.9943 9.6565Q10.443 9.6589 10.054 10.0495Q9.665 10.4402 9.665 10.9915L9.665 12.3897Z"
+                                fill-rule="evenodd"
+                              ></path>
+                              <path
+                                fill="currentColor"
+                                transform="matrix(1 0 0 1 7 1)"
+                                d="M0.665 4L0.665 0Q0.673 -0.2788 0.4702 -0.4702Q0.2788 -0.673 0 -0.665Q-0.2788 -0.673 -0.4702 -0.4702Q-0.673 -0.2788 -0.665 0L-0.665 4Q-0.673 4.2788 -0.4702 4.4702Q-0.2788 4.673 0 4.665Q0.2788 4.673 0.4702 4.4702Q0.673 4.2788 0.665 4Z"
+                                fill-rule="evenodd"
+                              ></path>
+                              <path
+                                fill="currentColor"
+                                transform="matrix(1 0 0 1 13 1)"
+                                d="M0.665 4L0.665 0Q0.673 -0.2788 0.4702 -0.4702Q0.2788 -0.673 0 -0.665Q-0.2788 -0.673 -0.4702 -0.4702Q-0.673 -0.2788 -0.665 0L-0.665 4Q-0.673 4.2788 -0.4702 4.4702Q-0.2788 4.673 0 4.665Q0.2788 4.673 0.4702 4.4702Q0.673 4.2788 0.665 4Z"
+                                fill-rule="evenodd"
+                              ></path>
+                            </svg>
+                            <div
+                              class="request-usage-table__date-range-picker-host"
+                            >
+                              <div
+                                class="t-date-range-picker request-usage-table__date-range-picker"
+                              >
+                                <div
+                                  class="t-range-input-popup t-range-input-popup"
+                                >
+                                  <div
+                                    class="t-range-input t-is-default t-range-input--suffix"
+                                    value="2026-08-25,2026-09-01"
+                                  >
+                                    <div class="t-range-input__inner">
+                                      <div
+                                        class="t-input__wrap t-range-input__inner-left"
+                                        spellcheck="false"
+                                        value="2026-08-25"
+                                      >
+                                        <div
+                                          class="t-input t-is-readonly t-align-left"
+                                        >
+                                          <input
+                                            placeholder="开始日期"
+                                            type="text"
+                                            class="t-input__inner"
+                                            readonly=""
+                                            value="2026-08-25"
+                                          />
+                                        </div>
+                                      </div>
+                                      <div
+                                        class="t-range-input__inner-separator"
+                                      >
+                                        -
+                                      </div>
+                                      <div
+                                        class="t-input__wrap t-range-input__inner-right"
+                                        spellcheck="false"
+                                        value="2026-09-01"
+                                      >
+                                        <div
+                                          class="t-input t-is-readonly t-align-left"
+                                        >
+                                          <input
+                                            placeholder="结束日期"
+                                            type="text"
+                                            class="t-input__inner"
+                                            readonly=""
+                                            value="2026-09-01"
+                                          />
+                                        </div>
+                                      </div>
+                                      <span
+                                        class="t-range-input__suffix t-range-input__suffix-icon"
+                                        ><svg
+                                          fill="none"
+                                          viewBox="0 0 24 24"
+                                          width="1em"
+                                          height="1em"
+                                          class="t-icon t-icon-calendar"
+                                          style="fill: none"
+                                        >
+                                          <g id="calendar">
+                                            <path
+                                              id="fill1"
+                                              fill="transparent"
+                                              d="M21 10H3V21H21V10Z"
+                                            ></path>
+                                            <path
+                                              id="fill2"
+                                              fill="transparent"
+                                              d="M21 10H3V5H21V10Z"
+                                            ></path>
+                                            <path
+                                              id="stroke1"
+                                              stroke="currentColor"
+                                              d="M3 10H21M3 10V5H21V10M3 10V21H21V10M7 5V1.5M17 5V1.5"
+                                              stroke-width="2"
+                                            ></path>
+                                          </g></svg
+                                      ></span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            class="flex flex-shrink-0 items-center justify-center gap-1 rounded-lg bg-[var(--cb-export-btn-bg)] border border-[var(--cb-export-btn-border)] px-3 py-1.5 text-[var(--cb-text-primary)] hover:bg-[var(--cb-surface-component)] disabled:opacity-50 disabled:cursor-not-allowed request-usage-table__export-btn"
+                          >
+                            <svg
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              width="1em"
+                              height="1em"
+                              class="t-icon t-icon-download"
+                              style="fill: none"
+                            >
+                              <g id="download">
+                                <path
+                                  id="stroke1"
+                                  stroke="currentColor"
+                                  d="M16.5 10.5L12 15L7.5 10.5M12 13.75V4"
+                                  stroke-linecap="square"
+                                  stroke-width="2"
+                                ></path>
+                                <path
+                                  id="stroke2"
+                                  stroke="currentColor"
+                                  d="M20.5 15V20H3.5V15"
+                                  stroke-linecap="square"
+                                  stroke-width="2"
+                                ></path>
+                              </g></svg
+                            >导出
+                          </button>
+                        </div>
+                      </div>
+                      <section class="request-usage-table__panel">
+                        <div class="request-usage-table__head">
+                          <span>时间</span><span>积分消耗</span><span>模型</span
+                          ><span>客户端</span><span>Request</span>
+                        </div>
+                        <div class="request-usage-table__body">
+                          <div class="request-usage-table__state">暂无数据</div>
+                        </div>
+                        <footer class="request-usage-table__pagination">
+                          <span>共0条数据</span>
+                          <div class="request-usage-table__pager">
+                            <div class="request-usage-table__page-size-wrap">
+                              <button
+                                type="button"
+                                class="request-usage-table__page-size"
+                                aria-expanded="false"
+                              >
+                                <span
+                                  class="request-usage-table__page-size-text"
+                                  >10条/页</span
+                                ><span
+                                  class="request-usage-table__chevron-icon"
+                                  aria-hidden="true"
+                                ></span>
+                              </button>
+                            </div>
+                            <div class="request-usage-table__page-jumper">
+                              <button
+                                type="button"
+                                class="request-usage-table__page-arrow is-disabled"
+                                disabled=""
+                                aria-label="上一页"
+                              >
+                                <svg
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  width="1em"
+                                  height="1em"
+                                  class="t-icon t-icon-chevron-left request-usage-table__arrow-icon"
+                                  style="fill: none"
+                                >
+                                  <g id="chevron-left">
+                                    <path
+                                      id="stroke1"
+                                      stroke="currentColor"
+                                      d="M14.5 17.5L9 12L14.5 6.5"
+                                      stroke-linecap="square"
+                                      stroke-width="2"
+                                    ></path>
+                                  </g>
+                                </svg></button
+                              ><button
+                                type="button"
+                                class="request-usage-table__page-current"
+                              >
+                                <span>1</span></button
+                              ><button
+                                type="button"
+                                class="request-usage-table__page-arrow is-disabled"
+                                disabled=""
+                                aria-label="下一页"
+                              >
+                                <svg
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  width="1em"
+                                  height="1em"
+                                  class="t-icon t-icon-chevron-right request-usage-table__arrow-icon"
+                                  style="fill: none"
+                                >
+                                  <g id="chevron-right">
+                                    <path
+                                      id="stroke1"
+                                      stroke="currentColor"
+                                      d="M9.5 17.5L15 12L9.5 6.5"
+                                      stroke-linecap="square"
+                                      stroke-width="2"
+                                    ></path>
+                                  </g>
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        </footer>
+                      </section>
+                    </div>
+                  </div>
+                </section>
+              </main>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

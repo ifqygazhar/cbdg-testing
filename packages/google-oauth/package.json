@@ -1,0 +1,15 @@
+{
+  "name": "@ifqy/google-oauth",
+  "version": "0.1.0",
+  "description": "Reusable Google OAuth automation library (Bun + Puppeteer + stealth). Port of the battle-tested cline-regist google-auth flow.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "dependencies": {
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "puppeteer-core": "^23.0.0"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@ifqy/crusoe-signup",
+  "version": "0.1.0",
+  "description": "Crusoe AI Foundry signup automation ($5 bonus + API key) on Bun + Puppeteer (@ifqy/google-oauth)",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ifqy/google-oauth": "0.1.0",
+    "puppeteer-core": "^23.0.0"
+  }
+}

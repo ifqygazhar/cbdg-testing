@@ -1,0 +1,5 @@
+1. oke pertama kunjungi link untuk daftar dan dapat bonus $5 : https://console.crusoecloud.com/request-foundry
+2. lalu setelah itu daftar lewat google pakai gsuite
+3. setelah memasukan akun email dan password gsuite di halaman sign up google, maka isi dulu complete signup nya dimana membutuhkan nama first name + last name, terus isi company (random aja) dan butuh checklist understand setelah itu sign up, cek file di : c:\Users\ifqy\Documents\project\automation\cbdg\crusoe_ai_dataset\complete-signup.html
+4. setelah complete signing up akan ada loading terlebih dahulu di url https://console.crusoecloud.com/onboarding setealh tombol create api key muncul bikin api key dulu dan tanda berhasil daftar itu mendapatkan bonus $5 dan api key muncul bisa di cek di kedua file nya ini : c:\Users\ifqy\Documents\project\automation\cbdg\crusoe_ai_dataset\create-apikey.html dan file  c:\Users\ifqy\Documents\project\automation\cbdg\crusoe_ai_dataset\after-apikey-appear.html
+5. simpan api key nya ke file apikey.txt dengan 1 line 1 api key dan seterusnya

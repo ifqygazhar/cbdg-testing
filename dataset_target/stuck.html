@@ -1,0 +1,2186 @@
+<html class="in-single-page" data-product="codebuddy" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"
+    />
+    <meta name="HandheldFriendly" content="true" />
+    <title>Sign in to copilot</title>
+    <link
+      rel="icon"
+      href="/auth/resources/6rd0u/login/ide-oversea/img/logo.svg"
+    />
+    <script>
+      (function () {
+        const productConfigs = {
+          codebuddy: {
+            productName: "CodeBuddy",
+            logo: "//codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/avatar-white.svg",
+            videoPoster:
+              "https://codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/started-poster.png",
+            videoSrc:
+              "https://dscache-intl.cloudcachetci.com/upload/uploader/video-4f783c743d7cab970ff83d874d4f13b287528ef8.mp4",
+            termsUrl: "/document/term",
+            privacyUrl: "/document/privacy-policy",
+            dpsaUrl: "/document/dpsa",
+            chinaSiteUrl: "https://www.codebuddy.cn",
+            contactUrl: "mailto:codebuddy@tencent.com",
+            serviceAgreementText: "Tencent Cloud CodeBuddy Service Agreement",
+            confirmTitleText: "Service Agreement and Privacy Terms",
+          },
+          workbuddy: {
+            productName: "WorkBuddy",
+            logo: "/auth/resources/6rd0u/login/ide-oversea/img/workbuddy-logo.png",
+            videoPoster:
+              "//acc-1258344699.cos.accelerate.myqcloud.com/web/login/4ca1c1d5a3081f9924afca9499a7ef0679601d03/assets/workbuddy-cat-poster.c04229e3.png",
+            videoSrc:
+              "//acc-1258344699.cos.accelerate.myqcloud.com/web/login/4ca1c1d5a3081f9924afca9499a7ef0679601d03/assets/workbuddy-cat.c32542ad.mp4",
+            termsUrl: "/document/term",
+            privacyUrl: "/document/privacy-policy",
+            dpsaUrl: "/document/dpsa",
+            chinaSiteUrl: "https://www.workbuddy.cn",
+            contactUrl: "https://www.tencentcloud.com/zh/contact-us",
+            serviceAgreementText: "Tencent Cloud CodeBuddy Service Agreement",
+            confirmTitleText: "Service Agreement and Privacy Terms",
+          },
+        };
+
+        function appendProductParam(value, product) {
+          if (!value) {
+            return value;
+          }
+          try {
+            const targetUrl = new URL(value, window.location.href);
+            targetUrl.searchParams.set("product", product);
+            return targetUrl.href;
+          } catch (e) {
+            return value;
+          }
+        }
+
+        function applyProductConfig(config) {
+          const currentProduct =
+            document.documentElement.dataset.product || "codebuddy";
+          const logo = document.querySelector("[data-product-logo]");
+          const heroVideo = document.getElementById("product-hero-video");
+
+          if (logo) {
+            logo.src = config.logo;
+            logo.alt = config.productName;
+          }
+          document
+            .querySelectorAll("[data-product-name]")
+            .forEach(function (node) {
+              node.textContent = config.productName;
+            });
+          if (heroVideo) {
+            heroVideo.poster = config.videoPoster;
+            if (heroVideo.getAttribute("src") !== config.videoSrc) {
+              heroVideo.src = config.videoSrc;
+              heroVideo.load();
+            }
+          }
+          document
+            .querySelectorAll("[data-product-terms-link]")
+            .forEach(function (link) {
+              link.href = config.termsUrl;
+            });
+          document
+            .querySelectorAll("[data-product-privacy-link]")
+            .forEach(function (link) {
+              link.href = config.privacyUrl;
+            });
+          document
+            .querySelectorAll("[data-product-dpsa-link]")
+            .forEach(function (link) {
+              link.href = config.dpsaUrl;
+            });
+          document
+            .querySelectorAll("[data-product-service-agreement]")
+            .forEach(function (node) {
+              node.textContent = config.serviceAgreementText;
+            });
+          document
+            .querySelectorAll("[data-product-confirm-title]")
+            .forEach(function (node) {
+              node.textContent = config.confirmTitleText;
+            });
+          document
+            .querySelectorAll("[data-product-china-link]")
+            .forEach(function (link) {
+              link.href = config.chinaSiteUrl;
+            });
+          document
+            .querySelectorAll("[data-product-contact-link]")
+            .forEach(function (link) {
+              link.href = config.contactUrl;
+            });
+          document
+            .querySelectorAll("a[data-product-preserve]")
+            .forEach(function (link) {
+              link.href = appendProductParam(link.href, currentProduct);
+            });
+          document
+            .querySelectorAll("form[data-product-preserve]")
+            .forEach(function (form) {
+              form.action = appendProductParam(form.action, currentProduct);
+            });
+        }
+
+        try {
+          const productStorageKey = "CURRENT_BUDDY_PROODUCT";
+          const urlParams = new URLSearchParams(window.location.search);
+          const urlProduct = urlParams.get("product");
+          const storageProduct = sessionStorage.getItem(productStorageKey);
+          const product = urlProduct || storageProduct || "codebuddy";
+          const safeProduct = /^[a-z0-9-]+$/i.test(product)
+            ? product
+            : "codebuddy";
+          const currentProduct = productConfigs[safeProduct]
+            ? safeProduct
+            : "codebuddy";
+          const currentConfig = productConfigs[currentProduct];
+          if (urlProduct) {
+            sessionStorage.setItem(productStorageKey, currentProduct);
+          }
+          document.documentElement.dataset.product = currentProduct;
+          window.__LOGIN_PRODUCT_CONFIG__ = currentConfig;
+          window.applyLoginProductConfig = function () {
+            applyProductConfig(currentConfig);
+          };
+
+          document.addEventListener(
+            "DOMContentLoaded",
+            window.applyLoginProductConfig,
+          );
+        } catch (e) {
+          document.documentElement.dataset.product = "codebuddy";
+          window.__LOGIN_PRODUCT_CONFIG__ = productConfigs.codebuddy;
+          window.applyLoginProductConfig = function () {
+            applyProductConfig(productConfigs.codebuddy);
+          };
+          console.error("[Product] Error detecting product:", e);
+        }
+      })();
+    </script>
+    <link
+      href="/auth/resources/6rd0u/login/ide-oversea/css/styles.v14.css"
+      rel="stylesheet"
+    />
+    <script type="importmap">
+      {
+        "imports": {
+          "rfc4648": "/auth/resources/6rd0u/common/keycloak/vendor/rfc4648/rfc4648.js"
+        }
+      }
+    </script>
+    <script type="module">
+      import { checkCookiesAndSetTimer } from "/auth/resources/6rd0u/login/ide-oversea/js/authChecker.js";
+      checkCookiesAndSetTimer(
+        "/auth/realms/copilot/login-actions/restart?client_id=console&tab_id=nDLMWLE1u4o&client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&skip_logout=true",
+      );
+    </script>
+    <script>
+      // Auto-detect and switch language based on localStorage
+      (function () {
+        try {
+          const storedLang = localStorage.getItem("CODEBUDDY_IDE_STORAGE_LANG");
+          if (!storedLang) {
+            return;
+          }
+
+          // 映射 IDE 语言到 Keycloak 语言标签
+          // en-US -> en, zh-CN -> zh-CN
+          const langMapping = {
+            "en-US": "en",
+            "zh-CN": "zh-CN",
+          };
+
+          const targetLocale = langMapping[storedLang] || storedLang;
+          const currentLocale = "en";
+
+          console.log(
+            "[Language] Stored language:",
+            storedLang,
+            "-> Mapped to:",
+            targetLocale,
+            "Current:",
+            currentLocale,
+          );
+
+          // 如果当前语言与存储的语言不匹配，则切换
+          if (targetLocale && targetLocale !== currentLocale) {
+            // 查找对应的语言URL
+            const supportedLocales = {
+              "zh-CN":
+                "/auth/realms/copilot/login-actions/authenticate?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;execution=d8230737-c78c-4961-ae20-f86803c61b09&amp;kc_locale=zh-CN",
+              en: "/auth/realms/copilot/login-actions/authenticate?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;execution=d8230737-c78c-4961-ae20-f86803c61b09&amp;kc_locale=en",
+            };
+
+            const targetUrl = supportedLocales[targetLocale];
+            if (targetUrl) {
+              console.log(
+                "[Language] Auto-switching from",
+                currentLocale,
+                "to",
+                targetLocale,
+              );
+              window.location.href = targetUrl;
+            }
+          }
+        } catch (e) {
+          console.error("[Language] Error detecting language:", e);
+        }
+      })();
+    </script>
+    <script>
+      (function () {
+        function getStorageLanguage(localeTag) {
+          return localeTag && localeTag.indexOf("zh") === 0 ? "zh-CN" : "en-US";
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+          const dropdown = document.getElementById("kc-locale-dropdown");
+
+          document
+            .querySelectorAll("[data-locale-switch]")
+            .forEach(function (link) {
+              link.addEventListener("click", function () {
+                const localeTag = link.getAttribute("data-locale-tag");
+                localStorage.setItem(
+                  "CODEBUDDY_IDE_STORAGE_LANG",
+                  getStorageLanguage(localeTag),
+                );
+              });
+            });
+
+          document.addEventListener("click", function (event) {
+            if (
+              !dropdown ||
+              !dropdown.open ||
+              dropdown.contains(event.target)
+            ) {
+              return;
+            }
+
+            dropdown.open = false;
+          });
+        });
+      })();
+    </script>
+    <link
+      rel="stylesheet"
+      as="style"
+      href="/auth/resources/6rd0u/login/ide-oversea/css/Dialog.css"
+      onload="
+        this.onload = null;
+        this.rel = 'stylesheet';
+      "
+    />
+    <link
+      rel="stylesheet"
+      as="style"
+      href="/auth/resources/6rd0u/login/ide-oversea/css/Button.css"
+      onload="
+        this.onload = null;
+        this.rel = 'stylesheet';
+      "
+    />
+    <script
+      type="module"
+      src="/auth/resources/6rd0u/login/ide-oversea/js/Dialog.js"
+    ></script>
+    <script type="module">
+      document.addEventListener("click", (event) => {
+        const link = event.target.closest("a[data-once-link]");
+        if (!link) {
+          return;
+        }
+        if (link.getAttribute("aria-disabled") === "true") {
+          event.preventDefault();
+          return;
+        }
+        const { disabledClass } = link.dataset;
+        if (disabledClass) {
+          link.classList.add(...disabledClass.trim().split(/\s+/));
+        }
+        link.setAttribute("role", "link");
+        link.setAttribute("aria-disabled", "true");
+      });
+    </script>
+
+    <!-- Maintenance Notice Styles -->
+    <style>
+      .maintenance-notice {
+        background: var(--auth-maintenance-bg);
+        color: var(--auth-maintenance-text);
+        box-shadow: 0 2px 8px var(--auth-maintenance-shadow);
+        overflow: hidden;
+        border-bottom: 1px solid var(--auth-maintenance-border);
+      }
+
+      .maintenance-notice.hidden {
+        display: none;
+      }
+
+      .maintenance-content {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0.875rem 1.5rem;
+      }
+
+      .maintenance-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+      }
+
+      .maintenance-icon {
+        width: 1.25rem;
+        height: 1.25rem;
+        color: var(--auth-maintenance-icon);
+        flex-shrink: 0;
+        margin-top: 0.125rem;
+      }
+
+      .maintenance-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .maintenance-title {
+        font-size: 0.9375rem;
+        margin: 0 0 0.25rem 0;
+        line-height: 1.4;
+        color: var(--auth-maintenance-title);
+      }
+
+      .maintenance-title strong {
+        font-weight: 600;
+      }
+
+      .maintenance-desc {
+        font-size: 0.8125rem;
+        line-height: 1.4;
+        color: var(--auth-maintenance-desc);
+        margin: 0;
+      }
+
+      .maintenance-close {
+        background: none;
+        border: none;
+        color: var(--auth-maintenance-desc);
+        cursor: pointer;
+        padding: 0.25rem;
+        border-radius: 0.25rem;
+        transition: all 0.2s;
+        width: 1.5rem;
+        height: 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .maintenance-close:hover {
+        background-color: var(--auth-white-01);
+        color: var(--auth-maintenance-title);
+      }
+
+      .maintenance-close svg {
+        width: 1rem;
+        height: 1rem;
+      }
+
+      @media (max-width: 768px) {
+        .maintenance-content {
+          padding: 0.75rem 1rem;
+        }
+
+        .maintenance-header {
+          gap: 0.5rem;
+        }
+
+        .maintenance-title {
+          font-size: 0.875rem;
+        }
+
+        .maintenance-desc {
+          font-size: 0.75rem;
+        }
+
+        .maintenance-icon {
+          width: 1.125rem;
+          height: 1.125rem;
+        }
+
+        .maintenance-close {
+          width: 1.25rem;
+          height: 1.25rem;
+        }
+
+        .maintenance-close svg {
+          width: 0.875rem;
+          height: 0.875rem;
+        }
+      }
+    </style>
+
+    <script>
+      // 检查是否为 login 模式和 small 风格
+      (function () {
+        const urlParams = new URLSearchParams(window.location.search);
+        const mode = urlParams.get("mode");
+        const style = urlParams.get("style");
+
+        if (mode === "login") {
+          document.documentElement.classList.add("login-mode");
+        }
+        if (style === "small") {
+          document.documentElement.classList.add("small-style");
+        }
+      })();
+    </script>
+  </head>
+
+  <body class="kcBodyClass">
+    <script>
+      // ========== Maintenance Notice Configuration ==========
+      // 维护通知配置 - 修改此处即可更新维护通知内容
+      const MAINTENANCE_CONFIG = {
+        // 是否启用维护通知功能 (true: 启用, false: 禁用)
+        enabled: true,
+
+        // 维护标题
+        title: "Scheduled Maintenance",
+
+        // 维护时间（显示用）
+        datetime: "November 4, 2025, 4:00-6:00 AM",
+
+        // 维护说明
+        description:
+          "CodeBuddy will undergo brief maintenance. Service may be temporarily unavailable during this period.",
+
+        // 感谢语
+        thanks: "Thank you for your understanding and support.",
+
+        // ========== 自动展示时间段配置 ==========
+        // 提醒开始时间（ISO 8601 格式或留空表示立即开始）
+        // 格式: "YYYY-MM-DDTHH:mm:ss" 或 "YYYY-MM-DD HH:mm:ss"
+        // 示例: "2025-10-28T00:00:00" 表示从 2025年10月28日 00:00 开始显示
+        displayStartTime: "2025-11-04T00:00:00",
+
+        // 提醒结束时间（ISO 8601 格式或留空表示永不结束）
+        // 格式: "YYYY-MM-DDTHH:mm:ss" 或 "YYYY-MM-DD HH:mm:ss"
+        // 示例: "2025-11-04T06:00:00" 表示到 2025年11月4日 06:00 停止显示
+        displayEndTime: "2025-11-04T06:00:00",
+
+        // 时区偏移（小时），默认为 0 (UTC)
+        // 中国时区: 8, 美国东部时区: -5, 美国西部时区: -8
+        timezoneOffset: 0,
+      };
+      // ====================================================
+    </script>
+
+    <!-- System Maintenance Notice -->
+    <div
+      id="maintenance-notice"
+      class="maintenance-notice"
+      style="display: none"
+    >
+      <div class="maintenance-content">
+        <div class="maintenance-header">
+          <svg
+            class="maintenance-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+            ></path>
+          </svg>
+          <div class="maintenance-info">
+            <div class="maintenance-title">
+              <strong id="maintenance-title-text"></strong> —
+              <span id="maintenance-datetime-text"></span>
+            </div>
+            <div class="maintenance-desc">
+              <span id="maintenance-desc-text"></span>
+              <span id="maintenance-thanks-text"></span>
+            </div>
+          </div>
+          <button
+            class="maintenance-close"
+            id="maintenance-close-btn"
+            aria-label="Close notification"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="layout">
+      <div class="language-switcher" id="kc-locale">
+        <div id="kc-locale-wrapper" class="">
+          <details id="kc-locale-dropdown" class="">
+            <summary id="kc-current-locale-link" aria-label="languages">
+              <span> Intl - English </span>
+              <svg
+                class="language-switcher-chevron"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M6 9l6 6 6-6"></path>
+              </svg>
+            </summary>
+            <div
+              role="menu"
+              tabindex="-1"
+              aria-labelledby="kc-current-locale-link"
+              id="language-switch1"
+              class="language-switcher-menu"
+            >
+              <a
+                role="menuitem"
+                id="language-1"
+                class="language-switcher-item"
+                href="/auth/realms/copilot/login-actions/authenticate?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;execution=d8230737-c78c-4961-ae20-f86803c61b09&amp;kc_locale=zh-CN"
+                data-locale-switch=""
+                data-locale-tag="zh-CN"
+              >
+                Intl - 中文
+              </a>
+              <a
+                role="menuitem"
+                id="language-2"
+                class="language-switcher-item is-active"
+                href="/auth/realms/copilot/login-actions/authenticate?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;execution=d8230737-c78c-4961-ae20-f86803c61b09&amp;kc_locale=en"
+                data-locale-switch=""
+                data-locale-tag="en"
+              >
+                Intl - English
+              </a>
+              <div class="language-switcher-divider" aria-hidden="true"></div>
+              <a
+                class="language-switcher-item language-switcher-region"
+                href="https://www.codebuddy.cn"
+                data-product-china-link=""
+              >
+                中国站
+              </a>
+            </div>
+          </details>
+        </div>
+      </div>
+      <div class="kcLoginClass left">
+        <div class="kcFormCardClass">
+          <header class="kcFormHeaderClass">
+            <h1 id="kc-page-title"></h1>
+            <a href="/" target="_self" class="header-logo">
+              <img
+                class="logo"
+                data-product-logo=""
+                src="//codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/avatar-white.svg"
+                alt="CodeBuddy"
+              />
+            </a>
+          </header>
+          <div id="kc-content">
+            <div id="kc-content-wrapper">
+              <a
+                id="kc-oneid-login"
+                hidden=""
+                href="/auth/realms/copilot/broker/oneid/login?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;session_code=mvolvMdaMnv-ajRxMUE08Aj8gXHAUbfrbby1siRrNjI"
+              ></a>
+              <script type="text/javascript">
+                // OneID loginUrl 只写在 href 里，读 a.href 得到浏览器还原后的真 `&`。
+                var oneidLoginEl = document.getElementById("kc-oneid-login");
+                window.__oneidLoginUrl = oneidLoginEl
+                  ? oneidLoginEl.href
+                  : null;
+
+                // 在 iframe 内需跳父窗口，顶层则直接跳本窗口
+                function gotoOneidLoginUrl(url) {
+                  if (!url) return false;
+                  if (window.self === window.top) {
+                    window.location.href = url;
+                  } else {
+                    window.parent.location.href = url;
+                  }
+                  return true;
+                }
+
+                // 检查URL参数是否包含 auto_jump=oneid，若是则自动跳转到 OneID 登录
+                // 用于承接外部入口（如 apps/web/login 的 gotoOneid、账号选择页、客户端深链等）带参回到登录页时的自动跳转
+                (function checkAutoJump() {
+                  try {
+                    var urlParams = new URLSearchParams(window.location.search);
+                    var autoJump = urlParams.get("auto_jump");
+                    if (autoJump !== "oneid") return;
+
+                    if (!window.__oneidLoginUrl) {
+                      console.warn("[AutoJump] OneID provider not configured");
+                      // 清除参数避免回到本页仍然触发跳转
+                      var cleanUrl = new URL(window.location.href);
+                      cleanUrl.searchParams.delete("auto_jump");
+                      window.history.replaceState({}, "", cleanUrl.toString());
+                      return;
+                    }
+
+                    gotoOneidLoginUrl(window.__oneidLoginUrl);
+                  } catch (e) {
+                    console.warn("[AutoJump] Failed:", e);
+                  }
+                })();
+              </script>
+              <style>
+                .loading {
+                  display: none;
+                }
+
+                /* 企业登录相关 UI 显示规则 */
+                .oneid-login-wrapper.feature-enterprise-only {
+                  display: block;
+                }
+                .divider.feature-enterprise-only,
+                .login-sub-tabs.feature-enterprise-only {
+                  display: flex;
+                }
+                .sub-tab-content.feature-enterprise-only {
+                  display: none;
+                }
+                .sub-tab-content.feature-enterprise-only.active {
+                  display: block;
+                }
+                .feature-enterprise-hide {
+                  display: none !important;
+                }
+
+                /* Tab 样式 */
+                .login-tabs {
+                  display: flex;
+                  border-bottom: 2px solid var(--auth-border-soft);
+                  margin-bottom: 32px;
+                  gap: 0;
+                }
+
+                .login-tab {
+                  flex: 1;
+                  padding: 12px 0;
+                  text-align: center;
+                  font-size: 16px;
+                  font-weight: 500;
+                  color: var(--auth-text-secondary);
+                  cursor: pointer;
+                  position: relative;
+                  transition: all 0.3s ease;
+                  border-bottom: 2px solid transparent;
+                  margin-bottom: -2px;
+                }
+
+                .login-tab:hover {
+                  color: var(--auth-text-primary);
+                }
+
+                .login-tab.active {
+                  color: var(--auth-text-strong);
+                  border-bottom-color: var(--auth-primary);
+                }
+
+                .tab-content {
+                  display: none;
+                }
+
+                .tab-content.active {
+                  display: block;
+                }
+
+                /* 分隔线样式 */
+                .divider {
+                  display: flex;
+                  align-items: center;
+                  text-align: center;
+                  margin: 24px 0;
+                  color: var(--auth-text-secondary);
+                  font-size: 14px;
+                }
+
+                .divider::before,
+                .divider::after {
+                  content: "";
+                  flex: 1;
+                  border-bottom: 1px solid var(--auth-border-soft);
+                }
+
+                .divider:not(:empty)::before {
+                  margin-right: 16px;
+                }
+
+                .divider:not(:empty)::after {
+                  margin-left: 16px;
+                }
+
+                /* 企业域名输入框后缀 */
+                .domain-input-wrapper {
+                  position: relative;
+                  display: flex;
+                  align-items: center;
+                }
+                .domain-input-wrapper > input {
+                  flex: 1;
+                  min-width: 0;
+                  padding-right: 170px !important;
+                }
+                .domain-suffix {
+                  position: absolute;
+                  right: 12px;
+                  top: 50%;
+                  transform: translateY(-50%);
+                  color: var(--auth-text-secondary);
+                  font-size: 13px;
+                  background: var(--auth-border-soft);
+                  padding: 4px 8px;
+                  border-radius: 4px;
+                  pointer-events: none;
+                  white-space: nowrap;
+                  max-width: 150px;
+                  overflow: hidden;
+                  text-overflow: ellipsis;
+                }
+              </style>
+              <div id="login-app">
+                <div class="app-content">
+                  <!-- Tab 切换 -->
+                  <div class="login-tabs">
+                    <div
+                      class="login-tab active"
+                      data-tab="account"
+                      onclick="switchTab('account')"
+                    >
+                      Sign up
+                    </div>
+                    <div
+                      class="login-tab"
+                      data-tab="email"
+                      onclick="switchTab('email')"
+                    >
+                      Log in
+                    </div>
+                  </div>
+
+                  <!-- Account Tab 内容 (第三方登录注册) -->
+                  <div class="tab-content active" id="account-tab">
+                    <div id="kc-social-providers" class="">
+                      <ul
+                        class="
+"
+                      >
+                        <li>
+                          <a
+                            data-product-preserve=""
+                            data-once-link=""
+                            data-disabled-class=""
+                            id="social-google"
+                            class="sp-button"
+                            type="button"
+                            href="https://www.codebuddy.ai/auth/realms/copilot/broker/google/login?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;session_code=mvolvMdaMnv-ajRxMUE08Aj8gXHAUbfrbby1siRrNjI&amp;product=codebuddy"
+                            onclick="handleSocialLogin(event)"
+                            role="link"
+                            aria-disabled="true"
+                          >
+                            <i class=" " aria-hidden="true"></i>
+                            <span class="kc-social-icon-text">
+                              Sign up with Google
+                            </span>
+                          </a>
+                        </li>
+                        <li>
+                          <a
+                            data-product-preserve=""
+                            data-once-link=""
+                            data-disabled-class=""
+                            id="social-github"
+                            class="sp-button"
+                            type="button"
+                            href="https://www.codebuddy.ai/auth/realms/copilot/broker/github/login?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;session_code=mvolvMdaMnv-ajRxMUE08Aj8gXHAUbfrbby1siRrNjI&amp;product=codebuddy"
+                            onclick="handleSocialLogin(event)"
+                          >
+                            <i class=" " aria-hidden="true"></i>
+                            <span class="kc-social-icon-text">
+                              Sign up with GitHub
+                            </span>
+                          </a>
+                        </li>
+                        <li>
+                          <a
+                            data-product-preserve=""
+                            data-once-link=""
+                            data-disabled-class=""
+                            id="social-twitter"
+                            class="sp-button"
+                            type="button"
+                            href="https://www.codebuddy.ai/auth/realms/copilot/broker/twitter/login?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;session_code=mvolvMdaMnv-ajRxMUE08Aj8gXHAUbfrbby1siRrNjI&amp;product=codebuddy"
+                            onclick="handleSocialLogin(event)"
+                          >
+                            <i class=" " aria-hidden="true"></i>
+                            <span class="kc-social-icon-text">
+                              Sign up with X
+                            </span>
+                          </a>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <!-- Account tab 的政策同意 -->
+                    <div class="checkbox-wrapper policy-wrapper text-gray">
+                      <div class="checkbox-line">
+                        <label class="custom-checkbox">
+                          <input
+                            type="checkbox"
+                            id="agree-policy-account"
+                            onchange="handlePolicyChange(this)"
+                          />
+                          <div class="sp-color-checkmark-outline">
+                            <div class="checkmark"></div>
+                          </div>
+                          <span for="agree-policy-account">
+                            I confirm that I have read and acknowledge the
+                            <a
+                              data-product-privacy-link=""
+                              href="/document/privacy-policy"
+                              target="_blank"
+                            >
+                              Privacy Policy,</a
+                            >
+                            <a
+                              data-product-dpsa-link=""
+                              href="/document/dpsa"
+                              target="_blank"
+                            >
+                              Data Processing and Security Agreement,
+                            </a>
+                            <a
+                              data-product-terms-link=""
+                              href="/document/term"
+                              target="_blank"
+                            >
+                              <span data-product-service-agreement=""
+                                >Tencent Cloud CodeBuddy Service Agreement</span
+                              >
+                            </a>
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Email Tab 内容 (邮箱登录) -->
+                  <div class="tab-content" id="email-tab">
+                    <!-- Email tab 的第三方登录 -->
+                    <div id="kc-social-providers-login" class="">
+                      <ul
+                        class="
+"
+                      >
+                        <li>
+                          <a
+                            data-product-preserve=""
+                            data-once-link=""
+                            data-disabled-class=""
+                            id="social-google"
+                            class="sp-button"
+                            type="button"
+                            href="https://www.codebuddy.ai/auth/realms/copilot/broker/google/login?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;session_code=mvolvMdaMnv-ajRxMUE08Aj8gXHAUbfrbby1siRrNjI&amp;product=codebuddy"
+                            onclick="handleSocialLogin(event)"
+                          >
+                            <i class=" " aria-hidden="true"></i>
+                            <span class="kc-social-icon-text">
+                              Log in with Google
+                            </span>
+                          </a>
+                        </li>
+                        <li>
+                          <a
+                            data-product-preserve=""
+                            data-once-link=""
+                            data-disabled-class=""
+                            id="social-github"
+                            class="sp-button"
+                            type="button"
+                            href="https://www.codebuddy.ai/auth/realms/copilot/broker/github/login?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;session_code=mvolvMdaMnv-ajRxMUE08Aj8gXHAUbfrbby1siRrNjI&amp;product=codebuddy"
+                            onclick="handleSocialLogin(event)"
+                          >
+                            <i class=" " aria-hidden="true"></i>
+                            <span class="kc-social-icon-text">
+                              Log in with GitHub
+                            </span>
+                          </a>
+                        </li>
+                        <li>
+                          <a
+                            data-product-preserve=""
+                            data-once-link=""
+                            data-disabled-class=""
+                            id="social-twitter"
+                            class="sp-button"
+                            type="button"
+                            href="https://www.codebuddy.ai/auth/realms/copilot/broker/twitter/login?client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;session_code=mvolvMdaMnv-ajRxMUE08Aj8gXHAUbfrbby1siRrNjI&amp;product=codebuddy"
+                            onclick="handleSocialLogin(event)"
+                          >
+                            <i class=" " aria-hidden="true"></i>
+                            <span class="kc-social-icon-text">
+                              Log in with X
+                            </span>
+                          </a>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div class="divider feature-enterprise-hide">
+                      or with Email
+                    </div>
+
+                    <div class="oneid-login-wrapper feature-enterprise-only">
+                      <a
+                        data-once-link=""
+                        id="social-oneid"
+                        class="oneid-login-button sp-button"
+                        href="javascript:void(0)"
+                        onclick="handleOneidLogin(event)"
+                      >
+                        <i class="icon icon-oneid"></i>
+                        <span>Log in with Tencent OneID</span>
+                        <span class="oneid-badge">Enterprise only</span>
+                      </a>
+                    </div>
+
+                    <div class="divider feature-enterprise-only">or</div>
+
+                    <!-- 邮箱登录 / SSO 企业登录 子Tab（仅在 ?feature=enterprise 下展示） -->
+                    <div class="login-sub-tabs feature-enterprise-only">
+                      <div
+                        class="login-sub-tab active"
+                        data-subtab="email-login"
+                        onclick="switchSubTab('email-login')"
+                      >
+                        Email Login
+                      </div>
+                      <div
+                        class="login-sub-tab"
+                        data-subtab="sso-login"
+                        onclick="switchSubTab('sso-login')"
+                      >
+                        SSO Enterprise Login
+                      </div>
+                    </div>
+
+                    <!-- 邮箱登录内容 -->
+                    <div class="sub-tab-content active" id="email-login-subtab">
+                      <form
+                        id="kc-form-login"
+                        data-product-preserve=""
+                        onsubmit="
+                          login.disabled = true;
+                          return true;
+                        "
+                        action="https://www.codebuddy.ai/auth/realms/copilot/login-actions/authenticate?session_code=mvolvMdaMnv-ajRxMUE08Aj8gXHAUbfrbby1siRrNjI&amp;execution=d8230737-c78c-4961-ae20-f86803c61b09&amp;client_id=console&amp;tab_id=nDLMWLE1u4o&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;product=codebuddy"
+                        method="post"
+                        target="_top"
+                      >
+                        <div class="kcFormGroupClass">
+                          <div
+                            class="sp-color-wrapper-outline"
+                            id="username-wrapper"
+                          >
+                            <label class="input-label" for="username">
+                              <div class="input-wrapper input-shadow">
+                                <i class="icon icon-email"></i>
+                                <input
+                                  tabindex="0"
+                                  id="username"
+                                  class=""
+                                  name="username"
+                                  value=""
+                                  type="text"
+                                  autocomplete="username"
+                                  aria-invalid=""
+                                  dir="ltr"
+                                  placeholder="Username or email"
+                                  oninput="handleUsernameInput(this)"
+                                />
+                              </div>
+                            </label>
+                          </div>
+                          <span
+                            id="client-error"
+                            class="input-error"
+                            aria-live="polite"
+                            style="display: none"
+                          >
+                          </span>
+                        </div>
+                        <div class="kcFormGroupClass">
+                          <div class="sp-color-wrapper-outline" dir="ltr">
+                            <div class="input-shadow">
+                              <label
+                                class="input-label input-wrapper"
+                                for="password"
+                              >
+                                <i class="icon icon-password"></i>
+                                <input
+                                  tabindex="0"
+                                  id="password"
+                                  class=""
+                                  name="password"
+                                  type="password"
+                                  autocomplete="current-password"
+                                  aria-invalid=""
+                                  placeholder="Password"
+                                  oninput="handlePasswordInput(this)"
+                                />
+                                <i
+                                  class="icon icon-eyes"
+                                  id="password-toggle"
+                                  onclick="togglePasswordVisibility()"
+                                ></i>
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="kc-form-options-wrapper">
+                          <div id="kc-form-options">
+                            <div class="checkbox checkbox-line">
+                              <label class="custom-checkbox text">
+                                <input
+                                  id="rememberMe"
+                                  name="rememberMe"
+                                  type="checkbox"
+                                />
+                                <div class="sp-color-checkmark-outline">
+                                  <div class="checkmark"></div>
+                                </div>
+                                Remember me
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                        <div id="kc-form-buttons" class="kcFormGroupClass">
+                          <input
+                            type="hidden"
+                            id="id-hidden-input"
+                            name="credentialId"
+                          />
+                          <div class="submit-button-wrapper">
+                            <input
+                              tabindex="0"
+                              class="submit-button sp-button"
+                              name="login"
+                              id="kc-login"
+                              type="submit"
+                              value="GET STARTED"
+                              disabled=""
+                            />
+                          </div>
+                        </div>
+                        <div class="checkbox-wrapper policy-wrapper text-gray">
+                          <div class="checkbox-line">
+                            <label class="custom-checkbox">
+                              <input
+                                type="checkbox"
+                                id="agree-policy"
+                                onchange="handlePolicyChange(this)"
+                              />
+                              <div class="sp-color-checkmark-outline">
+                                <div class="checkmark"></div>
+                              </div>
+                              <span for="agree-policy">
+                                I confirm that I have read and acknowledge the
+                                <a
+                                  data-product-privacy-link=""
+                                  href="/document/privacy-policy"
+                                  target="_blank"
+                                >
+                                  Privacy Policy,</a
+                                >
+                                <a
+                                  data-product-dpsa-link=""
+                                  href="/document/dpsa"
+                                  target="_blank"
+                                >
+                                  Data Processing and Security Agreement,
+                                </a>
+                                <a
+                                  data-product-terms-link=""
+                                  href="/document/term"
+                                  target="_blank"
+                                >
+                                  <span data-product-service-agreement=""
+                                    >Tencent Cloud CodeBuddy Service
+                                    Agreement</span
+                                  >
+                                </a>
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                      </form>
+                    </div>
+
+                    <!-- SSO 企业登录内容（仅在 ?feature=enterprise 下展示） -->
+                    <div
+                      class="sub-tab-content feature-enterprise-only"
+                      id="sso-login-subtab"
+                    >
+                      <!-- SSO 子Tab：企业域名登录 / 企业邮箱登录 -->
+                      <div class="sso-sub-tabs">
+                        <div
+                          class="sso-sub-tab active"
+                          data-ssotab="domain"
+                          onclick="switchSsoSubTab('domain')"
+                        >
+                          Enterprise Domain
+                        </div>
+                        <div
+                          class="sso-sub-tab"
+                          data-ssotab="sso-email"
+                          onclick="switchSsoSubTab('sso-email')"
+                        >
+                          Enterprise Email
+                        </div>
+                      </div>
+
+                      <!-- 企业域名登录 -->
+                      <div class="sso-tab-content active" id="domain-ssotab">
+                        <form
+                          onsubmit="
+                            handleSsoDomainLogin();
+                            return false;
+                          "
+                        >
+                          <div class="kcFormGroupClass">
+                            <div
+                              class="sp-color-wrapper-outline"
+                              id="sso-domain-wrapper"
+                            >
+                              <label class="input-label" for="sso-domain">
+                                <div
+                                  class="input-wrapper input-shadow domain-input-wrapper"
+                                >
+                                  <i class="icon icon-domain"></i>
+                                  <input
+                                    tabindex="0"
+                                    id="sso-domain"
+                                    class=""
+                                    type="text"
+                                    placeholder="Enter enterprise domain"
+                                    oninput="handleSsoDomainInput(this)"
+                                  />
+                                  <span
+                                    class="domain-suffix"
+                                    id="sso-domain-suffix"
+                                    >.account.tencentid.com</span
+                                  >
+                                </div>
+                              </label>
+                            </div>
+                            <span
+                              id="sso-domain-error"
+                              class="input-error"
+                              aria-live="polite"
+                              style="display: none"
+                            >
+                            </span>
+                          </div>
+                          <div class="submit-button-wrapper">
+                            <input
+                              tabindex="0"
+                              id="sso-domain-submit"
+                              class="submit-button sp-button"
+                              type="submit"
+                              value="GET STARTED"
+                              disabled=""
+                            />
+                          </div>
+                        </form>
+                      </div>
+
+                      <!-- 企业邮箱登录 -->
+                      <div class="sso-tab-content" id="sso-email-ssotab">
+                        <form
+                          onsubmit="
+                            handleSsoEmailLogin();
+                            return false;
+                          "
+                        >
+                          <div class="kcFormGroupClass">
+                            <div
+                              class="sp-color-wrapper-outline"
+                              id="sso-email-wrapper"
+                            >
+                              <label class="input-label" for="sso-email-input">
+                                <div class="input-wrapper input-shadow">
+                                  <i class="icon icon-email"></i>
+                                  <input
+                                    tabindex="0"
+                                    id="sso-email-input"
+                                    class=""
+                                    type="text"
+                                    autocomplete="email"
+                                    placeholder="Enter enterprise email"
+                                    oninput="handleSsoEmailInput(this)"
+                                  />
+                                </div>
+                              </label>
+                            </div>
+                            <span
+                              id="sso-email-error"
+                              class="input-error"
+                              aria-live="polite"
+                              style="display: none"
+                            >
+                            </span>
+                          </div>
+                          <div class="submit-button-wrapper">
+                            <input
+                              tabindex="0"
+                              id="sso-email-submit"
+                              class="submit-button sp-button"
+                              type="submit"
+                              value="GET STARTED"
+                              disabled=""
+                            />
+                          </div>
+                        </form>
+                      </div>
+
+                      <!-- SSO 政策同意 -->
+                      <div class="checkbox-wrapper policy-wrapper text-gray">
+                        <div class="checkbox-line">
+                          <label class="custom-checkbox">
+                            <input
+                              type="checkbox"
+                              id="agree-policy-sso"
+                              onchange="handlePolicyChange(this)"
+                            />
+                            <div class="sp-color-checkmark-outline">
+                              <div class="checkmark"></div>
+                            </div>
+                            <span for="agree-policy-sso">
+                              I confirm that I have read and acknowledge the
+                              <a
+                                data-product-privacy-link=""
+                                href="/document/privacy-policy"
+                                target="_blank"
+                              >
+                                Privacy Policy,</a
+                              >
+                              <a
+                                data-product-dpsa-link=""
+                                href="/document/dpsa"
+                                target="_blank"
+                              >
+                                Data Processing and Security Agreement,
+                              </a>
+                              <a
+                                data-product-terms-link=""
+                                href="/document/term"
+                                target="_blank"
+                              >
+                                <span data-product-service-agreement=""
+                                  >Tencent Cloud CodeBuddy Service
+                                  Agreement</span
+                                >
+                              </a>
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <script type="text/javascript">
+                if (window.self === window.top) {
+                  document.documentElement.classList.add("in-single-page");
+                }
+
+                const urlParams = new URLSearchParams(window.location.search);
+                const defaultTab = urlParams.get("tab") || "";
+
+                // 应用状态
+                var appState = {
+                  errorMessage: "",
+                  username: "",
+                  password: "",
+                  agreedPolicy: false,
+                  showPassword: false,
+                  currentTab: defaultTab || "account",
+                  currentSubTab: "email-login",
+                  currentSsoSubTab: "domain",
+                  ssoDomain: "",
+                  ssoEmail: "",
+                };
+
+                // Tab切换函数
+                function switchTab(tabName) {
+                  // 更新tab激活状态
+                  var tabs = document.querySelectorAll(".login-tab");
+                  tabs.forEach(function (tab) {
+                    if (tab.getAttribute("data-tab") === tabName) {
+                      tab.classList.add("active");
+                    } else {
+                      tab.classList.remove("active");
+                    }
+                  });
+
+                  // 更新内容激活状态
+                  var contents = document.querySelectorAll(".tab-content");
+                  contents.forEach(function (content) {
+                    if (content.id === tabName + "-tab") {
+                      content.classList.add("active");
+                    } else {
+                      content.classList.remove("active");
+                    }
+                  });
+
+                  appState.currentTab = tabName;
+
+                  // 保存tab状态到sessionStorage
+                  try {
+                    sessionStorage.setItem("CodeBuddyLoginTab", tabName);
+                  } catch (e) {
+                    console.warn(
+                      "Failed to save tab state to sessionStorage:",
+                      e,
+                    );
+                  }
+                }
+
+                // 切换邮箱登录/SSO企业登录子Tab
+                function switchSubTab(subTabName) {
+                  var tabs = document.querySelectorAll(".login-sub-tab");
+                  tabs.forEach(function (tab) {
+                    if (tab.getAttribute("data-subtab") === subTabName) {
+                      tab.classList.add("active");
+                    } else {
+                      tab.classList.remove("active");
+                    }
+                  });
+
+                  var contents = document.querySelectorAll(".sub-tab-content");
+                  contents.forEach(function (content) {
+                    if (content.id === subTabName + "-subtab") {
+                      content.classList.add("active");
+                    } else {
+                      content.classList.remove("active");
+                    }
+                  });
+
+                  appState.currentSubTab = subTabName;
+                }
+
+                // 切换SSO子Tab：企业域名/企业邮箱
+                function switchSsoSubTab(ssoTabName) {
+                  var tabs = document.querySelectorAll(".sso-sub-tab");
+                  tabs.forEach(function (tab) {
+                    if (tab.getAttribute("data-ssotab") === ssoTabName) {
+                      tab.classList.add("active");
+                    } else {
+                      tab.classList.remove("active");
+                    }
+                  });
+
+                  var contents = document.querySelectorAll(".sso-tab-content");
+                  contents.forEach(function (content) {
+                    if (content.id === ssoTabName + "-ssotab") {
+                      content.classList.add("active");
+                    } else {
+                      content.classList.remove("active");
+                    }
+                  });
+
+                  appState.currentSsoSubTab = ssoTabName;
+                }
+
+                // SSO 企业域名输入
+                function handleSsoDomainInput(input) {
+                  appState.ssoDomain = input.value;
+                  var btn = document.getElementById("sso-domain-submit");
+                  if (btn) {
+                    btn.disabled = !input.value.trim();
+                  }
+                  clearFieldError("sso-domain-wrapper", "sso-domain-error");
+                }
+
+                // SSO 企业邮箱输入
+                function handleSsoEmailInput(input) {
+                  appState.ssoEmail = input.value;
+                  var btn = document.getElementById("sso-email-submit");
+                  if (btn) {
+                    btn.disabled = !input.value.trim();
+                  }
+                  clearFieldError("sso-email-wrapper", "sso-email-error");
+                }
+
+                // 邮箱格式校验（与后端常用的 RFC 5322 简化规则对齐）
+                function isValidEmail(value) {
+                  if (!value) return false;
+                  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+                }
+
+                // 在指定输入框容器上展示/清除错误态
+                function showFieldError(wrapperId, errorId, message) {
+                  var wrapper = document.getElementById(wrapperId);
+                  var err = document.getElementById(errorId);
+                  if (wrapper) wrapper.classList.add("sp-color-wrapper-error");
+                  if (err) {
+                    err.textContent = message || "";
+                    err.style.display = "block";
+                  }
+                }
+
+                function clearFieldError(wrapperId, errorId) {
+                  var wrapper = document.getElementById(wrapperId);
+                  var err = document.getElementById(errorId);
+                  if (wrapper)
+                    wrapper.classList.remove("sp-color-wrapper-error");
+                  if (err) {
+                    err.textContent = "";
+                    err.style.display = "none";
+                  }
+                }
+
+                // 获取企业域名后缀（仅用于 UI 展示，不参与 API 请求）
+                // 海外预发：.ci-741.account.tencentcs.com
+                // 海外生产：.account.tencentid.com
+                function getSsoDomainSuffix() {
+                  var hostname = window.location.hostname;
+                  var isStaging = hostname.indexOf("staging-") !== -1;
+                  return isStaging
+                    ? ".ci-741.account.tencentcs.com"
+                    : ".account.tencentid.com";
+                }
+
+                // 通过当前域名同源接口获取 accountId（避免跨域问题）
+                // GET <origin>/console/oneid/sso/account-id?domain=xxx 或 ?email=xxx
+                //
+                // 后端约定的业务 code（HTTP 200/400 body 都会带）：
+                //   code=0      -> 正常，data.account_id 可用
+                //   code=12006  -> 企业未找到（HTTP 200）
+                //   code=10001  -> 参数格式不对（HTTP 400）
+                //   其他        -> 服务异常
+                //
+                // 因此即便 HTTP 非 2xx（400），也先尝试解析 body 拿 code 做细化分类，
+                // 拿不到 body/code 再降级为通用服务异常。
+                // 这里用 reject(Error(CODE)) 把语义抛给 catch，外层 showSsoLoginError 再映射到文案。
+                function fetchAccountId(type, value) {
+                  var query =
+                    (type === "domain" ? "domain" : "email") +
+                    "=" +
+                    encodeURIComponent(value);
+                  var url =
+                    window.location.origin +
+                    "/console/oneid/sso/account-id?" +
+                    query;
+                  return fetch(url, { method: "GET", credentials: "include" })
+                    .then(function (res) {
+                      // 先拿 body，解析失败也不抛，交给后面根据 code + status 统一判断
+                      return res
+                        .json()
+                        .catch(function () {
+                          return null;
+                        })
+                        .then(function (body) {
+                          return { status: res.status, ok: res.ok, body: body };
+                        });
+                    })
+                    .then(function (r) {
+                      var code =
+                        r.body && typeof r.body.code === "number"
+                          ? r.body.code
+                          : null;
+                      // 正常
+                      if (
+                        r.ok &&
+                        code === 0 &&
+                        r.body.data &&
+                        r.body.data.account_id
+                      ) {
+                        return r.body.data.account_id;
+                      }
+                      // 企业未找到
+                      if (code === 12006) {
+                        throw new Error("NOT_FOUND");
+                      }
+                      // 参数格式不对
+                      if (code === 10001) {
+                        throw new Error("INVALID_FORMAT");
+                      }
+                      // 其他：统一归为服务异常，原始信息写进 console 供排查
+                      console.error(
+                        "[SSO Login] Unexpected response:",
+                        r.status,
+                        r.body,
+                      );
+                      throw new Error("SERVICE_ERROR");
+                    });
+                }
+
+                // SSO 企业域名登录
+                function handleSsoDomainLogin() {
+                  if (!appState.ssoDomain) return;
+                  if (!appState.agreedPolicy) {
+                    showPolicyConfirmDialog(function () {
+                      triggerSsoDomainLogin();
+                    });
+                    return;
+                  }
+                  triggerSsoDomainLogin();
+                }
+
+                function triggerSsoDomainLogin() {
+                  // 后缀仅用于页面展示，API 请求只用用户输入的 domain
+                  doSsoAuthLogin(
+                    "sso:preferred_domain",
+                    "domain",
+                    appState.ssoDomain.trim(),
+                  );
+                }
+
+                // SSO 企业邮箱登录
+                function handleSsoEmailLogin() {
+                  if (!appState.ssoEmail) return;
+                  // 邮箱格式校验
+                  if (!isValidEmail(appState.ssoEmail)) {
+                    showFieldError(
+                      "sso-email-wrapper",
+                      "sso-email-error",
+                      "The email address format is incorrect.",
+                    );
+                    return;
+                  }
+                  if (!appState.agreedPolicy) {
+                    showPolicyConfirmDialog(function () {
+                      doSsoAuthLogin(
+                        "sso:preferred_email",
+                        "email",
+                        appState.ssoEmail.trim(),
+                      );
+                    });
+                    return;
+                  }
+                  doSsoAuthLogin(
+                    "sso:preferred_email",
+                    "email",
+                    appState.ssoEmail.trim(),
+                  );
+                }
+
+                // 协议未勾选时的确认弹窗（与 handleSocialLogin 保持一致）
+                function showPolicyConfirmDialog(onConfirm) {
+                  new Dialog().confirm(
+                    `<div class="confirm-title" data-product-confirm-title>
+Service Agreement and Privacy Terms
+</div> <p>
+I confirm that I have read and acknowledge the
+<a class="color-light" data-product-privacy-link href="/document/privacy-policy" target="_blank">
+Privacy Policy,</a>
+                                        <a class="color-light" data-product-dpsa-link href="/document/dpsa" target="_blank">
+Data Processing and Security Agreement,</a>
+                                        <a class="color-light" data-product-terms-link href="/document/term" target="_blank">
+<span data-product-service-agreement>Tencent Cloud CodeBuddy Service Agreement</span></a>
+</p>`,
+                    {
+                      type: "custom",
+                      buttons: [
+                        {
+                          value: "Confirm",
+                          type: "success",
+                          events: function (event) {
+                            appState.agreedPolicy = true;
+                            syncPolicyCheckboxes(true);
+                            event.dialog.remove();
+                            if (typeof onConfirm === "function") onConfirm();
+                          },
+                        },
+                        {
+                          value: "Cancel",
+                          type: "normal",
+                        },
+                      ],
+                    },
+                  );
+                  if (window.applyLoginProductConfig) {
+                    setTimeout(window.applyLoginProductConfig, 0);
+                  }
+                }
+
+                function syncPolicyCheckboxes(checked) {
+                  [
+                    "agree-policy-account",
+                    "agree-policy",
+                    "agree-policy-sso",
+                  ].forEach(function (id) {
+                    var el = document.getElementById(id);
+                    if (el) el.checked = checked;
+                  });
+                }
+
+                // 跳转到 OneID IdP 授权链路，带上 acr_values 和 account_id
+                // 说明：SSO 企业域名登录 / SSO 企业邮箱登录 / OneID 品牌按钮 三个入口本质都是走 OneID IdP，
+                // 只是 SSO 两个入口需要额外把 acr_values / account_id 透传给 OneID，用于租户定位。
+                // 因此统一复用 window.__oneidLoginUrl 作为 base，append 参数后直连 broker endpoint，
+                // 避免"整页 reload 回登录页让 Keycloak 二次路由"那一层中转。
+                function doSsoAuthLogin(acrValue, type, value) {
+                  var btnId =
+                    type === "domain"
+                      ? "sso-domain-submit"
+                      : "sso-email-submit";
+                  var btn = document.getElementById(btnId);
+                  if (btn) btn.disabled = true;
+
+                  if (!window.__oneidLoginUrl) {
+                    console.error("[SSO Login] OneID provider not configured");
+                    if (btn)
+                      btn.disabled =
+                        !appState[type === "domain" ? "ssoDomain" : "ssoEmail"];
+                    showSsoLoginError(new Error("ONEID_NOT_CONFIGURED"), type);
+                    return;
+                  }
+
+                  fetchAccountId(type, value)
+                    .then(function (accountId) {
+                      // fetchAccountId resolve 时保证 accountId 非空，异常场景都走 reject 分支
+                      // 基于 OneID broker URL 追加参数。loginUrl 来自 a.href，分隔符已是真 `&`。
+                      var base = window.__oneidLoginUrl;
+                      var sep = base.indexOf("?") >= 0 ? "&" : "?";
+                      var target =
+                        base +
+                        sep +
+                        "acr_values=" +
+                        encodeURIComponent(acrValue) +
+                        "&account_id=" +
+                        encodeURIComponent(accountId);
+                      // login_hint 暂不透传，若后端需要可放开：
+                      // target += '&login_hint=' + encodeURIComponent(value);
+                      gotoOneidLoginUrl(target);
+                    })
+                    .catch(function (err) {
+                      console.error("[SSO Login] Failed:", err);
+                      if (btn)
+                        btn.disabled =
+                          !appState[
+                            type === "domain" ? "ssoDomain" : "ssoEmail"
+                          ];
+                      showSsoLoginError(err, type);
+                    });
+                }
+
+                // SSO 登录失败提示
+                // 所有错误都贴在对应输入框下方（inline），保持与未找到域名/邮箱同样的轻量风格，
+                // 避免 danger 弹窗带来的打断感；HTTP 状态码等技术细节只进 console，不暴露给用户。
+                //
+                // err.message 由 fetchAccountId / doSsoAuthLogin 约定：
+                //   'NOT_FOUND'       -> 后端 code=12006，企业未找到
+                //   'INVALID_FORMAT'  -> 后端 code=10001，参数格式不对
+                //   'SERVICE_ERROR'   -> 其他非预期响应 / 网络错误 / JSON 解析失败
+                //   'ONEID_NOT_CONFIGURED' -> 前置校验，OneID IdP 未配置
+                function showSsoLoginError(err, type) {
+                  var msg = err && err.message ? err.message : "";
+                  var wrapperId =
+                    type === "domain"
+                      ? "sso-domain-wrapper"
+                      : "sso-email-wrapper";
+                  var errorId =
+                    type === "domain" ? "sso-domain-error" : "sso-email-error";
+                  var message;
+                  if (msg === "NOT_FOUND") {
+                    message =
+                      type === "domain"
+                        ? "No account found for this enterprise domain. Please check your input."
+                        : "No account found for this enterprise email. Please check your input.";
+                  } else if (msg === "INVALID_FORMAT") {
+                    message =
+                      type === "domain"
+                        ? "Invalid enterprise domain format. Please re-enter."
+                        : "Invalid enterprise email format. Please re-enter.";
+                  } else {
+                    // SERVICE_ERROR / ONEID_NOT_CONFIGURED / 网络错误等统一归为服务异常
+                    message =
+                      "Login service is temporarily unavailable. Please try again later.";
+                  }
+                  showFieldError(wrapperId, errorId, message);
+                }
+
+                // 切换密码显示/隐藏
+                function togglePasswordVisibility() {
+                  var passwordInput = document.getElementById("password");
+                  var toggleIcon = document.getElementById("password-toggle");
+
+                  appState.showPassword = !appState.showPassword;
+
+                  if (appState.showPassword) {
+                    passwordInput.type = "text";
+                    toggleIcon.className = "icon icon-eyes-open";
+                  } else {
+                    passwordInput.type = "password";
+                    toggleIcon.className = "icon icon-eyes";
+                  }
+                }
+
+                // 处理用户名输入
+                function handleUsernameInput(input) {
+                  appState.username = input.value;
+                  updateSubmitButton();
+                  updateErrorDisplay();
+                }
+
+                // 处理密码输入
+                function handlePasswordInput(input) {
+                  appState.password = input.value;
+                  updateSubmitButton();
+                }
+
+                // 处理政策同意状态变化
+                function handlePolicyChange(checkbox) {
+                  appState.agreedPolicy = checkbox.checked;
+                  syncPolicyCheckboxes(checkbox.checked);
+                  updateSubmitButton();
+                }
+
+                // 更新提交按钮状态
+                function updateSubmitButton() {
+                  var submitButton = document.getElementById("kc-login");
+                  if (submitButton) {
+                    var shouldDisable =
+                      !appState.username ||
+                      !appState.password ||
+                      !appState.agreedPolicy;
+                    submitButton.disabled = shouldDisable;
+                  }
+                }
+
+                // 更新错误显示
+                function updateErrorDisplay() {
+                  var usernameWrapper =
+                    document.getElementById("username-wrapper");
+                  var clientError = document.getElementById("client-error");
+
+                  if (usernameWrapper && clientError) {
+                    if (appState.errorMessage) {
+                      usernameWrapper.classList.add("sp-color-wrapper-error");
+                      clientError.textContent = appState.errorMessage;
+                      clientError.style.display = "block";
+                    } else {
+                      usernameWrapper.classList.remove(
+                        "sp-color-wrapper-error",
+                      );
+                      clientError.style.display = "none";
+                    }
+                  }
+                }
+
+                // 处理社交登录
+                function handleSocialLogin(e) {
+                  e.preventDefault();
+                  // 使用 currentTarget（始终指向绑定 onclick 的 <a>），避免浏览器翻译
+                  // 注入 <font> 等中间节点后 e.target/parentNode 取不到 href 导致 URL 变 undefined
+                  var link = e.currentTarget;
+                  var href = link.href;
+                  var id = link.id;
+
+                  if (!appState.agreedPolicy) {
+                    new Dialog().confirm(
+                      `<div class="confirm-title" data-product-confirm-title>
+Service Agreement and Privacy Terms
+</div> <p>
+I confirm that I have read and acknowledge the
+<a class="color-light" data-product-privacy-link href="/document/privacy-policy" target="_blank">
+Privacy Policy,</a>
+                                        <a class="color-light" data-product-dpsa-link href="/document/dpsa" target="_blank">
+Data Processing and Security Agreement,</a>
+                                        <a class="color-light" data-product-terms-link href="/document/term" target="_blank">
+<span data-product-service-agreement>Tencent Cloud CodeBuddy Service Agreement</span></a>
+</p>`,
+                      {
+                        type: "custom",
+                        buttons: [
+                          {
+                            value: "Confirm",
+                            type: "success",
+                            events: function (event) {
+                              appState.agreedPolicy = true;
+                              syncPolicyCheckboxes(true);
+                              event.dialog.remove();
+                              handleAuthLogin(href);
+                            },
+                          },
+                          {
+                            value: "Cancel",
+                            type: "normal",
+                          },
+                        ],
+                      },
+                    );
+                    if (window.applyLoginProductConfig) {
+                      setTimeout(window.applyLoginProductConfig, 0);
+                    }
+                  } else {
+                    handleAuthLogin(href);
+                  }
+                }
+
+                // 处理认证登录
+                function handleAuthLogin(url) {
+                  if (window.self === window.top) {
+                    window.location.href = url;
+                  } else {
+                    window.parent.location.href = url;
+                  }
+                }
+
+                // OneID 按钮点击：先做协议确认，确认后直接跳转到 OneID IdP 的 loginUrl。
+                function handleOneidLogin(e) {
+                  if (e && e.preventDefault) e.preventDefault();
+                  if (!window.__oneidLoginUrl) {
+                    console.warn("[OneID] provider not configured");
+                    return;
+                  }
+                  var doJump = function () {
+                    gotoOneidLoginUrl(window.__oneidLoginUrl);
+                  };
+                  if (!appState.agreedPolicy) {
+                    showPolicyConfirmDialog(doJump);
+                  } else {
+                    doJump();
+                  }
+                }
+
+                // 页面加载完成后初始化
+                document.addEventListener("DOMContentLoaded", function () {
+                  // 初始化表单状态
+                  var usernameInput = document.getElementById("username");
+                  var passwordInput = document.getElementById("password");
+
+                  if (usernameInput && usernameInput.value) {
+                    appState.username = usernameInput.value;
+                  }
+
+                  updateSubmitButton();
+
+                  // 动态注入企业域名后缀展示（仅用于 UI 提示，不参与 API 请求）
+                  var suffixEl = document.getElementById("sso-domain-suffix");
+                  if (suffixEl) {
+                    suffixEl.textContent = getSsoDomainSuffix();
+                  }
+
+                  // 从sessionStorage读取上次的tab状态,如果没有则默认为account
+                  var savedTab = defaultTab || "account"; // 默认值
+                  try {
+                    var storedTab = sessionStorage.getItem("CodeBuddyLoginTab");
+                    if (
+                      storedTab &&
+                      (storedTab === "account" || storedTab === "email")
+                    ) {
+                      savedTab = defaultTab || storedTab;
+                    }
+                  } catch (e) {
+                    console.warn(
+                      "Failed to read tab state from sessionStorage:",
+                      e,
+                    );
+                  }
+
+                  // 切换到保存的tab
+                  switchTab(savedTab);
+                });
+              </script>
+            </div>
+            <div class="footer text-gray">
+              Need help?
+              <a
+                class="blod-text"
+                href="mailto:codebuddy@tencent.com"
+                data-product-contact-link=""
+              >
+                Contact support
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="right">
+        <div class="relative h-full w-full flex items-center justify-center">
+          <div class="img-wrapper">
+            <video
+              id="product-hero-video"
+              class="w-full"
+              poster="https://codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/started-poster.png"
+              src="https://dscache-intl.cloudcachetci.com/upload/uploader/video-4f783c743d7cab970ff83d874d4f13b287528ef8.mp4"
+              autoplay=""
+              loop=""
+              muted=""
+              playsinline=""
+            ></video>
+            <div class="layer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      // Maintenance Notice Functions
+
+      // 获取调整后的配置（测试域名下自动修改时间范围）
+      function getAdjustedConfig() {
+        const config = { ...MAINTENANCE_CONFIG };
+        const hostname = window.location.hostname;
+
+        // 仅在 staging-codebuddy.tencent.com 域名下进行时间调整
+        if (hostname === "staging-codebuddy.tencent.com") {
+          const now = new Date();
+          const offsetMs = (config.timezoneOffset || 0) * 60 * 60 * 1000;
+          const currentTime = new Date(now.getTime() + offsetMs);
+
+          // 计算当前小时的00分和40分
+          const currentHourStart = new Date(currentTime);
+          currentHourStart.setMinutes(0, 0, 0);
+
+          const currentHourEnd = new Date(currentTime);
+          currentHourEnd.setMinutes(40, 59, 999);
+
+          // 修改配置的时间范围为当前小时的00:00到40:59
+          config.displayStartTime = currentHourStart.toISOString();
+          config.displayEndTime = currentHourEnd.toISOString();
+
+          console.log(
+            "[Maintenance Notice] [Staging Test Mode] Adjusted time range:",
+            currentHourStart.toLocaleString(),
+            "to",
+            currentHourEnd.toLocaleString(),
+          );
+        }
+
+        return config;
+      }
+
+      // 检查当前时间是否在显示时间段内
+      function isInDisplayTimeRange() {
+        const config = getAdjustedConfig();
+
+        // 如果没有配置时间段，默认显示
+        if (!config.displayStartTime && !config.displayEndTime) {
+          return true;
+        }
+
+        // 获取当前时间（考虑时区偏移）
+        const now = new Date();
+        const offsetMs = (config.timezoneOffset || 0) * 60 * 60 * 1000;
+        const currentTime = new Date(now.getTime() + offsetMs);
+
+        // 检查开始时间
+        if (config.displayStartTime) {
+          const startTime = new Date(config.displayStartTime);
+          if (currentTime < startTime) {
+            return false; // 还未到开始时间
+          }
+        }
+
+        // 检查结束时间
+        if (config.displayEndTime) {
+          const endTime = new Date(config.displayEndTime);
+          if (currentTime > endTime) {
+            return false; // 已过结束时间
+          }
+        }
+
+        return true;
+      }
+
+      // 关闭维护通知
+      function closeMaintenance() {
+        const notice = document.getElementById("maintenance-notice");
+        if (notice) {
+          notice.style.display = "none";
+          notice.classList.add("hidden");
+
+          // 保存关闭状态到 localStorage
+          const closeData = {
+            closed: true,
+            timestamp: new Date().toISOString(),
+            config: {
+              startTime: MAINTENANCE_CONFIG.displayStartTime,
+              endTime: MAINTENANCE_CONFIG.displayEndTime,
+            },
+          };
+          // localStorage.setItem('maintenance-notice-closed', JSON.stringify(closeData));
+          console.log("[Maintenance Notice] Closed by user");
+        }
+      }
+
+      // 检查用户是否已关闭当前配置的通知
+      function isNoticeClosed() {
+        try {
+          const closedData = localStorage.getItem("maintenance-notice-closed");
+          if (!closedData) {
+            return false;
+          }
+
+          const data = JSON.parse(closedData);
+
+          // 如果配置的时间段发生变化，则认为是新的通知
+          if (
+            data.config.startTime !== MAINTENANCE_CONFIG.displayStartTime ||
+            data.config.endTime !== MAINTENANCE_CONFIG.displayEndTime
+          ) {
+            return false;
+          }
+
+          return data.closed === true;
+        } catch (e) {
+          console.error("[Maintenance Notice] Error parsing closed data:", e);
+          // 如果解析失败，清除旧数据
+          localStorage.removeItem("maintenance-notice-closed");
+          return false;
+        }
+      }
+
+      // 初始化维护通知
+      function initMaintenanceNotice() {
+        // 检查是否启用
+        if (!MAINTENANCE_CONFIG.enabled) {
+          console.log("[Maintenance Notice] Disabled by config");
+          return;
+        }
+
+        // 检查是否在显示时间段内
+        if (!isInDisplayTimeRange()) {
+          console.log("[Maintenance Notice] Not in display time range");
+          return;
+        }
+
+        // 检查用户是否已关闭通知
+        //if (isNoticeClosed()) {
+        //    console.log('[Maintenance Notice] Already closed by user');
+        //    return;
+        //}
+
+        // 填充内容
+        document.getElementById("maintenance-title-text").textContent =
+          MAINTENANCE_CONFIG.title;
+        document.getElementById("maintenance-datetime-text").textContent =
+          MAINTENANCE_CONFIG.datetime;
+        document.getElementById("maintenance-desc-text").textContent =
+          MAINTENANCE_CONFIG.description;
+        document.getElementById("maintenance-thanks-text").textContent =
+          " " + MAINTENANCE_CONFIG.thanks;
+
+        // 显示通知
+        const notice = document.getElementById("maintenance-notice");
+        if (notice) {
+          notice.style.display = "block";
+          console.log("[Maintenance Notice] Displayed");
+        }
+
+        // 绑定关闭按钮事件
+        const closeBtn = document.getElementById("maintenance-close-btn");
+        if (closeBtn) {
+          closeBtn.addEventListener("click", closeMaintenance);
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        // 初始化维护通知
+        initMaintenanceNotice();
+
+        // 支持多个alert时也能用
+        document.querySelectorAll(".alert-close-icon").forEach(function (icon) {
+          icon.addEventListener("click", function () {
+            // 获取最近的.alert祖先并隐藏它
+            var alertBox = icon.closest(".alert-info");
+            if (alertBox) {
+              alertBox.style.visibility = "hidden";
+            }
+          });
+        });
+      });
+    </script>
+
+    <dialog
+      is="ui-dialog"
+      class="ui-dialog ui-dialog-animation"
+      defined=""
+      style="z-index: 19"
+      open=""
+    >
+      <button
+        class="ui-dialog-close ESC"
+        id="lulu_2823073423717477"
+        data-target="lulu_2823073423717477"
+      >
+        关闭
+      </button>
+      <h4 class="ui-dialog-title"></h4>
+      <div class="ui-dialog-body">
+        <div class="ui-dialog-custom ui-dialog-confirm">
+          <div class="ui-dialog-wrap">
+            <div class="confirm-title" data-product-confirm-title="">
+              Service Agreement and Privacy Terms
+            </div>
+            <p>
+              I confirm that I have read and acknowledge the
+              <a
+                class="color-light"
+                data-product-privacy-link=""
+                href="/document/privacy-policy"
+                target="_blank"
+              >
+                Privacy Policy,</a
+              >
+              <a
+                class="color-light"
+                data-product-dpsa-link=""
+                href="/document/dpsa"
+                target="_blank"
+              >
+                Data Processing and Security Agreement,</a
+              >
+              <a
+                class="color-light"
+                data-product-terms-link=""
+                href="/document/term"
+                target="_blank"
+              >
+                <span data-product-service-agreement=""
+                  >Tencent Cloud CodeBuddy Service Agreement</span
+                ></a
+              >
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="ui-dialog-footer">
+        <button class="ui-button" data-type="success">Confirm</button
+        ><button class="ui-button" data-type="normal">Cancel</button>
+      </div>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+node_modules/
+state.jsonl
+akun-result.txt
+akun-failed.txt
+screenshots/
+state-crusoe.jsonl
+akun-result-crusoe.txt
+akun-failed-crusoe.txt
+screenshots-crusoe/
+apikey.txt
+.env
+*.log
+.DS_Store
+bun.lockb

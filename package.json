@@ -1,0 +1,26 @@
+{
+  "name": "cbdg-credit-automation",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "echo no-build-needed (bun runs TS directly)",
+    "test": "bun run test:library && bun run test:app-units && bun run test:runner && bun run test:queue && bun run test:crusoe-units && bun run test:crusoe-queue",
+    "test:library": "bun test packages/google-oauth/src/config.test.ts packages/google-oauth/src/units.test.ts packages/google-oauth/src/browser.integration.test.ts",
+    "test:app-units": "bun test apps/cbdg/src/units.test.ts",
+    "test:runner": "bun test apps/cbdg/src/runner.test.ts",
+    "test:queue": "bun test apps/cbdg/src/queue.test.ts",
+    "test:crusoe-units": "bun test apps/crusoe/src/units.test.ts",
+    "test:crusoe-queue": "bun test apps/crusoe/src/queue.test.ts",
+    "typecheck": "bun tsc --noEmit -p tsconfig.json",
+    "cbdg": "bun run apps/cbdg/src/cli.ts",
+    "crusoe": "bun run apps/crusoe/src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

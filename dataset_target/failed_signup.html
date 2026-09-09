@@ -1,0 +1,870 @@
+<html class="" data-product="codebuddy" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"
+    />
+    <meta name="HandheldFriendly" content="true" />
+    <title>Sign in to copilot</title>
+    <link
+      rel="icon"
+      href="/auth/resources/6rd0u/login/ide-oversea/img/logo.svg"
+    />
+    <script>
+      (function () {
+        const productConfigs = {
+          codebuddy: {
+            productName: "CodeBuddy",
+            logo: "//codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/avatar-white.svg",
+            videoPoster:
+              "https://codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/started-poster.png",
+            videoSrc:
+              "https://dscache-intl.cloudcachetci.com/upload/uploader/video-4f783c743d7cab970ff83d874d4f13b287528ef8.mp4",
+            termsUrl: "/document/term",
+            privacyUrl: "/document/privacy-policy",
+            dpsaUrl: "/document/dpsa",
+            chinaSiteUrl: "https://www.codebuddy.cn",
+            contactUrl: "mailto:codebuddy@tencent.com",
+            serviceAgreementText: "Tencent Cloud CodeBuddy Service Agreement",
+            confirmTitleText: "Service Agreement and Privacy Terms",
+          },
+          workbuddy: {
+            productName: "WorkBuddy",
+            logo: "/auth/resources/6rd0u/login/ide-oversea/img/workbuddy-logo.png",
+            videoPoster:
+              "//acc-1258344699.cos.accelerate.myqcloud.com/web/login/4ca1c1d5a3081f9924afca9499a7ef0679601d03/assets/workbuddy-cat-poster.c04229e3.png",
+            videoSrc:
+              "//acc-1258344699.cos.accelerate.myqcloud.com/web/login/4ca1c1d5a3081f9924afca9499a7ef0679601d03/assets/workbuddy-cat.c32542ad.mp4",
+            termsUrl: "/document/term",
+            privacyUrl: "/document/privacy-policy",
+            dpsaUrl: "/document/dpsa",
+            chinaSiteUrl: "https://www.workbuddy.cn",
+            contactUrl: "https://www.tencentcloud.com/zh/contact-us",
+            serviceAgreementText: "Tencent Cloud CodeBuddy Service Agreement",
+            confirmTitleText: "Service Agreement and Privacy Terms",
+          },
+        };
+
+        function appendProductParam(value, product) {
+          if (!value) {
+            return value;
+          }
+          try {
+            const targetUrl = new URL(value, window.location.href);
+            targetUrl.searchParams.set("product", product);
+            return targetUrl.href;
+          } catch (e) {
+            return value;
+          }
+        }
+
+        function applyProductConfig(config) {
+          const currentProduct =
+            document.documentElement.dataset.product || "codebuddy";
+          const logo = document.querySelector("[data-product-logo]");
+          const heroVideo = document.getElementById("product-hero-video");
+
+          if (logo) {
+            logo.src = config.logo;
+            logo.alt = config.productName;
+          }
+          document
+            .querySelectorAll("[data-product-name]")
+            .forEach(function (node) {
+              node.textContent = config.productName;
+            });
+          if (heroVideo) {
+            heroVideo.poster = config.videoPoster;
+            if (heroVideo.getAttribute("src") !== config.videoSrc) {
+              heroVideo.src = config.videoSrc;
+              heroVideo.load();
+            }
+          }
+          document
+            .querySelectorAll("[data-product-terms-link]")
+            .forEach(function (link) {
+              link.href = config.termsUrl;
+            });
+          document
+            .querySelectorAll("[data-product-privacy-link]")
+            .forEach(function (link) {
+              link.href = config.privacyUrl;
+            });
+          document
+            .querySelectorAll("[data-product-dpsa-link]")
+            .forEach(function (link) {
+              link.href = config.dpsaUrl;
+            });
+          document
+            .querySelectorAll("[data-product-service-agreement]")
+            .forEach(function (node) {
+              node.textContent = config.serviceAgreementText;
+            });
+          document
+            .querySelectorAll("[data-product-confirm-title]")
+            .forEach(function (node) {
+              node.textContent = config.confirmTitleText;
+            });
+          document
+            .querySelectorAll("[data-product-china-link]")
+            .forEach(function (link) {
+              link.href = config.chinaSiteUrl;
+            });
+          document
+            .querySelectorAll("[data-product-contact-link]")
+            .forEach(function (link) {
+              link.href = config.contactUrl;
+            });
+          document
+            .querySelectorAll("a[data-product-preserve]")
+            .forEach(function (link) {
+              link.href = appendProductParam(link.href, currentProduct);
+            });
+          document
+            .querySelectorAll("form[data-product-preserve]")
+            .forEach(function (form) {
+              form.action = appendProductParam(form.action, currentProduct);
+            });
+        }
+
+        try {
+          const productStorageKey = "CURRENT_BUDDY_PROODUCT";
+          const urlParams = new URLSearchParams(window.location.search);
+          const urlProduct = urlParams.get("product");
+          const storageProduct = sessionStorage.getItem(productStorageKey);
+          const product = urlProduct || storageProduct || "codebuddy";
+          const safeProduct = /^[a-z0-9-]+$/i.test(product)
+            ? product
+            : "codebuddy";
+          const currentProduct = productConfigs[safeProduct]
+            ? safeProduct
+            : "codebuddy";
+          const currentConfig = productConfigs[currentProduct];
+          if (urlProduct) {
+            sessionStorage.setItem(productStorageKey, currentProduct);
+          }
+          document.documentElement.dataset.product = currentProduct;
+          window.__LOGIN_PRODUCT_CONFIG__ = currentConfig;
+          window.applyLoginProductConfig = function () {
+            applyProductConfig(currentConfig);
+          };
+
+          document.addEventListener(
+            "DOMContentLoaded",
+            window.applyLoginProductConfig,
+          );
+        } catch (e) {
+          document.documentElement.dataset.product = "codebuddy";
+          window.__LOGIN_PRODUCT_CONFIG__ = productConfigs.codebuddy;
+          window.applyLoginProductConfig = function () {
+            applyProductConfig(productConfigs.codebuddy);
+          };
+          console.error("[Product] Error detecting product:", e);
+        }
+      })();
+    </script>
+    <link
+      href="/auth/resources/6rd0u/login/ide-oversea/css/styles.v14.css"
+      rel="stylesheet"
+    />
+    <script type="importmap">
+      {
+        "imports": {
+          "rfc4648": "/auth/resources/6rd0u/common/keycloak/vendor/rfc4648/rfc4648.js"
+        }
+      }
+    </script>
+    <script type="module">
+      import { checkCookiesAndSetTimer } from "/auth/resources/6rd0u/login/ide-oversea/js/authChecker.js";
+      checkCookiesAndSetTimer(
+        "/auth/realms/copilot/login-actions/restart?client_id=console&tab_id=ketyJtTAkvs&client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&skip_logout=true",
+      );
+    </script>
+    <script>
+      // Auto-detect and switch language based on localStorage
+      (function () {
+        try {
+          const storedLang = localStorage.getItem("CODEBUDDY_IDE_STORAGE_LANG");
+          if (!storedLang) {
+            return;
+          }
+
+          // 映射 IDE 语言到 Keycloak 语言标签
+          // en-US -> en, zh-CN -> zh-CN
+          const langMapping = {
+            "en-US": "en",
+            "zh-CN": "zh-CN",
+          };
+
+          const targetLocale = langMapping[storedLang] || storedLang;
+          const currentLocale = "en";
+
+          console.log(
+            "[Language] Stored language:",
+            storedLang,
+            "-> Mapped to:",
+            targetLocale,
+            "Current:",
+            currentLocale,
+          );
+
+          // 如果当前语言与存储的语言不匹配，则切换
+          if (targetLocale && targetLocale !== currentLocale) {
+            // 查找对应的语言URL
+            const supportedLocales = {
+              "zh-CN":
+                "/auth/realms/copilot/login-actions/first-broker-login?client_id=console&amp;tab_id=ketyJtTAkvs&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;execution=a1721c87-6b56-4f52-a578-74b08c00e9ea&amp;kc_locale=zh-CN",
+              en: "/auth/realms/copilot/login-actions/first-broker-login?client_id=console&amp;tab_id=ketyJtTAkvs&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;execution=a1721c87-6b56-4f52-a578-74b08c00e9ea&amp;kc_locale=en",
+            };
+
+            const targetUrl = supportedLocales[targetLocale];
+            if (targetUrl) {
+              console.log(
+                "[Language] Auto-switching from",
+                currentLocale,
+                "to",
+                targetLocale,
+              );
+              window.location.href = targetUrl;
+            }
+          }
+        } catch (e) {
+          console.error("[Language] Error detecting language:", e);
+        }
+      })();
+    </script>
+    <script>
+      (function () {
+        function getStorageLanguage(localeTag) {
+          return localeTag && localeTag.indexOf("zh") === 0 ? "zh-CN" : "en-US";
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+          const dropdown = document.getElementById("kc-locale-dropdown");
+
+          document
+            .querySelectorAll("[data-locale-switch]")
+            .forEach(function (link) {
+              link.addEventListener("click", function () {
+                const localeTag = link.getAttribute("data-locale-tag");
+                localStorage.setItem(
+                  "CODEBUDDY_IDE_STORAGE_LANG",
+                  getStorageLanguage(localeTag),
+                );
+              });
+            });
+
+          document.addEventListener("click", function (event) {
+            if (
+              !dropdown ||
+              !dropdown.open ||
+              dropdown.contains(event.target)
+            ) {
+              return;
+            }
+
+            dropdown.open = false;
+          });
+        });
+      })();
+    </script>
+    <link
+      rel="stylesheet"
+      as="style"
+      href="/auth/resources/6rd0u/login/ide-oversea/css/Dialog.css"
+      onload="
+        this.onload = null;
+        this.rel = 'stylesheet';
+      "
+    />
+    <link
+      rel="stylesheet"
+      as="style"
+      href="/auth/resources/6rd0u/login/ide-oversea/css/Button.css"
+      onload="
+        this.onload = null;
+        this.rel = 'stylesheet';
+      "
+    />
+    <script
+      type="module"
+      src="/auth/resources/6rd0u/login/ide-oversea/js/Dialog.js"
+    ></script>
+    <script type="module">
+      document.addEventListener("click", (event) => {
+        const link = event.target.closest("a[data-once-link]");
+        if (!link) {
+          return;
+        }
+        if (link.getAttribute("aria-disabled") === "true") {
+          event.preventDefault();
+          return;
+        }
+        const { disabledClass } = link.dataset;
+        if (disabledClass) {
+          link.classList.add(...disabledClass.trim().split(/\s+/));
+        }
+        link.setAttribute("role", "link");
+        link.setAttribute("aria-disabled", "true");
+      });
+    </script>
+
+    <!-- Maintenance Notice Styles -->
+    <style>
+      .maintenance-notice {
+        background: var(--auth-maintenance-bg);
+        color: var(--auth-maintenance-text);
+        box-shadow: 0 2px 8px var(--auth-maintenance-shadow);
+        overflow: hidden;
+        border-bottom: 1px solid var(--auth-maintenance-border);
+      }
+
+      .maintenance-notice.hidden {
+        display: none;
+      }
+
+      .maintenance-content {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0.875rem 1.5rem;
+      }
+
+      .maintenance-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+      }
+
+      .maintenance-icon {
+        width: 1.25rem;
+        height: 1.25rem;
+        color: var(--auth-maintenance-icon);
+        flex-shrink: 0;
+        margin-top: 0.125rem;
+      }
+
+      .maintenance-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .maintenance-title {
+        font-size: 0.9375rem;
+        margin: 0 0 0.25rem 0;
+        line-height: 1.4;
+        color: var(--auth-maintenance-title);
+      }
+
+      .maintenance-title strong {
+        font-weight: 600;
+      }
+
+      .maintenance-desc {
+        font-size: 0.8125rem;
+        line-height: 1.4;
+        color: var(--auth-maintenance-desc);
+        margin: 0;
+      }
+
+      .maintenance-close {
+        background: none;
+        border: none;
+        color: var(--auth-maintenance-desc);
+        cursor: pointer;
+        padding: 0.25rem;
+        border-radius: 0.25rem;
+        transition: all 0.2s;
+        width: 1.5rem;
+        height: 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .maintenance-close:hover {
+        background-color: var(--auth-white-01);
+        color: var(--auth-maintenance-title);
+      }
+
+      .maintenance-close svg {
+        width: 1rem;
+        height: 1rem;
+      }
+
+      @media (max-width: 768px) {
+        .maintenance-content {
+          padding: 0.75rem 1rem;
+        }
+
+        .maintenance-header {
+          gap: 0.5rem;
+        }
+
+        .maintenance-title {
+          font-size: 0.875rem;
+        }
+
+        .maintenance-desc {
+          font-size: 0.75rem;
+        }
+
+        .maintenance-icon {
+          width: 1.125rem;
+          height: 1.125rem;
+        }
+
+        .maintenance-close {
+          width: 1.25rem;
+          height: 1.25rem;
+        }
+
+        .maintenance-close svg {
+          width: 0.875rem;
+          height: 0.875rem;
+        }
+      }
+    </style>
+
+    <script>
+      // 检查是否为 login 模式和 small 风格
+      (function () {
+        const urlParams = new URLSearchParams(window.location.search);
+        const mode = urlParams.get("mode");
+        const style = urlParams.get("style");
+
+        if (mode === "login") {
+          document.documentElement.classList.add("login-mode");
+        }
+        if (style === "small") {
+          document.documentElement.classList.add("small-style");
+        }
+      })();
+    </script>
+  </head>
+
+  <body class="kcBodyClass">
+    <script>
+      // ========== Maintenance Notice Configuration ==========
+      // 维护通知配置 - 修改此处即可更新维护通知内容
+      const MAINTENANCE_CONFIG = {
+        // 是否启用维护通知功能 (true: 启用, false: 禁用)
+        enabled: true,
+
+        // 维护标题
+        title: "Scheduled Maintenance",
+
+        // 维护时间（显示用）
+        datetime: "November 4, 2025, 4:00-6:00 AM",
+
+        // 维护说明
+        description:
+          "CodeBuddy will undergo brief maintenance. Service may be temporarily unavailable during this period.",
+
+        // 感谢语
+        thanks: "Thank you for your understanding and support.",
+
+        // ========== 自动展示时间段配置 ==========
+        // 提醒开始时间（ISO 8601 格式或留空表示立即开始）
+        // 格式: "YYYY-MM-DDTHH:mm:ss" 或 "YYYY-MM-DD HH:mm:ss"
+        // 示例: "2025-10-28T00:00:00" 表示从 2025年10月28日 00:00 开始显示
+        displayStartTime: "2025-11-04T00:00:00",
+
+        // 提醒结束时间（ISO 8601 格式或留空表示永不结束）
+        // 格式: "YYYY-MM-DDTHH:mm:ss" 或 "YYYY-MM-DD HH:mm:ss"
+        // 示例: "2025-11-04T06:00:00" 表示到 2025年11月4日 06:00 停止显示
+        displayEndTime: "2025-11-04T06:00:00",
+
+        // 时区偏移（小时），默认为 0 (UTC)
+        // 中国时区: 8, 美国东部时区: -5, 美国西部时区: -8
+        timezoneOffset: 0,
+      };
+      // ====================================================
+    </script>
+
+    <!-- System Maintenance Notice -->
+    <div
+      id="maintenance-notice"
+      class="maintenance-notice"
+      style="display: none"
+    >
+      <div class="maintenance-content">
+        <div class="maintenance-header">
+          <svg
+            class="maintenance-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+            ></path>
+          </svg>
+          <div class="maintenance-info">
+            <div class="maintenance-title">
+              <strong id="maintenance-title-text"></strong> —
+              <span id="maintenance-datetime-text"></span>
+            </div>
+            <div class="maintenance-desc">
+              <span id="maintenance-desc-text"></span>
+              <span id="maintenance-thanks-text"></span>
+            </div>
+          </div>
+          <button
+            class="maintenance-close"
+            id="maintenance-close-btn"
+            aria-label="Close notification"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="layout">
+      <div class="language-switcher" id="kc-locale">
+        <div id="kc-locale-wrapper" class="">
+          <details id="kc-locale-dropdown" class="">
+            <summary id="kc-current-locale-link" aria-label="languages">
+              <span> Intl - English </span>
+              <svg
+                class="language-switcher-chevron"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M6 9l6 6 6-6"></path>
+              </svg>
+            </summary>
+            <div
+              role="menu"
+              tabindex="-1"
+              aria-labelledby="kc-current-locale-link"
+              id="language-switch1"
+              class="language-switcher-menu"
+            >
+              <a
+                role="menuitem"
+                id="language-1"
+                class="language-switcher-item"
+                href="/auth/realms/copilot/login-actions/first-broker-login?client_id=console&amp;tab_id=ketyJtTAkvs&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;execution=a1721c87-6b56-4f52-a578-74b08c00e9ea&amp;kc_locale=zh-CN"
+                data-locale-switch=""
+                data-locale-tag="zh-CN"
+              >
+                Intl - 中文
+              </a>
+              <a
+                role="menuitem"
+                id="language-2"
+                class="language-switcher-item is-active"
+                href="/auth/realms/copilot/login-actions/first-broker-login?client_id=console&amp;tab_id=ketyJtTAkvs&amp;client_data=eyJydSI6Imh0dHBzOi8vd3d3LmNvZGVidWRkeS5haS9sb2dpbi9zZWxlY3Q_cmVkaXJlY3RfdXJpPWh0dHBzJTNBJTJGJTJGd3d3LmNvZGVidWRkeS5haSUyRnByaWNpbmciLCJydCI6ImNvZGUifQ&amp;execution=a1721c87-6b56-4f52-a578-74b08c00e9ea&amp;kc_locale=en"
+                data-locale-switch=""
+                data-locale-tag="en"
+              >
+                Intl - English
+              </a>
+              <div class="language-switcher-divider" aria-hidden="true"></div>
+              <a
+                class="language-switcher-item language-switcher-region"
+                href="https://www.codebuddy.cn"
+                data-product-china-link=""
+              >
+                中国站
+              </a>
+            </div>
+          </details>
+        </div>
+      </div>
+      <div class="kcLoginClass left">
+        <div class="kcFormCardClass">
+          <header class="kcFormHeaderClass">
+            <h1 id="kc-page-title">
+              Sign in to <span data-product-name="">CodeBuddy</span>
+            </h1>
+            <a href="/" target="_self" class="header-logo">
+              <img
+                class="logo"
+                data-product-logo=""
+                src="//codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/avatar-white.svg"
+                alt="CodeBuddy"
+              />
+            </a>
+          </header>
+          <div id="kc-content">
+            <div class="alert alert-info" aria-live="polite">
+              <svg
+                fill="none"
+                viewBox="0 0 24 24"
+                width="1em"
+                height="1em"
+                class="t-icon t-icon-error-circle-filled"
+              >
+                <path
+                  fill="currentColor"
+                  d="M12 1C18.0751 1 23 5.92487 23 12C23 18.0751 18.0751 23 12 23C5.92487 23 1 18.0751 1 12C1 5.92487 5.92487 1 12 1ZM11.0001 14H13.0001V6.49998H11.0001V14ZM13.004 15.5H11.0001V17.5039H13.004V15.5Z"
+                ></path>
+              </svg>
+              Account Access Restricted
+              <svg
+                class="alert-close-icon"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="display: block"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </div>
+            <div id="kc-content-wrapper">
+              <div id="kc-form">
+                <div id="kc-info-message">
+                  <p>
+                    Your account is temporarily unavailable due to security
+                    policy restrictions. Please contact
+                    <a
+                      class="risk-control-support-link"
+                      href="https://www.tencentcloud.com/contact-us"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style="text-decoration: underline !important"
+                      >Tencent Cloud Support</a
+                    >
+                    for assistance.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="footer text-gray">
+              Need help?
+              <a
+                class="blod-text"
+                href="mailto:codebuddy@tencent.com"
+                data-product-contact-link=""
+              >
+                Contact support
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="right">
+        <div class="relative h-full w-full flex items-center justify-center">
+          <div class="img-wrapper">
+            <video
+              id="product-hero-video"
+              class="w-full"
+              poster="https://codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/started-poster.png"
+              src="https://dscache-intl.cloudcachetci.com/upload/uploader/video-4f783c743d7cab970ff83d874d4f13b287528ef8.mp4"
+              autoplay=""
+              loop=""
+              muted=""
+              playsinline=""
+            ></video>
+            <div class="layer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      // Maintenance Notice Functions
+
+      // 获取调整后的配置（测试域名下自动修改时间范围）
+      function getAdjustedConfig() {
+        const config = { ...MAINTENANCE_CONFIG };
+        const hostname = window.location.hostname;
+
+        // 仅在 staging-codebuddy.tencent.com 域名下进行时间调整
+        if (hostname === "staging-codebuddy.tencent.com") {
+          const now = new Date();
+          const offsetMs = (config.timezoneOffset || 0) * 60 * 60 * 1000;
+          const currentTime = new Date(now.getTime() + offsetMs);
+
+          // 计算当前小时的00分和40分
+          const currentHourStart = new Date(currentTime);
+          currentHourStart.setMinutes(0, 0, 0);
+
+          const currentHourEnd = new Date(currentTime);
+          currentHourEnd.setMinutes(40, 59, 999);
+
+          // 修改配置的时间范围为当前小时的00:00到40:59
+          config.displayStartTime = currentHourStart.toISOString();
+          config.displayEndTime = currentHourEnd.toISOString();
+
+          console.log(
+            "[Maintenance Notice] [Staging Test Mode] Adjusted time range:",
+            currentHourStart.toLocaleString(),
+            "to",
+            currentHourEnd.toLocaleString(),
+          );
+        }
+
+        return config;
+      }
+
+      // 检查当前时间是否在显示时间段内
+      function isInDisplayTimeRange() {
+        const config = getAdjustedConfig();
+
+        // 如果没有配置时间段，默认显示
+        if (!config.displayStartTime && !config.displayEndTime) {
+          return true;
+        }
+
+        // 获取当前时间（考虑时区偏移）
+        const now = new Date();
+        const offsetMs = (config.timezoneOffset || 0) * 60 * 60 * 1000;
+        const currentTime = new Date(now.getTime() + offsetMs);
+
+        // 检查开始时间
+        if (config.displayStartTime) {
+          const startTime = new Date(config.displayStartTime);
+          if (currentTime < startTime) {
+            return false; // 还未到开始时间
+          }
+        }
+
+        // 检查结束时间
+        if (config.displayEndTime) {
+          const endTime = new Date(config.displayEndTime);
+          if (currentTime > endTime) {
+            return false; // 已过结束时间
+          }
+        }
+
+        return true;
+      }
+
+      // 关闭维护通知
+      function closeMaintenance() {
+        const notice = document.getElementById("maintenance-notice");
+        if (notice) {
+          notice.style.display = "none";
+          notice.classList.add("hidden");
+
+          // 保存关闭状态到 localStorage
+          const closeData = {
+            closed: true,
+            timestamp: new Date().toISOString(),
+            config: {
+              startTime: MAINTENANCE_CONFIG.displayStartTime,
+              endTime: MAINTENANCE_CONFIG.displayEndTime,
+            },
+          };
+          // localStorage.setItem('maintenance-notice-closed', JSON.stringify(closeData));
+          console.log("[Maintenance Notice] Closed by user");
+        }
+      }
+
+      // 检查用户是否已关闭当前配置的通知
+      function isNoticeClosed() {
+        try {
+          const closedData = localStorage.getItem("maintenance-notice-closed");
+          if (!closedData) {
+            return false;
+          }
+
+          const data = JSON.parse(closedData);
+
+          // 如果配置的时间段发生变化，则认为是新的通知
+          if (
+            data.config.startTime !== MAINTENANCE_CONFIG.displayStartTime ||
+            data.config.endTime !== MAINTENANCE_CONFIG.displayEndTime
+          ) {
+            return false;
+          }
+
+          return data.closed === true;
+        } catch (e) {
+          console.error("[Maintenance Notice] Error parsing closed data:", e);
+          // 如果解析失败，清除旧数据
+          localStorage.removeItem("maintenance-notice-closed");
+          return false;
+        }
+      }
+
+      // 初始化维护通知
+      function initMaintenanceNotice() {
+        // 检查是否启用
+        if (!MAINTENANCE_CONFIG.enabled) {
+          console.log("[Maintenance Notice] Disabled by config");
+          return;
+        }
+
+        // 检查是否在显示时间段内
+        if (!isInDisplayTimeRange()) {
+          console.log("[Maintenance Notice] Not in display time range");
+          return;
+        }
+
+        // 检查用户是否已关闭通知
+        //if (isNoticeClosed()) {
+        //    console.log('[Maintenance Notice] Already closed by user');
+        //    return;
+        //}
+
+        // 填充内容
+        document.getElementById("maintenance-title-text").textContent =
+          MAINTENANCE_CONFIG.title;
+        document.getElementById("maintenance-datetime-text").textContent =
+          MAINTENANCE_CONFIG.datetime;
+        document.getElementById("maintenance-desc-text").textContent =
+          MAINTENANCE_CONFIG.description;
+        document.getElementById("maintenance-thanks-text").textContent =
+          " " + MAINTENANCE_CONFIG.thanks;
+
+        // 显示通知
+        const notice = document.getElementById("maintenance-notice");
+        if (notice) {
+          notice.style.display = "block";
+          console.log("[Maintenance Notice] Displayed");
+        }
+
+        // 绑定关闭按钮事件
+        const closeBtn = document.getElementById("maintenance-close-btn");
+        if (closeBtn) {
+          closeBtn.addEventListener("click", closeMaintenance);
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        // 初始化维护通知
+        initMaintenanceNotice();
+
+        // 支持多个alert时也能用
+        document.querySelectorAll(".alert-close-icon").forEach(function (icon) {
+          icon.addEventListener("click", function () {
+            // 获取最近的.alert祖先并隐藏它
+            var alertBox = icon.closest(".alert-info");
+            if (alertBox) {
+              alertBox.style.visibility = "hidden";
+            }
+          });
+        });
+      });
+    </script>
+  </body>
+</html>
