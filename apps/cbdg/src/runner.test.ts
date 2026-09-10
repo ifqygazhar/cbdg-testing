@@ -47,6 +47,9 @@ mock.module("@ifqy/google-oauth", () => ({
     page: { _fake: true },
     close: async () => { ctl.closed++; },
   }),
+  // config.ts validates the pace through the library, so the mock has to
+  // provide it too — a missing export here fails the whole file at import.
+  isPaceName: (v: unknown) => v === "fast" || v === "human" || v === "careful",
 }));
 
 // import AFTER mocks are registered

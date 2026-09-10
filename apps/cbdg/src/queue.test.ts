@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 // fake runner state
 const runnerCtl = {
-  calls: [] as Array<{ email: string; card: string; proxy: string | null }>,
+  calls: [] as Array<{ email: string; card: string | null; proxy: string | null }>,
   failEmails: new Set<string>(),
   delayMs: 0,
   active: 0,
@@ -16,7 +16,7 @@ const runnerCtl = {
 mock.module("./runner.js", () => ({
   runAccount: async (
     account: { email: string },
-    card: { cardNumber: string },
+    card: { cardNumber: string } | null,
     proxy: { server: string } | null,
     _store: unknown,
     _results: unknown,
@@ -27,7 +27,7 @@ mock.module("./runner.js", () => ({
     if (runnerCtl.delayMs) await new Promise((r) => setTimeout(r, runnerCtl.delayMs));
     runnerCtl.calls.push({
       email: account.email,
-      card: card.cardNumber,
+      card: card ? card.cardNumber : null,
       proxy: proxy ? proxy.server : null,
     });
     runnerCtl.active--;
@@ -126,6 +126,29 @@ describe("processQueue", () => {
 
   it("aborts cleanly when no cards are seeded", async () => {
     const { dir, cfg } = seedEnv("a@x.com:p\n", "", "");
+    await processQueue(cfg, new JsonlStore(cfg.stateFile));
+    expect(runnerCtl.calls).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("signup-only mode runs with an empty vcc.txt and no card", async () => {
+    const { dir, cfg } = seedEnv("a@x.com:p\nb@y.com:p\n", "", "");
+    const signupCfg = loadConfig({
+      ...process.env,
+      SEED_GSUITE: cfg.seedGsuite, SEED_VCC: cfg.seedVcc, SEED_PROXY: cfg.seedProxy,
+      STATE_FILE: cfg.stateFile, RESULT_SUCCESS_FILE: cfg.resultSuccessFile,
+      RESULT_FAILED_FILE: cfg.resultFailedFile,
+      MODE: "signup",
+    } as NodeJS.ProcessEnv);
+    await processQueue(signupCfg, new JsonlStore(signupCfg.stateFile));
+    expect(runnerCtl.calls.map((c) => c.email)).toEqual(["a@x.com", "b@y.com"]);
+    expect(runnerCtl.calls.map((c) => c.card)).toEqual([null, null]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("full mode still aborts when there is no card to link", async () => {
+    const { dir, cfg } = seedEnv("a@x.com:p\n", "", "");
+    expect(cfg.mode).toBe("full");
     await processQueue(cfg, new JsonlStore(cfg.stateFile));
     expect(runnerCtl.calls).toEqual([]);
     rmSync(dir, { recursive: true, force: true });

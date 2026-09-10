@@ -1,0 +1,2 @@
+sign up url : https://dashboard.webshare.io/register/?source=nav_register
+scrape data proxy url : https://dashboard.webshare.io/14267610/proxy/list?authenticationMethod=%22username_password%22&connectionMethod=%22rotating%22&proxyControl=%220%22&removeType=%22refresh_all%22

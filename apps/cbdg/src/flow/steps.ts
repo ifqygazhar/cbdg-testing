@@ -6,14 +6,26 @@ import {
   isGoogleUrl,
   dom,
   utils,
+  resolvePace,
   type GoogleOAuthBrowser,
 } from "@ifqy/google-oauth";
 import { FlowState } from "../store.js";
+import type { RunMode } from "../config.js";
 import { FlowError, type FlowCtx } from "./engine.js";
 import { Selectors } from "./selectors.js";
 
 const { clickByText, waitForVisibleInput, waitForAnySelector, fillInput } = dom;
-const { sleep } = utils;
+const { sleep, randomInt } = utils;
+
+/** Pause the way this run's pace says a person would. */
+function step(ctx: FlowCtx): Promise<void> {
+  const p = resolvePace(ctx.cfg.pace);
+  return sleep(randomInt(p.stepPauseMin, p.stepPauseMax));
+}
+function beat(ctx: FlowCtx): Promise<void> {
+  const p = resolvePace(ctx.cfg.pace);
+  return sleep(randomInt(p.pauseMin, p.pauseMax));
+}
 
 // ── one-shot body text match ───────────────────────────────────────
 async function bodyMatches(
@@ -91,6 +103,15 @@ export async function s02GoogleOAuth(ctx: FlowCtx): Promise<FlowState> {
   return FlowState.COMPLETE_REGISTER;
 }
 
+/**
+ * Where registration goes next. Signup-only stops at the welcome-credit check;
+ * the full flow continues into the payment profile. Kept as its own function so
+ * the branch is testable without driving a browser.
+ */
+export function afterRegister(mode: RunMode): FlowState {
+  return mode === "signup" ? FlowState.VERIFY_CREDIT : FlowState.ADD_PAYMENT;
+}
+
 // ── s03: complete registration (region + submit) ───────────────────
 export async function s03CompleteRegister(ctx: FlowCtx): Promise<FlowState> {
   const { browser, cfg, googleOAuth } = ctx;
@@ -99,14 +120,17 @@ export async function s03CompleteRegister(ctx: FlowCtx): Promise<FlowState> {
     throw new FlowError("ACCOUNT_RESTRICTED", "account restricted by risk control (complete-register)");
   }
   await clickByText(browser.page, Selectors.registerRegionToggle, googleOAuth, { optional: true });
-  await sleep(500);
+  await beat(ctx);
   await clickByText(browser.page, Selectors.registerRegion(cfg.region), googleOAuth);
-  await sleep(500);
+  await beat(ctx);
   const submitted = await clickByText(browser.page, Selectors.registerSubmit, googleOAuth);
   if (!submitted) throw new FlowError("REGISTER_SUBMIT_FAILED", "registration submit button not found");
-  await sleep(1500);
+  await step(ctx);
   ctx.log("info", `registration submitted for region ${cfg.region} (${ctx.account.email})`);
-  return FlowState.ADD_PAYMENT;
+
+  // signup mode stops here: the new-user credits are granted by registration
+  // itself, so there is nothing to gain from handing over a card.
+  return afterRegister(cfg.mode);
 }
 
 // ── s04: open payment profile → harvestsharp token page ────────────
@@ -115,7 +139,7 @@ export async function s04OpenPayment(ctx: FlowCtx): Promise<FlowState> {
   const hit = await clickByText(browser.page, Selectors.paymentProfile, googleOAuth, { optional: true });
   if (!hit) {
     await clickByText(browser.page, Selectors.accountMenu, googleOAuth, { optional: true });
-    await sleep(500);
+    await beat(ctx);
     await clickByText(browser.page, Selectors.paymentProfile, googleOAuth);
   }
   const onSign = await new Promise<boolean>((resolve) => {
@@ -133,6 +157,7 @@ export async function s04OpenPayment(ctx: FlowCtx): Promise<FlowState> {
 export async function s05LinkCard(ctx: FlowCtx): Promise<FlowState> {
   const { browser, card, googleOAuth, cfg } = ctx;
   const p = browser.page;
+  if (!card) throw new FlowError("NO_CARD", "card step reached without a card (signup-only run?)");
 
   const fill = async (sel: string, value: string) => {
     const input = await waitForVisibleInput(p, [sel], 10_000);
@@ -187,7 +212,7 @@ export async function s07TrialVerify(ctx: FlowCtx): Promise<FlowState> {
   const { browser, googleOAuth, cfg } = ctx;
   await browser.page.goto("https://www.codebuddy.ai/pricing", { waitUntil: "domcontentloaded" });
   await clickByText(browser.page, Selectors.trial7d, googleOAuth, { optional: true });
-  await sleep(1000);
+  await step(ctx);
   await clickByText(browser.page, Selectors.trial7d, googleOAuth, { optional: true });
 
   await browser.page.goto(Selectors.plansUsage, { waitUntil: "domcontentloaded" });
@@ -202,6 +227,34 @@ export async function s07TrialVerify(ctx: FlowCtx): Promise<FlowState> {
   return FlowState.DONE;
 }
 
+// ── s08: signup-only terminal — confirm the welcome credits landed ──
+// Reached only in `--signup-only`. Registration is what grants the new-user
+// credits, so the account is already the deliverable; this step exists to say
+// so out loud rather than to gate success. A missing banner is reported and
+// recorded, never a reason to throw away a registered account.
+export async function s08VerifyWelcomeCredit(ctx: FlowCtx): Promise<FlowState> {
+  const { browser, cfg, account, log } = ctx;
+  await browser.page.goto(Selectors.plansUsage, { waitUntil: "domcontentloaded" }).catch(() => {});
+  const credited = await waitForBodyRegex(
+    browser.page,
+    Selectors.welcomeCreditBanner,
+    cfg.creditVerifyTimeoutSec * 1000,
+  );
+  if (credited) {
+    log("info", `welcome credits confirmed for ${account.email} (signup-only, no card submitted)`);
+  } else {
+    await browser.page
+      .screenshot({ path: `${cfg.screenshotDir}/no-welcome-credit-${account.email.replace(/[^a-z0-9]/gi, "_")}.png` })
+      .catch(() => {});
+    log(
+      "warn",
+      `welcome credits NOT confirmed for ${account.email} — the account is registered, check it by hand`,
+    );
+  }
+  ctx.creditConfirmedRef.current = credited;
+  return FlowState.DONE;
+}
+
 export const STEPS: Record<string, (ctx: FlowCtx) => Promise<FlowState>> = {
   PRICING: s01Pricing,
   GOOGLE_OAUTH: s02GoogleOAuth,
@@ -210,4 +263,5 @@ export const STEPS: Record<string, (ctx: FlowCtx) => Promise<FlowState>> = {
   LINK_CARD: s05LinkCard,
   WAIT_3DS: s06Wait3ds,
   START_TRIAL: s07TrialVerify,
+  VERIFY_CREDIT: s08VerifyWelcomeCredit,
 };

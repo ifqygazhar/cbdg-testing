@@ -12,7 +12,7 @@ import { FlowError, isTerminalState, transition } from "./flow/engine.js";
 
 export async function runAccount(
   account: GsuiteAccount,
-  card: VccCard,
+  card: VccCard | null,
   proxy: ProxySeed | null,
   store: JsonlStore,
   results: ResultWriter,
@@ -33,6 +33,7 @@ export async function runAccount(
 
   const googleOAuth: GoogleOAuthOptions = {
     headless: cfg.headless,
+    pace: cfg.pace,
     // in headed mode allow manual captcha solving; in headless, fail fast
     failOnCaptcha: cfg.headless,
     screenShotDir: cfg.screenshotDir,
@@ -44,6 +45,8 @@ export async function runAccount(
     headless: cfg.headless,
     opts: googleOAuth,
   });
+
+  const creditConfirmedRef = { current: false };
 
   let state: FlowState = FlowState.PRICING;
   try {
@@ -57,13 +60,18 @@ export async function runAccount(
         cfg,
         googleOAuth,
         log,
+        creditConfirmedRef,
       });
     }
     store.setStatus(account.email, state);
 
     if (state === FlowState.DONE) {
-      results.markSuccess(account.email, cfg.region);
-      log("info", "account DONE");
+      const note =
+        cfg.mode === "signup"
+          ? `signup-only${creditConfirmedRef.current ? "" : " (welcome credit unconfirmed)"}`
+          : "";
+      results.markSuccess(account.email, cfg.region, note);
+      log("info", `account DONE${note ? ` — ${note}` : ""}`);
     } else {
       // a step returned FAILED instead of throwing — record it gracefully
       log("warn", `account ended in ${state}`);

@@ -30,6 +30,12 @@ export interface AppConfig {
   retryFailed: boolean;
   /** min seconds between accounts per worker (risk-control spacing, 0 = off) */
   interAccountDelaySec: number;
+  /**
+   * Read proxies from the seed file at all. Off means every account runs from
+   * this machine's IP on purpose, which is the right choice while the proxy
+   * pool is empty or suspect, and the wrong one for a long batch.
+   */
+  useProxy: boolean;
   /** seconds to wait for the complete-signup form after OAuth */
   signupFormTimeoutSec: number;
   /** seconds to wait for the API-key create form / onboarding */
@@ -53,6 +59,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     pace: isPaceName(env.PACE) ? env.PACE : "human",
     retryFailed: parseBool(env.RETRY_FAILED, false),
     interAccountDelaySec: int(env.INTER_ACCOUNT_DELAY_SEC, 0),
+    useProxy: parseBool(env.USE_PROXY, true),
     signupFormTimeoutSec: int(env.SIGNUP_FORM_TIMEOUT_SEC, 45),
     apiKeyTimeoutSec: int(env.API_KEY_TIMEOUT_SEC, 180),
     creditsTimeoutSec: int(env.CREDITS_TIMEOUT_SEC, 30),

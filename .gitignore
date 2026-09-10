@@ -8,6 +8,11 @@ akun-result-crusoe.txt
 akun-failed-crusoe.txt
 screenshots-crusoe/
 apikey.txt
+state-webshare.jsonl
+akun-result-webshare.txt
+akun-failed-webshare.txt
+screenshots-webshare/
+signup-proxy.txt
 .env
 *.log
 .DS_Store

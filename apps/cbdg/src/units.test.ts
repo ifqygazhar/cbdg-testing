@@ -10,7 +10,7 @@ import { JsonlStore, FlowState, ResultWriter } from "./store.js";
 import { isTerminalState, transition, ORDER } from "./flow/engine.js";
 import { STEPS } from "./flow/steps.js";
 import { Selectors } from "./flow/selectors.js";
-import { parseArgs, applyArgsToEnv } from "./cli.js";
+import { parseArgs, applyArgsToEnv, USAGE } from "./cli.js";
 import { createLog } from "./log.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "cbdg-"));
@@ -221,9 +221,8 @@ describe("ResultWriter", () => {
 
 // ── engine integrity ───────────────────────────────────────────────
 describe("flow engine", () => {
-  it("every ORDER state (except VERIFY_CREDIT) has a registered step", () => {
+  it("every ORDER state has a registered step", () => {
     for (const s of ORDER) {
-      if (s === FlowState.VERIFY_CREDIT) continue;
       expect(typeof STEPS[s as string]).toBe("function");
     }
   });
@@ -233,9 +232,10 @@ describe("flow engine", () => {
     for (const k of Object.keys(STEPS)) expect(known.has(k)).toBe(true);
   });
 
-  it("VERIFY_CREDIT transitions to DONE without a step", async () => {
-    const r = await transition(FlowState.VERIFY_CREDIT, {} as never);
-    expect(r).toBe(FlowState.DONE);
+  it("VERIFY_CREDIT is the signup-only terminal and now has a real step", () => {
+    // It used to fall through to DONE with no step. Signup-only mode ends
+    // there, so it must actually check that the welcome credits landed.
+    expect(typeof STEPS[FlowState.VERIFY_CREDIT as string]).toBe("function");
   });
 
   it("unknown state throws FlowError with code NO_STEP", async () => {
@@ -351,6 +351,38 @@ describe("dataset validation (skipped when dataset absent)", () => {
 });
 
 // ── cli args ───────────────────────────────────────────────────────
+describe("run mode + pace", () => {
+  it("defaults to the full card flow", () => {
+    const c = loadConfig({} as NodeJS.ProcessEnv);
+    expect(c.mode).toBe("full");
+    expect(c.pace).toBe("human");
+  });
+  it("MODE=signup stops before the card; junk values fall back to full", () => {
+    expect(loadConfig({ MODE: "signup" } as NodeJS.ProcessEnv).mode).toBe("signup");
+    expect(loadConfig({ MODE: "halfway" } as NodeJS.ProcessEnv).mode).toBe("full");
+  });
+  it("PACE is validated the same way", () => {
+    expect(loadConfig({ PACE: "fast" } as NodeJS.ProcessEnv).pace).toBe("fast");
+    expect(loadConfig({ PACE: "turbo" } as NodeJS.ProcessEnv).pace).toBe("human");
+  });
+  it("flags map onto the env", () => {
+    expect(applyArgsToEnv(parseArgs(["--signup-only"]), {}).MODE).toBe("signup");
+    expect(applyArgsToEnv(parseArgs(["--no-vcc"]), {}).MODE).toBe("signup");
+    expect(applyArgsToEnv(parseArgs(["--full"]), {}).MODE).toBe("full");
+    expect(applyArgsToEnv(parseArgs(["--mode", "signup"]), {}).MODE).toBe("signup");
+    expect(applyArgsToEnv(parseArgs(["--fast"]), {}).PACE).toBe("fast");
+    expect(applyArgsToEnv(parseArgs(["--careful"]), {}).PACE).toBe("careful");
+  });
+  it("signup mode routes registration to the credit check, not the card", async () => {
+    const { afterRegister } = await import("./flow/steps.js");
+    expect(afterRegister("signup")).toBe(FlowState.VERIFY_CREDIT);
+    expect(afterRegister("full")).toBe(FlowState.ADD_PAYMENT);
+    // and both destinations really have a step behind them
+    expect(typeof STEPS[afterRegister("signup") as string]).toBe("function");
+    expect(typeof STEPS[afterRegister("full") as string]).toBe("function");
+  });
+});
+
 describe("parseArgs", () => {
   it("defaults to undefined (env decides headless/workers)", () => {
     const a = parseArgs([]);
@@ -366,16 +398,16 @@ describe("parseArgs", () => {
     expect(b.headless).toBe(false);
   });
 
-  it("--help prints usage and exits 0", () => {
-    const orig = console.log;
-    let printed = "";
-    console.log = (m: string) => { printed = m; };
-    try {
-      expect(() => parseArgs(["--help"])).toThrow(); // process.exit throws in Bun test
-    } finally {
-      console.log = orig;
-    }
-    expect(printed).toContain("Usage");
+  it("--help hands off to the help action and stops parsing", () => {
+    // This used to call process.exit inside the parser. Under the test runner
+    // that really exits: the suite died here and every test after it silently
+    // never ran. The action is injectable now.
+    let called = 0;
+    const args = parseArgs(["--help", "--region", "US"], () => { called++; });
+    expect(called).toBe(1);
+    expect(args.region).toBeUndefined();
+    expect(USAGE).toContain("Usage");
+    expect(USAGE).toContain("--signup-only");
   });
 
   it("applyArgsToEnv: CLI flags override env, absent flags leave env untouched", () => {

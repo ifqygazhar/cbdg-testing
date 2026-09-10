@@ -8,12 +8,15 @@ import { STEPS } from "./steps.js";
 
 export interface FlowCtx {
   account: GsuiteAccount;
-  card: VccCard;
+  /** null in signup-only mode, where no card is ever submitted */
+  card: VccCard | null;
   proxy: ProxySeed | null;
   browser: GoogleOAuthBrowser;
   cfg: AppConfig;
   googleOAuth: GoogleOAuthOptions;
   log: ULog;
+  /** set by the signup-only terminal step; the runner notes it in the result */
+  creditConfirmedRef: { current: boolean };
 }
 
 export class FlowError extends Error {
@@ -45,8 +48,6 @@ export async function transition(
 ): Promise<FlowState> {
   const fn = STEPS[state];
   if (fn) return fn(ctx);
-  // VERIFY_CREDIT has no dedicated step (s07 also verifies); map to DONE.
-  if (state === FlowState.VERIFY_CREDIT) return FlowState.DONE;
   throw new FlowError("NO_STEP", `no step registered for ${state}`);
 }
 

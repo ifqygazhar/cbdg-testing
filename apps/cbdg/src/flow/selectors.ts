@@ -50,4 +50,11 @@ export const Selectors = {
   trial7d: ["7-day pro free trial", "7-day free trial", "start trial", "activate trial"] as const,
   plansUsage: "https://www.codebuddy.ai/profile/plans-usage?amount=0",
   creditBanner: /(500|250)/,
+  /**
+   * Signup-only mode expects just the new-user welcome credits (250 per the
+   * pricing page), since no trial has been started. Kept separate from
+   * `creditBanner` so the two modes cannot silently accept each other's
+   * evidence.
+   */
+  welcomeCreditBanner: /250|welcome credit/,
 } as const;

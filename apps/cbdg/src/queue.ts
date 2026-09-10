@@ -11,15 +11,16 @@ export async function processQueue(cfg: AppConfig, store: JsonlStore): Promise<v
 
   const accounts = loadAccounts(cfg.seedGsuite);
   const cards = loadCards(cfg.seedVcc);
-  const proxies = loadProxies(cfg.seedProxy);
+  const proxies = cfg.useProxy ? loadProxies(cfg.seedProxy) : [];
   log("info", `seeds loaded`, { accounts: accounts.length, cards: cards.length, proxies: proxies.length });
 
   if (accounts.length === 0) {
     log("warn", "no accounts in gsuite.txt — nothing to do");
     return;
   }
-  if (cards.length === 0) {
-    log("warn", "no cards in vcc.txt — nothing can be linked; aborting queue");
+  // signup-only never submits a card, so an empty vcc.txt is normal there.
+  if (cards.length === 0 && cfg.mode !== "signup") {
+    log("warn", "no cards in vcc.txt — nothing can be linked; aborting queue (use --signup-only to run without cards)");
     return;
   }
 
@@ -83,7 +84,7 @@ export async function processQueue(cfg: AppConfig, store: JsonlStore): Promise<v
       const idx = next++;
       if (idx >= todo.length) return;
       const acc = todo[idx];
-      const card: VccCard = cards[idx % cards.length];
+      const card: VccCard | null = cards.length ? cards[idx % cards.length] : null;
       const proxy = proxies.length ? (proxies[idx % proxies.length] ?? null) : null;
       try {
         await runAccount(acc, card, proxy, store, results, cfg);

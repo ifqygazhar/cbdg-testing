@@ -13,6 +13,8 @@ interface Args {
   dryRun?: boolean;
   retryFailed?: boolean;
   delaySec?: number;
+  useProxy?: boolean;
+  proxyFile?: string;
 }
 
 /** Pure: merge parsed CLI flags into an env object (CLI wins over env file). */
@@ -22,6 +24,8 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.headless !== undefined) env.HEADLESS = args.headless ? "1" : "0";
   if (args.retryFailed !== undefined) env.RETRY_FAILED = args.retryFailed ? "1" : "0";
   if (args.delaySec !== undefined) env.INTER_ACCOUNT_DELAY_SEC = String(args.delaySec);
+  if (args.useProxy !== undefined) env.USE_PROXY = args.useProxy ? "1" : "0";
+  if (args.proxyFile !== undefined) env.SEED_PROXY = args.proxyFile;
   if (args.pace !== undefined) env.PACE = args.pace;
   return env;
 }
@@ -39,6 +43,9 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--retry-failed") args.retryFailed = true;
     else if (a === "--no-retry-failed") args.retryFailed = false;
     else if (a === "--delay") args.delaySec = Number(next());
+    else if (a === "--no-proxy") args.useProxy = false;
+    else if (a === "--proxy") { args.useProxy = true; args.proxyFile = next(); }
+    else if (a === "--with-proxy") args.useProxy = true;
     else if (a === "--fast") args.pace = "fast";
     else if (a === "--careful") args.pace = "careful";
     else if (a === "--pace") args.pace = next();
@@ -53,7 +60,9 @@ export function parseArgs(argv: string[]): Args {
 ` +
         `  --careful  slower than a real user; for hostile risk engines
 ` +
-        `  --delay    seconds between accounts — this is the risk-control knob, not --fast`,
+        `  --delay    seconds between accounts — this is the risk-control knob, not --fast\n` +
+        `  --no-proxy ignore proxy.txt and run every account from this IP\n` +
+        `  --proxy F  use a specific proxy file (default proxy.txt)`,
       );
       process.exit(0);
     }

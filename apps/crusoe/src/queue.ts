@@ -10,7 +10,7 @@ export async function processQueue(cfg: AppConfig, store: JsonlStore): Promise<v
   const results = new ResultWriter(cfg.resultSuccessFile, cfg.resultFailedFile, cfg.apiKeyFile);
 
   const accounts = loadAccounts(cfg.seedGsuite);
-  const proxies = loadProxies(cfg.seedProxy);
+  const proxies = cfg.useProxy ? loadProxies(cfg.seedProxy) : [];
   log("info", `seeds loaded`, { accounts: accounts.length, proxies: proxies.length });
 
   if (accounts.length === 0) {
