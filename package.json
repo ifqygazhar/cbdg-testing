@@ -8,8 +8,9 @@
   ],
   "scripts": {
     "start": "bun run scripts/run.ts",
+    "proxy-check": "bun run scripts/proxy-check.ts",
     "build": "echo no-build-needed (bun runs TS directly)",
-    "test": "bun run test:library && bun run test:app-units && bun run test:runner && bun run test:queue && bun run test:crusoe-units && bun run test:crusoe-queue && bun run test:webshare-units && bun run test:webshare-queue && bun run test:launcher",
+    "test": "bun run test:library && bun run test:app-units && bun run test:runner && bun run test:queue && bun run test:crusoe-units && bun run test:crusoe-queue && bun run test:webshare-units && bun run test:webshare-queue && bun run test:launcher && bun run test:proxy-check",
     "test:library": "bun test packages/google-oauth/src/config.test.ts packages/google-oauth/src/units.test.ts packages/google-oauth/src/browser.integration.test.ts",
     "test:app-units": "bun test apps/cbdg/src/units.test.ts",
     "test:runner": "bun test apps/cbdg/src/runner.test.ts",
@@ -22,7 +23,8 @@
     "webshare": "bun run apps/webshare/src/cli.ts",
     "test:webshare-units": "bun test apps/webshare/src/units.test.ts",
     "test:webshare-queue": "bun test apps/webshare/src/queue.test.ts",
-    "test:launcher": "bun test scripts/plan.test.ts"
+    "test:launcher": "bun test scripts/plan.test.ts",
+    "test:proxy-check": "bun test scripts/proxy-lib.test.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

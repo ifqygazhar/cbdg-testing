@@ -454,3 +454,26 @@ describe("createLog", () => {
     expect(b.extra).toBe(1);
   });
 });
+
+describe("proxy credentials", () => {
+  it("proxy credentials survive the loader", () => {
+    // Regression: `server` was built from protocol+host only, so user:pass was
+    // dropped and every navigation died with ERR_INVALID_AUTH_CREDENTIALS.
+    const dir = mkdtempSync(join(tmpdir(), "px-"));
+    const f = join(dir, "proxy.txt");
+    writeFileSync(f, "http://zwasosog:s3cret@31.59.20.176:6754\nhttp://1.2.3.4:8080\n", "utf8");
+    const [withAuth, plain] = loadProxies(f);
+    expect(withAuth.server).toBe("http://31.59.20.176:6754");
+    expect(withAuth.username).toBe("zwasosog");
+    expect(withAuth.password).toBe("s3cret");
+    expect(plain.username).toBeUndefined();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  it("percent-encoded credentials are decoded", () => {
+    const dir = mkdtempSync(join(tmpdir(), "px-"));
+    const f = join(dir, "proxy.txt");
+    writeFileSync(f, "http://user:p%40ss%3Aword@1.2.3.4:8080\n", "utf8");
+    expect(loadProxies(f)[0].password).toBe("p@ss:word");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

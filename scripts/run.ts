@@ -8,6 +8,7 @@
 import { select, confirm, askNumber, releaseStdin, ui, Cancelled } from "./prompt.js";
 import {
   APP_ENTRY,
+  IS_TOOL,
   PROXY_CAPABLE,
   buildArgs,
   commandLine,
@@ -26,6 +27,7 @@ function banner(seeds: ReturnType<typeof readSeeds>): void {
 ${ui.bold("automation runner")}
 ${line("akun", seeds.accounts, "gsuite.txt")}
 ${line("proxy", seeds.proxies, "proxy.txt")}
+${line("· hidup", seeds.live, "proxy-live.txt")}
 ${line("kartu", seeds.cards, "vcc.txt")}`);
 }
 
@@ -35,9 +37,23 @@ async function askPlan(): Promise<RunPlan> {
 
   const app = await select<AppName>("Mau jalankan yang mana?", [
     { value: "webshare", label: "webshare", hint: "daftar via Google → panen proxy gratis ke proxy.txt" },
+    { value: "proxy-check", label: "cek proxy", hint: "proxy.txt → uji hidup/mati → proxy-live.txt" },
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
     { value: "cbdg", label: "cbdg", hint: "daftar CodeBuddy → kredit new-user (+ VCC opsional)" },
   ]);
+
+  // The checker has nothing to configure: it reads one file and writes another.
+  if (IS_TOOL[app]) {
+    return {
+      app,
+      pace: "human",
+      headless: false,
+      retryFailed: false,
+      dryRun: false,
+      delaySec: 0,
+      workers: 1,
+    };
+  }
 
   let mode: CbdgMode | undefined;
   if (app === "cbdg") {
@@ -49,14 +65,11 @@ async function askPlan(): Promise<RunPlan> {
 
   let useProxy: boolean | undefined;
   if (PROXY_CAPABLE.includes(app)) {
+    const pool = seeds.live > 0 ? `proxy-live.txt (${seeds.live} sudah dicek)` : `proxy.txt (${seeds.proxies}, belum dicek)`;
     useProxy = await select<boolean>("Pakai proxy?", [
-      {
-        value: true,
-        label: "Dengan proxy",
-        hint: `dari proxy.txt (${seeds.proxies} baris), 1 akun 1 proxy bergiliran`,
-      },
+      { value: true, label: "Dengan proxy", hint: `${pool}, 1 akun 1 proxy bergiliran` },
       { value: false, label: "Tanpa proxy", hint: "semua akun dari IP mesin ini" },
-    ], seeds.proxies > 0 ? 0 : 1);
+    ], seeds.live > 0 || seeds.proxies > 0 ? 0 : 1);
   }
 
   const pace = await select<Pace>("Kecepatan?", [
@@ -76,12 +89,31 @@ async function askPlan(): Promise<RunPlan> {
 
 function review(plan: RunPlan): void {
   const seeds = readSeeds();
+  if (IS_TOOL[plan.app]) {
+    console.log(`
+${ui.bold("Rencana")}
+  ${ui.dim("app".padEnd(8))} ${plan.app}`);
+    const toolWarnings = warningsFor(plan, seeds);
+    for (const w of toolWarnings) console.log(`  ${ui.yellow("!")} ${w}`);
+    console.log(`
+${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
+    return;
+  }
   const rows: Array<[string, string]> = [
     ["app", plan.app],
     ...(plan.mode ? ([["mode", plan.mode === "signup" ? "signup saja" : "full (VCC)"]] as Array<[string, string]>) : []),
     ...(plan.useProxy === undefined
       ? []
-      : ([["proxy", plan.useProxy ? `proxy.txt (${seeds.proxies})` : "tanpa proxy"]] as Array<[string, string]>)),
+      : ([
+          [
+            "proxy",
+            plan.useProxy
+              ? seeds.live > 0
+                ? `proxy-live.txt (${seeds.live})`
+                : `proxy.txt (${seeds.proxies}, belum dicek)`
+              : "tanpa proxy",
+          ],
+        ] as Array<[string, string]>)),
     ["pace", plan.pace],
     ["jeda", `${plan.delaySec}s`],
     ["worker", String(plan.workers)],

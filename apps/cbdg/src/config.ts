@@ -31,6 +31,18 @@ export function isRunMode(v: unknown): v is RunMode {
   return v === "signup" || v === "full";
 }
 
+/**
+ * Which proxy file to read. `proxy-live.txt` is written by `bun run proxy-check`
+ * and holds only proxies that actually answered from somebody else's IP, so it
+ * is preferred when present; the raw harvest is the fallback so a first run
+ * before any check still works.
+ */
+export function resolveProxySeed(cwd: string, explicit?: string): string {
+  if (explicit) return resolve(explicit);
+  const live = path.join(cwd, "proxy-live.txt");
+  return fs.existsSync(live) ? live : path.join(cwd, "proxy.txt");
+}
+
 export interface AppConfig {
   region: string;
   workers: number;
@@ -85,7 +97,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     useProxy: parseBool(env.USE_PROXY, true),
     seedGsuite: resolve(env.SEED_GSUITE || path.join(cwd, "gsuite.txt")),
     seedVcc: resolve(env.SEED_VCC || path.join(cwd, "vcc.txt")),
-    seedProxy: resolve(env.SEED_PROXY || path.join(cwd, "proxy.txt")),
+    seedProxy: resolveProxySeed(cwd, env.SEED_PROXY),
     stateFile: resolve(env.STATE_FILE || path.join(cwd, "state.jsonl")),
     resultSuccessFile: resolve(env.RESULT_SUCCESS_FILE || path.join(cwd, "akun-result.txt")),
     resultFailedFile: resolve(env.RESULT_FAILED_FILE || path.join(cwd, "akun-failed.txt")),

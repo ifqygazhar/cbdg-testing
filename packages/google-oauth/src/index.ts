@@ -34,6 +34,7 @@ export {
 
 export {
   launchGoogleOAuthBrowser,
+  classifyNetworkError,
   findInstalledBrowser,
   screenshotPath as browserScreenshotPath,
   type GoogleOAuthBrowser,

@@ -1,6 +1,7 @@
 // ── Per-account runner: fingerprint → browser → flow → save proxies → close ──
 import {
   launchGoogleOAuthBrowser,
+  classifyNetworkError,
   type GoogleOAuthOptions,
 } from "@ifqy/google-oauth";
 import { randomBytes } from "node:crypto";
@@ -46,7 +47,9 @@ export async function runAccount(
   };
 
   const handle = await launchGoogleOAuthBrowser({
-    proxy: proxy ? { server: proxy.server } : null,
+    proxy: proxy
+      ? { server: proxy.server, username: proxy.username, password: proxy.password }
+      : null,
     headless: cfg.headless,
     opts: googleOAuth,
   });
@@ -89,10 +92,13 @@ export async function runAccount(
     }
   } catch (e) {
     const err = e as Error;
-    const code = (e as FlowError)?.code ?? "UNKNOWN";
-    log("error", `flow failed [${code}]: ${err.message}`, { code });
-    store.setStatus(account.email, FlowState.FAILED, `${code}: ${err.message}`);
-    results.markFailed(account.email, `${code}: ${err.message}`);
+    // A raw net::ERR_* says nothing actionable; name the proxy problem instead.
+    const network = (e as FlowError)?.code ? null : classifyNetworkError(err.message, proxy?.server);
+    const code = network?.code ?? (e as FlowError)?.code ?? "UNKNOWN";
+    const message = network ? `${network.message} [${err.message.split(" at ")[0]}]` : err.message;
+    log("error", `flow failed [${code}]: ${message}`, { code });
+    store.setStatus(account.email, FlowState.FAILED, `${code}: ${message}`);
+    results.markFailed(account.email, `${code}: ${message}`);
     state = FlowState.FAILED;
   } finally {
     // constraint: ALWAYS close the browser so the next account gets a fresh fingerprint

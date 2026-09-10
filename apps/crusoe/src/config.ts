@@ -16,6 +16,18 @@ function resolve(p: string): string {
   return path.resolve(process.cwd(), p);
 }
 
+/**
+ * Which proxy file to read. `proxy-live.txt` is written by `bun run proxy-check`
+ * and holds only proxies that actually answered from somebody else's IP, so it
+ * is preferred when present; the raw harvest is the fallback so a first run
+ * before any check still works.
+ */
+export function resolveProxySeed(cwd: string, explicit?: string): string {
+  if (explicit) return resolve(explicit);
+  const live = path.join(cwd, "proxy-live.txt");
+  return fs.existsSync(live) ? live : path.join(cwd, "proxy.txt");
+}
+
 export interface AppConfig {
   workers: number;
   headless: boolean;
@@ -64,7 +76,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     apiKeyTimeoutSec: int(env.API_KEY_TIMEOUT_SEC, 180),
     creditsTimeoutSec: int(env.CREDITS_TIMEOUT_SEC, 30),
     seedGsuite: resolve(env.SEED_GSUITE || path.join(cwd, "gsuite.txt")),
-    seedProxy: resolve(env.SEED_PROXY || path.join(cwd, "proxy.txt")),
+    seedProxy: resolveProxySeed(cwd, env.SEED_PROXY),
     stateFile: resolve(env.CRUSOE_STATE_FILE || path.join(cwd, "state-crusoe.jsonl")),
     resultSuccessFile: resolve(env.CRUSOE_RESULT_SUCCESS_FILE || path.join(cwd, "akun-result-crusoe.txt")),
     resultFailedFile: resolve(env.CRUSOE_RESULT_FAILED_FILE || path.join(cwd, "akun-failed-crusoe.txt")),

@@ -13,6 +13,8 @@ akun-result-webshare.txt
 akun-failed-webshare.txt
 screenshots-webshare/
 signup-proxy.txt
+proxy-live.txt
+proxy-dead.txt
 .env
 *.log
 .DS_Store

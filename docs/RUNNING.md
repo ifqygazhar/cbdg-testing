@@ -8,6 +8,7 @@ dengan library bersama `@ifqy/google-oauth` (`packages/google-oauth`):
 | `apps/cbdg` | `bun run cbdg` | kredit CodeBuddy (signup saja, atau lanjut VCC + trial) |
 | `apps/crusoe` | `bun run crusoe` | bonus $5 Crusoe + API key ke `apikey.txt` |
 | `apps/webshare` | `bun run webshare` | 10 proxy gratis per akun ke `proxy.txt` |
+| `scripts/proxy-check.ts` | `bun run proxy-check` | saring proxy hidup ke `proxy-live.txt` |
 
 Paling gampang lewat launcher: `bun run start` (lihat bagian 4).
 
@@ -53,7 +54,8 @@ dan baris yang diawali `#` dianggap komentar. File yang tidak ada = dianggap kos
 |---|---|---|
 | `gsuite.txt` | `email:password` per baris | ✅ wajib untuk ketiga app |
 | `vcc.txt` | `card number \| exp date \| cvv` — exp `MM/YY` atau `MM/YYYY`, cvv 3–4 digit | ✅ hanya untuk `cbdg --full` |
-| `proxy.txt` | `host:port` atau `scheme://user:pass@host:port` | ❌ opsional. **Ditulis oleh `webshare`**, dibaca oleh `cbdg` dan `crusoe`. |
+| `proxy.txt` | `host:port` atau `scheme://user:pass@host:port` | ❌ opsional. **Ditulis oleh `webshare`**, jadi masukan `proxy-check`. |
+| `proxy-live.txt` | sama, urut dari tercepat | 🔁 **dihasilkan** `proxy-check`. Inilah yang dibaca `cbdg` dan `crusoe`. |
 | `signup-proxy.txt` | sama seperti `proxy.txt` | ❌ opsional, khusus proxy untuk signup `webshare` |
 
 Contoh:
@@ -75,9 +77,10 @@ http://user:pass@1.2.3.4:8080
 > **Catatan proxy:** jika `proxy.txt` kosong atau tidak ada, semua akun berbagi 1 IP yang sama.
 > Menjalankan multi-akun tanpa proxy memunculkan warning di log (sinyal velocity kuat untuk risk-control).
 >
-> Alur yang dimaksud: jalankan `webshare` dulu untuk mengisi `proxy.txt`, lalu jalankan
-> `cbdg` atau `crusoe` dengan pilihan **dengan proxy**. `signup-proxy.txt` sengaja file
-> terpisah supaya signup webshare berikutnya tidak lewat proxy hasil panennya sendiri.
+> Alur yang dimaksud: `webshare` mengisi `proxy.txt`, `proxy-check` menyaringnya jadi
+> `proxy-live.txt`, lalu `cbdg` atau `crusoe` dijalankan dengan pilihan **dengan proxy**.
+> `signup-proxy.txt` sengaja file terpisah supaya signup webshare berikutnya tidak lewat
+> proxy hasil panennya sendiri.
 
 ## 4. Cara Cepat: Launcher Interaktif
 
@@ -87,7 +90,7 @@ bun run start
 
 Satu pintu untuk semua aplikasi. Urutan pertanyaannya:
 
-1. **Mau jalankan yang mana** — webshare, crusoe, atau cbdg.
+1. **Mau jalankan yang mana** — webshare, cek proxy, crusoe, atau cbdg.
 2. **Sampai mana** (khusus cbdg) — signup saja, atau full sampai VCC.
 3. **Pakai proxy?** (cbdg dan crusoe) — dari `proxy.txt`, atau tanpa proxy.
 4. **Kecepatan** — `human`, `fast`, atau `careful`.
@@ -118,7 +121,8 @@ Peringatan yang bisa muncul, semuanya pernah jadi masalah nyata:
 
 - `gsuite.txt` kosong.
 - mode full tapi `vcc.txt` kosong, jadi antrean akan berhenti.
-- pilih pakai proxy padahal `proxy.txt` kosong.
+- pilih pakai proxy padahal belum ada proxy sama sekali.
+- `proxy.txt` terisi tapi belum pernah dicek, jadi `proxy-live.txt` masih kosong.
 - tanpa proxy padahal banyak akun, jadi semuanya dari satu IP.
 - jeda antar akun 0 detik.
 - headless, yang berarti captcha dan 3DS tidak bisa diselesaikan manual.
@@ -287,7 +291,92 @@ Dua hal yang perlu diingat soal app ini:
 `proxy.txt` inilah yang dipakai kalau di launcher kamu pilih **dengan proxy**
 untuk cbdg atau crusoe.
 
-## 8. Konfigurasi `.env`
+## 8. Cek Proxy (`proxy-check`)
+
+Proxy gratis webshare tidak semuanya hidup, dan proxy mati berarti akun terbuang.
+Script ini menguji satu per satu lalu menulis yang hidup ke `proxy-live.txt`.
+
+```bash
+# default: proxy.txt → proxy-live.txt
+bun run proxy-check
+
+# lebih agresif, plus catat yang mati beserta alasannya
+bun run proxy-check -- -c 20 --timeout 8 --dead proxy-dead.txt
+```
+
+Contoh keluaran:
+
+```text
+cek proxy 10 entri · 10 paralel · timeout 12s · ip kita 36.85.228.197
+
+    1/10 hidup  1136ms  http://zwasosog:***@45.38.107.97:6014     45.38.107.97
+    2/10 mati   6007ms  1.2.3.4:65001                             timeout
+
+hasil 9 hidup · 1 mati · median 1850ms
+  → 9 proxy ditulis ke proxy-live.txt
+```
+
+### Cara ia menentukan hidup atau mati
+
+Bukan sekadar "koneksi berhasil". Script minta alamat IP lewat proxy itu, lalu
+membandingkannya dengan **IP kita sendiri**. Proxy dianggap hidup hanya kalau
+target melihat alamat yang bukan alamat kita. Proxy yang diam-diam jatuh ke
+koneksi langsung akan lolos kalau syaratnya cuma "ada respons", dan akibatnya
+semua akun jalan dari satu IP tanpa ada yang sadar.
+
+IP kita diambil dulu tanpa proxy. Kalau langkah itu gagal, berarti koneksi di
+sini yang bermasalah, jadi script berhenti dan **tidak** menandai semua proxy
+mati.
+
+### Semua Flag CLI `proxy-check`
+
+| Flag | Deskripsi |
+|---|---|
+| `--in FILE` | Sumber (default `proxy.txt`). |
+| `--out FILE` | Tujuan (default `proxy-live.txt`). |
+| `--dead FILE` | Simpan juga yang mati beserta alasannya. |
+| `--timeout SEC` | Batas waktu per proxy (default 12). Env: `PROXY_CHECK_TIMEOUT_SEC`. |
+| `-c N` / `--concurrency N` | Berapa proxy dicek bersamaan (default 10). Env: `PROXY_CHECK_CONCURRENCY`. |
+| `--url URL` | Endpoint pengecek IP (default `https://ipv4.webshare.io/`). Env: `PROXY_CHECK_URL`. |
+| `--force` | Tetap tulis file walau tidak ada yang hidup. |
+| `-h` / `--help` | Usage. |
+
+Isi `proxy-live.txt` diurutkan **dari yang tercepat**, karena antrean membagikan
+proxy sesuai urutan baris, jadi akun-akun pertama dapat yang paling cepat.
+Header filenya berupa komentar (`#`) dan diabaikan semua loader.
+
+> **Pengaman:** kalau hasilnya nol hidup padahal `proxy-live.txt` lama masih
+> berisi, file lama **tidak** ditimpa. Gangguan koneksi sesaat tidak boleh
+> menghapus kolam proxy yang sedang dipakai. Pakai `--force` kalau memang mau
+> dikosongkan.
+
+### Kredensial proxy
+
+Chrome tidak menerima user/pass di flag `--proxy-server`, jadi kredensialnya
+dikirim lewat `page.authenticate`, dan itu berlaku **per halaman**. Karena OAuth
+membuka popup, launcher browser mengautentikasi halaman pertama **dan** setiap
+halaman baru di context yang sama. Kalau ini dilewatkan, navigasi pertama mati
+dengan `net::ERR_INVALID_AUTH_CREDENTIALS` dan browser terlihat menutup sendiri.
+
+Artinya baris proxy harus lengkap: `http://user:pass@host:port`. Bentuk
+`host:port` saja hanya cocok untuk proxy tanpa autentikasi.
+
+### Proxy mana yang dipakai app
+
+`cbdg` dan `crusoe` membaca **`proxy-live.txt` kalau ada**, dan jatuh ke
+`proxy.txt` kalau belum pernah dicek. Kalau `proxy-live.txt` kosong padahal
+`proxy.txt` terisi, keduanya memberi peringatan agar `proxy-check` dijalankan
+dulu. Override manual tetap bisa lewat `SEED_PROXY` atau `--proxy FILE`.
+
+Urutan lengkapnya:
+
+```bash
+bun run webshare       # 1. panen proxy      → proxy.txt
+bun run proxy-check    # 2. saring yang mati → proxy-live.txt
+bun run crusoe         # 3. pakai            ← proxy-live.txt
+```
+
+## 9. Konfigurasi `.env`
 
 Template lengkap: `.env.example`. Bagian relevan per aplikasi:
 
@@ -345,7 +434,7 @@ Template lengkap: `.env.example`. Bagian relevan per aplikasi:
 `GOOGLE_OAUTH_PACE`, `GOOGLE_OAUTH_TYPE_MIN/MAX`, `GOOGLE_OAUTH_GENERIC_AUTH_CLICK` —
 lihat `.env.example` untuk komentar lengkap.
 
-## 9. Perilaku / Guardrails
+## 10. Perilaku / Guardrails
 
 - **1 akun = 1 fingerprint.** Setiap akun di-*launch* dengan browser baru
   (stealth + viewport jitter) dan browser **selalu ditutup** setelah akun selesai/gagal.
@@ -360,7 +449,7 @@ lihat `.env.example` untuk komentar lengkap.
 - **Proxy round-robin** per akun (bila ada); tanpa proxy semua akun memakai 1 IP.
 - **`ACCOUNT_RESTRICTED` tidak pernah di-retry** — ban risk-control bersifat permanen.
 
-## 10. Output / Hasil
+## 11. Output / Hasil
 
 | File | Isi |
 |---|---|
@@ -373,6 +462,8 @@ lihat `.env.example` untuk komentar lengkap.
 | `state-crusoe.jsonl` | Progres crusoe. |
 | `screenshots-crusoe/` | Screenshot error crusoe. |
 | `proxy.txt` | Proxy gratis hasil `webshare`, menumpuk tanpa duplikat. |
+| `proxy-live.txt` | Proxy yang lolos `proxy-check`, urut dari tercepat. Ditimpa tiap kali dicek. |
+| `proxy-dead.txt` | Opsional (`--dead`): proxy mati beserta alasannya. |
 | `akun-result-webshare.txt` / `akun-failed-webshare.txt` | Hasil webshare. |
 | `state-webshare.jsonl` | Progres webshare. |
 | `screenshots-webshare/` | Screenshot **dan dump HTML** saat webshare gagal baca proxy. |
@@ -388,7 +479,7 @@ Status yang mungkin di `state.jsonl` (`FlowState`):
 
 Semuanya bisa berakhir `FAILED`.
 
-## 11. Testing & Type Checking
+## 12. Testing & Type Checking
 
 ```bash
 bun run typecheck     # tsc --noEmit seluruh workspace
@@ -407,9 +498,10 @@ bun run test:crusoe-queue   # apps/crusoe: queue
 bun run test:webshare-units # apps/webshare: config/selector/format proxy/store
 bun run test:webshare-queue # apps/webshare: queue
 bun run test:launcher       # scripts/: flag yang disusun launcher + pembaca stdin
+bun run test:proxy-check    # scripts/: parsing, verdict hidup/mati, urutan, file keluaran
 ```
 
-## 12. Alur Kerja Umum
+## 13. Alur Kerja Umum
 
 **Run pertama (aman):**
 
@@ -444,14 +536,17 @@ bun run crusoe -- --delay 60 --pace human
 # 1. isi proxy.txt dari akun-akun webshare
 bun run webshare -- --fast --delay 60
 
-# 2. pakai proxy itu untuk app lain
+# 2. saring yang mati → proxy-live.txt
+bun run proxy-check
+
+# 3. pakai yang hidup
 bun run crusoe -- --with-proxy --delay 60
 bun run cbdg -- --signup-only --with-proxy --delay 60
 ```
 
 Atau lewat `bun run start` dan pilih **dengan proxy** saat ditanya.
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 | Gejala | Kemungkinan penyebab / solusi |
 |---|---|
@@ -462,11 +557,17 @@ Atau lewat `bun run start` dan pilih **dengan proxy** saat ditanya.
 | 3DS tidak pernah selesai | Naikkan `WAIT_3DS_TIMEOUT_SEC` atau selesaikan manual lebih cepat di window browser. |
 | Terlalu cepat kena risk-control | Naikkan `--delay` (60–180), pakai proxy, atau `--careful` (crusoe). |
 | State korup di `state.jsonl` | JsonlStore menangani baris korup — baris invalid dilewati saat load. |
-| Launcher bilang `proxy.txt` kosong | Jalankan `webshare` dulu, atau pilih **tanpa proxy**. |
+| Launcher bilang belum ada proxy | Jalankan `webshare` dulu, atau pilih **tanpa proxy**. |
+| Launcher bilang proxy "belum dicek" | Jalankan `bun run proxy-check` supaya `proxy-live.txt` terisi. |
+| App bilang `proxy-live.txt` kosong padahal `proxy.txt` terisi | Sama: jalankan `proxy-check`, atau pakai `--no-proxy`. |
+| `proxy-check` bilang tidak bisa menghubungi endpoint tanpa proxy | Koneksi di mesin ini yang bermasalah. Hasilnya sengaja tidak dipakai supaya proxy tidak salah ditandai mati. |
+| Semua proxy mati | Kemungkinan kuota webshare habis atau akunnya kena suspend. Panen ulang dengan akun lain. |
+| `PROXY_AUTH_FAILED` / `net::ERR_INVALID_AUTH_CREDENTIALS` | Proxy menolak user/pass. Pastikan baris di file proxy berbentuk `http://user:pass@host:port`, bukan `host:port` saja. |
+| `PROXY_UNREACHABLE` | Proxy itu sudah mati sejak pengecekan terakhir. Jalankan `bun run proxy-check` lagi. |
 | Mode full berhenti "no cards in vcc.txt" | Isi `vcc.txt`, atau pakai `--signup-only`. |
 | Menu tidak bisa panah atas/bawah | Terminalnya bukan TTY (mis. output dipipe). Menu otomatis jatuh ke input angka. |
 
-## 14. Struktur Terkait (untuk konteks)
+## 15. Struktur Terkait (untuk konteks)
 
 ```
 packages/google-oauth/     # library reusable @ifqy/google-oauth
@@ -485,10 +586,12 @@ apps/cbdg/                 # aplikasi flow CodeBuddy
   src/flow/selectors.ts      # semua selector terpusat
 apps/crusoe/               # aplikasi flow Crusoe AI (state/output terpisah)
 apps/webshare/             # aplikasi flow Webshare (menulis proxy.txt)
-scripts/                   # launcher interaktif
+scripts/                   # launcher + tooling
   run.ts                     # menu + spawn app terpilih
   plan.ts                    # jawaban menu → flag (pure, ada test-nya)
   prompt.ts                  # select/confirm/askNumber + pembaca stdin
+  proxy-check.ts             # cek proxy.txt → proxy-live.txt
+  proxy-lib.ts               # parsing + verdict hidup/mati (pure, ada test-nya)
 dataset_target/            # HTML asli (dipakai test validasi selector)
 crusoe_ai_dataset/         # HTML asli crusoe (dipakai test validasi selector)
 webshare_dataset/          # HTML asli webshare (dipakai test validasi selector)

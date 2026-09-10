@@ -117,6 +117,28 @@ via body text with the pattern passed into the page.
 
 ---
 
+## Proxy credentials dropped on the floor
+
+**Symptom.** Every account fails on the very first navigation with
+`net::ERR_INVALID_AUTH_CREDENTIALS`, and the headed browser looks like it closes
+by itself. Only happens with proxies; without them the same run is fine. The
+proxies themselves test fine with `curl`/`fetch`.
+
+**Cause.** The seed loader built `server` from protocol and host only, so
+`http://user:pass@host:port` became `http://host:port`. Chrome then met the
+proxy's 407 with nothing to answer it. The credentials were parsed and thrown
+away in the same expression.
+
+**Fix.** Carry username and password beside `server` — Chrome's
+`--proxy-server` flag takes no credentials, they go through `page.authenticate`.
+Do it for every page in the context, not just the first: `authenticate` is
+per-page and OAuth opens popups.
+
+**Tell.** Launch twice through the same proxy, once with credentials and once
+without, and navigate anywhere. The difference is the whole diagnosis.
+
+---
+
 ## Popup stolen by a sibling worker
 
 **Symptom.** With parallel workers, one account's OAuth window ends up driven

@@ -1,5 +1,6 @@
 // ── Unit tests: @ifqy/google-oauth (pure logic, no browser) ────────
 import { describe, it, expect } from "bun:test";
+import { classifyNetworkError } from "./browser.js";
 import { PACES, resolvePace } from "./pace.js";
 import type { Page } from "puppeteer-core";
 import {
@@ -204,5 +205,31 @@ describe("pace", () => {
       expect(PACES[order[i]].typeMax).toBeGreaterThan(PACES[order[i - 1]].typeMax);
       expect(PACES[order[i]].settleTimeoutMs).toBeGreaterThan(PACES[order[i - 1]].settleTimeoutMs);
     }
+  });
+});
+
+describe("classifyNetworkError", () => {
+  it("names a proxy that rejects our credentials", () => {
+    // The real failure: loadProxies used to drop user:pass, so Chrome got a 407
+    // on the very first navigation and the batch reported only "UNKNOWN".
+    const r = classifyNetworkError(
+      "net::ERR_INVALID_AUTH_CREDENTIALS at https://www.codebuddy.ai/pricing",
+      "http://1.2.3.4:6754",
+    );
+    expect(r?.code).toBe("PROXY_AUTH_FAILED");
+    expect(r?.message).toContain("1.2.3.4:6754");
+  });
+  it("names a proxy that cannot be reached", () => {
+    expect(classifyNetworkError("net::ERR_TUNNEL_CONNECTION_FAILED", "http://1.2.3.4:1")?.code).toBe(
+      "PROXY_UNREACHABLE",
+    );
+    expect(classifyNetworkError("net::ERR_PROXY_CONNECTION_FAILED")?.code).toBe("PROXY_UNREACHABLE");
+  });
+  it("separates our own connection being down", () => {
+    expect(classifyNetworkError("net::ERR_INTERNET_DISCONNECTED")?.code).toBe("NETWORK_DOWN");
+  });
+  it("leaves anything it does not recognise alone", () => {
+    expect(classifyNetworkError("complete-signup form not found after OAuth")).toBeNull();
+    expect(classifyNetworkError("net::ERR_ABORTED")).toBeNull();
   });
 });

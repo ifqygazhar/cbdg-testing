@@ -16,6 +16,38 @@ export interface ProxySpec {
   password?: string;
 }
 
+/**
+ * Chrome reports proxy trouble as a bare `net::ERR_*` on the first navigation,
+ * which reaches a caller as an unhelpful "UNKNOWN" failure. Translate the ones
+ * that have an obvious fix so a batch says what to do instead of what broke.
+ */
+export function classifyNetworkError(
+  message: string,
+  proxyServer?: string | null,
+): { code: string; message: string } | null {
+  const where = proxyServer ? ` (${proxyServer})` : "";
+  if (/ERR_INVALID_AUTH_CREDENTIALS|ERR_PROXY_AUTH_REQUESTED|407/.test(message)) {
+    return {
+      code: "PROXY_AUTH_FAILED",
+      message: `proxy menolak kredensial${where} — cek user/pass di file proxy`,
+    };
+  }
+  if (
+    /ERR_PROXY_CONNECTION_FAILED|ERR_TUNNEL_CONNECTION_FAILED|ERR_CONNECTION_TIMED_OUT|ERR_CONNECTION_CLOSED|ERR_EMPTY_RESPONSE|ERR_SOCKS_CONNECTION_FAILED/.test(
+      message,
+    )
+  ) {
+    return {
+      code: "PROXY_UNREACHABLE",
+      message: `proxy tidak bisa dipakai${where} — jalankan \`bun run proxy-check\` lalu ulangi`,
+    };
+  }
+  if (/ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED/.test(message)) {
+    return { code: "NETWORK_DOWN", message: `koneksi tidak tersedia${where}` };
+  }
+  return null;
+}
+
 export interface GoogleOAuthBrowser {
   browser: Browser;
   context: Awaited<ReturnType<Browser["createBrowserContext"]>>;
@@ -145,9 +177,26 @@ export async function launchGoogleOAuthBrowser(
   page.setDefaultTimeout(60_000);
   page.setDefaultNavigationTimeout(60_000);
 
-  // Proxy authentication (puppeteer-core: per-page authenticate)
-  if (options.proxy && options.proxy.username && options.proxy.password) {
-    await page.authenticate({ username: options.proxy.username, password: options.proxy.password });
+  // Proxy authentication. Chrome's --proxy-server flag carries no credentials,
+  // so the password goes through page.authenticate — and it is PER PAGE. A
+  // proxy challenges every page it sees, and OAuth opens popups, so
+  // authenticating only this first page leaves those popups dying with
+  // ERR_INVALID_AUTH_CREDENTIALS.
+  const proxyCreds = options.proxy?.username
+    ? { username: options.proxy.username, password: options.proxy.password ?? "" }
+    : null;
+  if (proxyCreds) {
+    await page.authenticate(proxyCreds);
+    browser.on("targetcreated" as never, (async (target: {
+      type: () => string;
+      page: () => Promise<Page | null>;
+      browserContext?: () => unknown;
+    }) => {
+      if (target.type() !== "page") return;
+      if (typeof target.browserContext === "function" && target.browserContext() !== context) return;
+      const opened = await target.page().catch(() => null);
+      await opened?.authenticate(proxyCreds).catch(() => {});
+    }) as never);
   }
 
   page.setViewport(viewport).catch(() => {});

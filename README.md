@@ -45,8 +45,18 @@ supaya lain kali bisa langsung diketik. Detail di `docs/RUNNING.md` bagian 4.
 | crusoe | `bun run crusoe` | bonus $5 + API key ke `apikey.txt` |
 | webshare | `bun run webshare` | 10 proxy gratis per akun ke `proxy.txt` |
 
-`proxy.txt` yang diisi webshare langsung dipakai cbdg dan crusoe. Pilih
-**dengan proxy** di menu, atau tambahkan `--with-proxy` / `--no-proxy`.
+Plus satu tool: `bun run proxy-check` menguji proxy hasil panen dan menulis yang
+hidup ke `proxy-live.txt`.
+
+```bash
+bun run webshare       # 1. panen proxy      → proxy.txt
+bun run proxy-check    # 2. saring yang mati → proxy-live.txt
+bun run crusoe         # 3. pakai            ← proxy-live.txt
+```
+
+`cbdg` dan `crusoe` membaca `proxy-live.txt` kalau ada, dan jatuh ke `proxy.txt`
+kalau belum pernah dicek. Pilih **dengan proxy** di menu, atau tambahkan
+`--with-proxy` / `--no-proxy`.
 
 Ketiganya memakai `@ifqy/google-oauth` yang sama dan pola guardrail yang sama.
 Detail per app ada di `apps/<nama>/README.md`.

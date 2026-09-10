@@ -1,4 +1,5 @@
 // ── Queue: iterate seed accounts, skip terminal, bounded parallelism ──
+import path from "node:path";
 import type { AppConfig } from "./config.js";
 import { loadAccounts, loadCards, loadProxies, type VccCard } from "./loaders.js";
 import { createLog } from "./log.js";
@@ -12,6 +13,9 @@ export async function processQueue(cfg: AppConfig, store: JsonlStore): Promise<v
   const accounts = loadAccounts(cfg.seedGsuite);
   const cards = loadCards(cfg.seedVcc);
   const proxies = cfg.useProxy ? loadProxies(cfg.seedProxy) : [];
+  if (cfg.useProxy && proxies.length === 0 && loadProxies(path.join(process.cwd(), "proxy.txt")).length > 0) {
+    log("warn", "proxy-live.txt kosong padahal proxy.txt terisi — jalankan `bun run proxy-check` dulu, atau pakai --no-proxy.");
+  }
   log("info", `seeds loaded`, { accounts: accounts.length, cards: cards.length, proxies: proxies.length });
 
   if (accounts.length === 0) {

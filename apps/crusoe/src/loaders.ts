@@ -8,6 +8,14 @@ export interface GsuiteAccount {
 }
 export interface ProxySeed {
   server: string; // e.g. http://host:port
+  /**
+   * Credentials live apart from `server` because that is what Chrome needs:
+   * the --proxy-server flag takes no user:pass, the password goes through
+   * `page.authenticate`. Folding them into `server` (or dropping them, as this
+   * used to) makes every navigation fail with ERR_INVALID_AUTH_CREDENTIALS.
+   */
+  username?: string;
+  password?: string;
   raw: string;
 }
 
@@ -49,6 +57,9 @@ export function loadProxies(file: string): ProxySeed[] {
       if (!u.port && !u.username) throw new Error("no port");
       out.push({
         server: `${u.protocol}//${u.host}`,
+        // URL-encodes them on the way in (see the webshare writer), so decode.
+        username: u.username ? decodeURIComponent(u.username) : undefined,
+        password: u.password ? decodeURIComponent(u.password) : undefined,
         raw: line,
       });
     } catch {

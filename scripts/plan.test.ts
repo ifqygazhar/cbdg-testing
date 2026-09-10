@@ -6,12 +6,14 @@ import { join } from "node:path";
 import { nextToken } from "./prompt.js";
 import {
   APP_ENTRY,
+  IS_TOOL,
   PROXY_CAPABLE,
   buildArgs,
   commandLine,
   readSeeds,
   warningsFor,
   type RunPlan,
+  type SeedInfo,
 } from "./plan.js";
 import { parseArgs as parseCbdg, applyArgsToEnv as envCbdg } from "../apps/cbdg/src/cli.js";
 import { parseArgs as parseCrusoe, applyArgsToEnv as envCrusoe } from "../apps/crusoe/src/cli.js";
@@ -87,75 +89,71 @@ describe("emitted flags are understood by the apps", () => {
 });
 
 describe("seeds + warnings", () => {
-  function seedDir(gsuite: string, proxy: string, vcc: string): string {
+  function seedDir(gsuite: string, proxy: string, vcc: string, live = ""): string {
     const dir = mkdtempSync(join(tmpdir(), "launch-"));
     writeFileSync(join(dir, "gsuite.txt"), gsuite);
     writeFileSync(join(dir, "proxy.txt"), proxy);
     writeFileSync(join(dir, "vcc.txt"), vcc);
+    if (live) writeFileSync(join(dir, "proxy-live.txt"), live);
     return dir;
   }
+  const seeds = (o: Partial<SeedInfo>): SeedInfo => ({ accounts: 5, proxies: 5, live: 5, cards: 2, ...o });
 
   it("counts seed lines and ignores comments and blanks", () => {
     const dir = seedDir("# c\na@x.com:p\n\nb@y.com:p\n", "http://1.1.1.1:80\n", "");
-    expect(readSeeds(dir)).toEqual({ accounts: 2, proxies: 1, cards: 0 });
+    expect(readSeeds(dir)).toEqual({ accounts: 2, proxies: 1, live: 0, cards: 0 });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("counts the checked pool separately from the raw harvest", () => {
+    const dir = seedDir("a@x.com:p\n", "1.1.1.1:80\n2.2.2.2:80\n", "", "# header\n1.1.1.1:80\n");
+    expect(readSeeds(dir)).toEqual({ accounts: 1, proxies: 2, live: 1, cards: 0 });
     rmSync(dir, { recursive: true, force: true });
   });
 
   it("warns when full mode has no card", () => {
-    const w = warningsFor({ ...base }, { accounts: 3, proxies: 3, cards: 0 });
-    expect(w.join(" ")).toContain("vcc.txt kosong");
+    expect(warningsFor({ ...base }, seeds({ cards: 0 })).join(" ")).toContain("vcc.txt kosong");
   });
-  it("warns when proxy is requested but the pool is empty", () => {
-    const w = warningsFor({ ...base, mode: "signup" }, { accounts: 3, proxies: 0, cards: 0 });
-    expect(w.join(" ")).toContain("proxy.txt kosong");
+  it("warns when there is no proxy at all", () => {
+    const w = warningsFor({ ...base, mode: "signup" }, seeds({ proxies: 0, live: 0 }));
+    expect(w.join(" ")).toContain("belum ada proxy");
+  });
+  it("warns when the harvest was never checked", () => {
+    const w = warningsFor({ ...base, mode: "signup" }, seeds({ proxies: 7, live: 0 }));
+    expect(w.join(" ")).toContain("belum dicek");
+  });
+  it("says nothing about checking once the live pool exists", () => {
+    const w = warningsFor({ ...base, mode: "signup" }, seeds({ proxies: 7, live: 7 }));
+    expect(w).toEqual([]);
   });
   it("warns when many accounts share one IP", () => {
-    const w = warningsFor({ ...base, mode: "signup", useProxy: false }, { accounts: 9, proxies: 0, cards: 0 });
+    const w = warningsFor({ ...base, mode: "signup", useProxy: false }, seeds({ accounts: 9 }));
     expect(w.join(" ")).toContain("berbagi satu IP");
   });
   it("warns when spacing is zero", () => {
-    const w = warningsFor({ ...base, mode: "signup", delaySec: 0 }, { accounts: 5, proxies: 5, cards: 0 });
+    const w = warningsFor({ ...base, mode: "signup", delaySec: 0 }, seeds({}));
     expect(w.join(" ")).toContain("0 detik");
   });
-  it("a well-formed plan warns about nothing", () => {
-    const w = warningsFor({ ...base, mode: "signup" }, { accounts: 5, proxies: 5, cards: 2 });
-    expect(w).toEqual([]);
-  });
-  it("proxy-capable list is exactly the apps that read proxy.txt", () => {
+  it("proxy-capable list is exactly the apps that read the proxy file", () => {
     expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe"]);
   });
 });
 
-// ── stdin tokenising ───────────────────────────────────────────────
-// The launcher used to read stdin with one `once("data")` per prompt, which
-// dropped every answer after the first whenever they arrived in one chunk.
-describe("nextToken", () => {
-  const ESC = String.fromCharCode(27);
-  it("takes one line at a time out of a multi-answer chunk", () => {
-    let buf = "1\n2\n\n";
-    const seen: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      const got = nextToken(buf, "line");
-      expect(got).not.toBeNull();
-      seen.push(got!.token);
-      buf = got!.rest;
-    }
-    expect(seen).toEqual(["1", "2", ""]);
-    expect(buf).toBe("");
+describe("proxy-check as a menu action", () => {
+  const plan: RunPlan = { ...base, app: "proxy-check", mode: undefined, useProxy: undefined };
+
+  it("takes no run-shaping flags", () => {
+    expect(buildArgs(plan)).toEqual([]);
+    expect(commandLine(plan)).toBe("bun run proxy-check");
   });
-  it("waits for the newline instead of guessing", () => {
-    expect(nextToken("12", "line")).toBeNull();
-    expect(nextToken("", "line")).toBeNull();
+  it("is flagged as a tool, not an account run", () => {
+    expect(IS_TOOL["proxy-check"]).toBe(true);
+    expect(IS_TOOL.cbdg).toBe(false);
   });
-  it("strips a trailing CR so windows input matches", () => {
-    expect(nextToken("7\r\n", "line")).toEqual({ token: "7", rest: "" });
-  });
-  it("an arrow key is one token, not three", () => {
-    expect(nextToken(`${ESC}[A`, "key")).toEqual({ token: `${ESC}[A`, rest: "" });
-    expect(nextToken(`${ESC}[Bx`, "key")).toEqual({ token: `${ESC}[B`, rest: "x" });
-  });
-  it("a plain key is one character", () => {
-    expect(nextToken("jk", "key")).toEqual({ token: "j", rest: "k" });
-    expect(nextToken("\x03", "key")).toEqual({ token: "\x03", rest: "" });
+  it("only warns about its own input", () => {
+    expect(warningsFor(plan, { accounts: 0, proxies: 0, live: 0, cards: 0 })).toEqual([
+      "proxy.txt kosong — jalankan webshare dulu.",
+    ]);
+    expect(warningsFor(plan, { accounts: 0, proxies: 3, live: 0, cards: 0 })).toEqual([]);
   });
 });
