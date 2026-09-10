@@ -16,6 +16,7 @@ interface Args {
   useProxy?: boolean;
   proxyFile?: string;
   googleDirect?: boolean;
+  reuseProxy?: boolean;
   mode?: string;
   pace?: string;
 }
@@ -33,6 +34,7 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.mode !== undefined) env.MODE = args.mode;
   if (args.pace !== undefined) env.PACE = args.pace;
   if (args.googleDirect !== undefined) env.GOOGLE_DIRECT = args.googleDirect ? "1" : "0";
+  if (args.reuseProxy !== undefined) env.PROXY_REUSE = args.reuseProxy ? "1" : "0";
   return env;
 }
 
@@ -89,6 +91,8 @@ export function parseArgs(argv: string[], onHelp: () => void = printUsageAndExit
     else if (a === "--pace") args.pace = next();
     else if (a === "--google-direct") args.googleDirect = true;
     else if (a === "--no-google-direct") args.googleDirect = false;
+    else if (a === "--reuse-proxy") args.reuseProxy = true;
+    else if (a === "--unique-proxy") args.reuseProxy = false;
     else if (a === "--help" || a === "-h") {
       onHelp();
       return args;

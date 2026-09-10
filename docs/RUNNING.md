@@ -190,6 +190,7 @@ akunnya sudah terlanjur jadi.
 | `--no-proxy` / `--with-proxy` | Pakai `proxy.txt` atau tidak. Env: `USE_PROXY`. Default pakai. |
 | `--proxy FILE` | Pakai file proxy lain (default `proxy.txt`). Env: `SEED_PROXY`. |
 | `--no-google-direct` | Kirim google sign-in lewat proxy juga. Default: langsung, supaya tidak kena captcha. Env: `GOOGLE_DIRECT`. |
+| `--reuse-proxy` | Boleh satu alamat dipakai beberapa akun. Default: satu akun satu alamat, sisanya ditahan. Env: `PROXY_REUSE`. |
 | `--full` | Default. Lanjut ke kartu, 3DS, dan trial. |
 | `--mode signup\|full` | Bentuk eksplisit dari dua flag di atas. Env: `MODE`. |
 | `--fast` / `--careful` / `--pace X` | Cadence UI: `fast`, `human` (default), `careful`. Env: `PACE`. Bukan pengganti `--delay`. |
@@ -239,6 +240,7 @@ bun run crusoe -- --retry-failed
 | `--no-proxy` / `--with-proxy` | Pakai `proxy.txt` atau tidak. Env: `USE_PROXY`. Default pakai. |
 | `--proxy FILE` | Pakai file proxy lain (default `proxy.txt`). Env: `SEED_PROXY`. |
 | `--no-google-direct` | Kirim google sign-in lewat proxy juga. Default: langsung, supaya tidak kena captcha. Env: `GOOGLE_DIRECT`. |
+| `--reuse-proxy` | Boleh satu alamat dipakai beberapa akun. Default: satu akun satu alamat, sisanya ditahan. Env: `PROXY_REUSE`. |
 | `--state FILE` | State file custom. |
 | `-h` / `--help` | Usage. |
 
@@ -392,6 +394,36 @@ yang dilihat situsnya.
 > **Konsekuensinya:** semua login Google jadi berasal dari IP rumahmu. Itu jauh
 > lebih baik daripada IP datacenter yang sudah ditandai, tapi tetap ada batasnya.
 > Jaga `--delay` supaya login tidak menumpuk dalam waktu singkat.
+
+### Satu akun, satu alamat
+
+Pemasangan akun ke proxy tidak lagi bergilir per posisi. Setiap akun dapat
+alamat yang belum pernah dipakai akun lain, dan pasangan itu **dicatat di state
+file**, jadi run berikutnya tidak mengulang dari awal lalu memberikan alamat
+bekas ke akun baru.
+
+Aturannya:
+
+- Akun yang sudah punya alamat tetap memakai alamat itu. Situs sudah melihat
+  akun itu dari sana, dan pindah alamat saat retry justru sinyal yang lebih buruk.
+- Kalau alamat lamanya sudah hilang dari kolam (mati dan tersaring `proxy-check`),
+  akun itu dapat alamat baru.
+- Kalau riwayat lama sempat memberi satu alamat ke beberapa akun, hanya akun
+  pertama yang mempertahankannya. Sisanya dipindah ke alamat kosong.
+- Kalau alamat kosong habis, akun sisanya **ditahan**, bukan didobelkan. Pakai
+  `--reuse-proxy` kalau memang mau berbagi.
+
+> **Yang menentukan jumlah akun per batch adalah jumlah IP unik, bukan jumlah
+> baris.** Webshare memberi setiap akunnya endpoint yang sama persis, hanya
+> username-nya berbeda. Contoh nyata di repo ini: `proxy-live.txt` berisi 129
+> baris dari 13 akun webshare, tapi cuma **10 alamat unik**. Jadi memanen lebih
+> banyak akun webshare tidak menambah IP. Menu menampilkan angka alamat unik itu,
+> bukan jumlah barisnya.
+
+| Knob | Efek |
+|---|---|
+| `--reuse-proxy` (env `PROXY_REUSE=1`) | Boleh berbagi alamat, kembali bergilir seperti dulu. |
+| `--unique-proxy` | Bentuk eksplisit dari default. |
 
 ### Proxy mana yang dipakai app
 
@@ -596,6 +628,7 @@ Atau lewat `bun run start` dan pilih **dengan proxy** saat ditanya.
 | Semua proxy mati | Kemungkinan kuota webshare habis atau akunnya kena suspend. Panen ulang dengan akun lain. |
 | `PROXY_AUTH_FAILED` / `net::ERR_INVALID_AUTH_CREDENTIALS` | Proxy menolak user/pass. Pastikan baris di file proxy berbentuk `http://user:pass@host:port`, bukan `host:port` saja. |
 | `PROXY_UNREACHABLE` | Proxy itu sudah mati sejak pengecekan terakhir. Jalankan `bun run proxy-check` lagi. |
+| Banyak akun "kehabisan proxy yang belum terpakai" | Jumlah IP unik lebih sedikit dari jumlah akun. Panen IP baru, tunggu webshare merotasi, atau pakai `--reuse-proxy`. |
 | Captcha gambar di langkah email Google (`identifier-stuck`) | Sign-in datang dari IP datacenter. Pastikan `GOOGLE_DIRECT` tidak diset `0`; default-nya sudah mengirim Google lewat koneksi langsung. |
 | Mode full berhenti "no cards in vcc.txt" | Isi `vcc.txt`, atau pakai `--signup-only`. |
 | Menu tidak bisa panah atas/bawah | Terminalnya bukan TTY (mis. output dipipe). Menu otomatis jatuh ke input angka. |

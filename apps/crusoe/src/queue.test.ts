@@ -51,13 +51,32 @@ beforeEach(() => {
 });
 
 describe("processQueue (crusoe)", () => {
-  it("processing order is deterministic (round-robin proxy optional)", async () => {
+  it("processing order is deterministic, one account per proxy", async () => {
+    const { dir, cfg } = seedEnv("a@x.com:p\nb@y.com:p\n", "1.2.3.4:8080\n5.6.7.8:3128\n");
+    await processQueue(cfg, new JsonlStore(cfg.stateFile));
+    expect(runnerCtl.calls.map((c) => c.email)).toEqual(["a@x.com", "b@y.com"]);
+    expect(runnerCtl.calls.map((c) => c.proxy)).toEqual([
+      "http://1.2.3.4:8080", "http://5.6.7.8:3128",
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("holds an account back rather than reusing a spent address", async () => {
     const { dir, cfg } = seedEnv("a@x.com:p\nb@y.com:p\nc@z.com:p\n", "1.2.3.4:8080\n5.6.7.8:3128\n");
     await processQueue(cfg, new JsonlStore(cfg.stateFile));
-    expect(runnerCtl.calls.map((c) => c.email)).toEqual(["a@x.com", "b@y.com", "c@z.com"]);
-    expect(runnerCtl.calls.map((c) => c.proxy)).toEqual([
-      "http://1.2.3.4:8080", "http://5.6.7.8:3128", "http://1.2.3.4:8080",
-    ]);
+    expect(runnerCtl.calls.map((c) => c.email)).toEqual(["a@x.com", "b@y.com"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a re-run skips addresses an earlier batch already spent", async () => {
+    const { dir, cfg } = seedEnv("a@x.com:p\n", "1.2.3.4:8080\n5.6.7.8:3128\n");
+    const store = new JsonlStore(cfg.stateFile);
+    store.upsert({
+      email: "old@x.com", password: "p", status: FlowState.DONE,
+      proxy: "http://1.2.3.4:8080", updatedAt: 1,
+    });
+    await processQueue(cfg, store);
+    expect(runnerCtl.calls.map((c) => c.proxy)).toEqual(["http://5.6.7.8:3128"]);
     rmSync(dir, { recursive: true, force: true });
   });
 

@@ -16,6 +16,7 @@ interface Args {
   useProxy?: boolean;
   proxyFile?: string;
   googleDirect?: boolean;
+  reuseProxy?: boolean;
 }
 
 /** Pure: merge parsed CLI flags into an env object (CLI wins over env file). */
@@ -29,6 +30,7 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.proxyFile !== undefined) env.SEED_PROXY = args.proxyFile;
   if (args.pace !== undefined) env.PACE = args.pace;
   if (args.googleDirect !== undefined) env.GOOGLE_DIRECT = args.googleDirect ? "1" : "0";
+  if (args.reuseProxy !== undefined) env.PROXY_REUSE = args.reuseProxy ? "1" : "0";
   return env;
 }
 
@@ -53,6 +55,8 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--pace") args.pace = next();
     else if (a === "--google-direct") args.googleDirect = true;
     else if (a === "--no-google-direct") args.googleDirect = false;
+    else if (a === "--reuse-proxy") args.reuseProxy = true;
+    else if (a === "--unique-proxy") args.reuseProxy = false;
     else if (a === "--help" || a === "-h") {
       console.log(
         `Usage: bun run crusoe -- [--headless] [--headed] [-w N] [--dry-run] [--retry-failed]

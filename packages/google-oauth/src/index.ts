@@ -10,6 +10,9 @@
 export type { GoogleOAuthOptions } from "./config.js";
 export { resolveGoogleOAuthOptions } from "./config.js";
 
+export { assignUniqueProxies } from "./proxyPool.js";
+export type { AssignOptions, Assignment } from "./proxyPool.js";
+
 export type { Pace, PaceName } from "./pace.js";
 export { PACES, resolvePace, isPaceName } from "./pace.js";
 

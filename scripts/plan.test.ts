@@ -69,7 +69,7 @@ describe("buildArgs", () => {
       .not.toContain("--no-google-direct");
   });
   it("warns only when google is pushed through the proxy", () => {
-    const seeds = { accounts: 5, proxies: 5, live: 5, cards: 2 };
+    const seeds = { accounts: 5, proxies: 5, live: 5, liveAddresses: 5, cards: 2 };
     expect(warningsFor({ ...base, mode: "signup", googleDirect: false }, seeds).join(" ")).toContain("captcha");
     expect(warningsFor({ ...base, mode: "signup", googleDirect: true }, seeds)).toEqual([]);
   });
@@ -121,17 +121,17 @@ describe("seeds + warnings", () => {
     if (live) writeFileSync(join(dir, "proxy-live.txt"), live);
     return dir;
   }
-  const seeds = (o: Partial<SeedInfo>): SeedInfo => ({ accounts: 5, proxies: 5, live: 5, cards: 2, ...o });
+  const seeds = (o: Partial<SeedInfo>): SeedInfo => ({ accounts: 5, proxies: 5, live: 5, liveAddresses: 5, cards: 2, ...o });
 
   it("counts seed lines and ignores comments and blanks", () => {
     const dir = seedDir("# c\na@x.com:p\n\nb@y.com:p\n", "http://1.1.1.1:80\n", "");
-    expect(readSeeds(dir)).toEqual({ accounts: 2, proxies: 1, live: 0, cards: 0 });
+    expect(readSeeds(dir)).toEqual({ accounts: 2, proxies: 1, live: 0, liveAddresses: 0, cards: 0 });
     rmSync(dir, { recursive: true, force: true });
   });
 
   it("counts the checked pool separately from the raw harvest", () => {
     const dir = seedDir("a@x.com:p\n", "1.1.1.1:80\n2.2.2.2:80\n", "", "# header\n1.1.1.1:80\n");
-    expect(readSeeds(dir)).toEqual({ accounts: 1, proxies: 2, live: 1, cards: 0 });
+    expect(readSeeds(dir)).toEqual({ accounts: 1, proxies: 2, live: 1, liveAddresses: 1, cards: 0 });
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -175,9 +175,9 @@ describe("proxy-check as a menu action", () => {
     expect(IS_TOOL.cbdg).toBe(false);
   });
   it("only warns about its own input", () => {
-    expect(warningsFor(plan, { accounts: 0, proxies: 0, live: 0, cards: 0 })).toEqual([
+    expect(warningsFor(plan, { accounts: 0, proxies: 0, live: 0, liveAddresses: 0, cards: 0 })).toEqual([
       "proxy.txt kosong — jalankan webshare dulu.",
     ]);
-    expect(warningsFor(plan, { accounts: 0, proxies: 3, live: 0, cards: 0 })).toEqual([]);
+    expect(warningsFor(plan, { accounts: 0, proxies: 3, live: 0, liveAddresses: 0, cards: 0 })).toEqual([]);
   });
 });

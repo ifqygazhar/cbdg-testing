@@ -88,23 +88,48 @@ export function commandLine(plan: RunPlan): string {
 
 export interface SeedInfo {
   accounts: number;
-  /** raw harvest from webshare */
+  /** raw harvest from webshare, in lines */
   proxies: number;
-  /** proxies that passed `bun run proxy-check` */
+  /** proxies that passed `bun run proxy-check`, in lines */
   live: number;
+  /** distinct exit addresses in the live pool — the real one-per-account cap */
+  liveAddresses: number;
   cards: number;
 }
 
-function countLines(file: string): number {
+function readEntries(file: string): string[] {
   try {
+    // Split on LF and let trim() eat a trailing CR: no regex, no escaping to
+    // get wrong, same answer on both line endings.
     return fs
       .readFileSync(file, "utf8")
-      .split(/\r?\n/)
+      .split(String.fromCharCode(10))
       .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith("#")).length;
+      .filter((l) => l && !l.startsWith("#"));
   } catch {
-    return 0;
+    return [];
   }
+}
+
+function countLines(file: string): number {
+  return readEntries(file).length;
+}
+
+/**
+ * Distinct exit addresses, not lines. Webshare hands every account the same
+ * endpoints under a different username, so a file of 130 lines can be ten
+ * addresses — and ten is how many accounts can run one-per-address.
+ */
+function countAddresses(file: string): number {
+  const hosts = new Set<string>();
+  for (const line of readEntries(file)) {
+    try {
+      hosts.add(new URL(line.includes("://") ? line : "http://" + line).hostname);
+    } catch {
+      /* unparseable lines are the loader's problem, not the count's */
+    }
+  }
+  return hosts.size;
 }
 
 export function readSeeds(cwd = process.cwd()): SeedInfo {
@@ -112,6 +137,7 @@ export function readSeeds(cwd = process.cwd()): SeedInfo {
     accounts: countLines(path.join(cwd, "gsuite.txt")),
     proxies: countLines(path.join(cwd, "proxy.txt")),
     live: countLines(path.join(cwd, "proxy-live.txt")),
+    liveAddresses: countAddresses(path.join(cwd, "proxy-live.txt")),
     cards: countLines(path.join(cwd, "vcc.txt")),
   };
 }
@@ -135,6 +161,11 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
       out.push("belum ada proxy sama sekali — jalankan webshare dulu, atau pilih tanpa proxy.");
     } else if (seeds.live === 0) {
       out.push(`proxy.txt terisi (${seeds.proxies}) tapi belum dicek — jalankan proxy-check dulu.`);
+    } else if (seeds.liveAddresses > 0 && seeds.accounts > seeds.liveAddresses) {
+      out.push(
+        `${seeds.accounts} akun tapi cuma ${seeds.liveAddresses} alamat unik — ` +
+          `${seeds.accounts - seeds.liveAddresses} akun ditahan sampai ada proxy baru (atau pakai --reuse-proxy).`,
+      );
     }
   }
   if (PROXY_CAPABLE.includes(plan.app) && plan.useProxy && plan.googleDirect === false) {

@@ -29,6 +29,7 @@ ${ui.bold("automation runner")}
 ${line("akun", seeds.accounts, "gsuite.txt")}
 ${line("proxy", seeds.proxies, "proxy.txt")}
 ${line("· hidup", seeds.live, "proxy-live.txt")}
+${line("· alamat", seeds.liveAddresses, "IP unik — batas 1 akun 1 IP")}
 ${line("kartu", seeds.cards, "vcc.txt")}`);
 }
 
@@ -67,9 +68,12 @@ async function askPlan(): Promise<RunPlan> {
   let useProxy: boolean | undefined;
   let googleDirect: boolean | undefined;
   if (PROXY_CAPABLE.includes(app)) {
-    const pool = seeds.live > 0 ? `proxy-live.txt (${seeds.live} sudah dicek)` : `proxy.txt (${seeds.proxies}, belum dicek)`;
+    const pool =
+      seeds.live > 0
+        ? `proxy-live.txt (${seeds.liveAddresses} alamat unik)`
+        : `proxy.txt (${seeds.proxies} baris, belum dicek)`;
     useProxy = await select<boolean>("Pakai proxy?", [
-      { value: true, label: "Dengan proxy", hint: `${pool}, 1 akun 1 proxy bergiliran` },
+      { value: true, label: "Dengan proxy", hint: `${pool}, 1 akun 1 alamat` },
       { value: false, label: "Tanpa proxy", hint: "semua akun dari IP mesin ini" },
     ], seeds.live > 0 || seeds.proxies > 0 ? 0 : 1);
     // Reads the same knob the apps read, so the review and the printed command
@@ -114,8 +118,8 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
             "proxy",
             plan.useProxy
               ? seeds.live > 0
-                ? `proxy-live.txt (${seeds.live})`
-                : `proxy.txt (${seeds.proxies}, belum dicek)`
+                ? `proxy-live.txt (${seeds.liveAddresses} alamat unik)`
+                : `proxy.txt (${seeds.proxies} baris, belum dicek)`
               : "tanpa proxy",
           ],
         ] as Array<[string, string]>)),

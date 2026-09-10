@@ -93,13 +93,69 @@ describe("processQueue", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("assigns proxies round-robin when proxies exist", async () => {
+  it("one account, one proxy — the surplus account waits for a free address", async () => {
+    // Used to wrap round-robin and give account three the address account one
+    // had already signed up from, which is the link the pool exists to avoid.
     const { dir, cfg } = seedEnv(
       "a@x.com:p\nb@y.com:p\nc@z.com:p\n",
       "4111111111111111 | 12/28 | 111\n",
       "1.2.3.4:8080\n5.6.7.8:3128\n",
     );
     await processQueue(cfg, new JsonlStore(cfg.stateFile));
+    expect(runnerCtl.calls.map((c) => c.proxy)).toEqual([
+      "http://1.2.3.4:8080", "http://5.6.7.8:3128",
+    ]);
+    expect(runnerCtl.calls.map((c) => c.email)).not.toContain("c@z.com");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a re-run does not hand a spent address to a new account", async () => {
+    const { dir, cfg } = seedEnv(
+      "a@x.com:p\nb@y.com:p\n",
+      "4111111111111111 | 12/28 | 111\n",
+      "1.2.3.4:8080\n5.6.7.8:3128\n",
+    );
+    const store = new JsonlStore(cfg.stateFile);
+    // an earlier batch already spent the first address on somebody else
+    store.upsert({
+      email: "old@x.com", password: "p", status: FlowState.DONE,
+      proxy: "http://1.2.3.4:8080", updatedAt: 1,
+    });
+    await processQueue(cfg, store);
+    expect(runnerCtl.calls.map((c) => c.proxy)).toEqual(["http://5.6.7.8:3128"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a retry keeps the address that account already used", async () => {
+    const { dir, cfg } = seedEnv(
+      "a@x.com:p\n",
+      "4111111111111111 | 12/28 | 111\n",
+      "1.2.3.4:8080\n5.6.7.8:3128\n",
+    );
+    const store = new JsonlStore(cfg.stateFile);
+    store.upsert({
+      email: "a@x.com", password: "p", status: FlowState.PENDING,
+      proxy: "http://5.6.7.8:3128", updatedAt: 1,
+    });
+    await processQueue(cfg, store);
+    expect(runnerCtl.calls.map((c) => c.proxy)).toEqual(["http://5.6.7.8:3128"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("--reuse-proxy brings the round-robin back", async () => {
+    const { dir, cfg } = seedEnv(
+      "a@x.com:p\nb@y.com:p\nc@z.com:p\n",
+      "4111111111111111 | 12/28 | 111\n",
+      "1.2.3.4:8080\n5.6.7.8:3128\n",
+    );
+    const reuseCfg = loadConfig({
+      ...process.env,
+      SEED_GSUITE: cfg.seedGsuite, SEED_VCC: cfg.seedVcc, SEED_PROXY: cfg.seedProxy,
+      STATE_FILE: cfg.stateFile, RESULT_SUCCESS_FILE: cfg.resultSuccessFile,
+      RESULT_FAILED_FILE: cfg.resultFailedFile,
+      PROXY_REUSE: "1",
+    } as NodeJS.ProcessEnv);
+    await processQueue(reuseCfg, new JsonlStore(reuseCfg.stateFile));
     expect(runnerCtl.calls.map((c) => c.proxy)).toEqual([
       "http://1.2.3.4:8080", "http://5.6.7.8:3128", "http://1.2.3.4:8080",
     ]);

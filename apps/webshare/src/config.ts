@@ -32,6 +32,12 @@ export interface AppConfig {
    * being automated still sees the proxy. Off means everything goes through
    * the proxy, captcha included.
    */
+  /**
+   * Let one proxy address serve several accounts. Off by default: one account
+   * per address is the whole reason the pool exists, and quietly doubling up
+   * links two accounts together for the platform's risk engine.
+   */
+  reuseProxy: boolean;
   googleDirect: boolean;
   /** hosts sent direct; empty falls back to the library's Google auth list */
   googleDirectHosts: string[];
@@ -63,6 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     retryFailed: parseBool(env.RETRY_FAILED, false),
     interAccountDelaySec: int(env.INTER_ACCOUNT_DELAY_SEC, 0),
     pace: isPaceName(env.PACE) ? env.PACE : "human",
+    reuseProxy: parseBool(env.PROXY_REUSE, false),
     googleDirect: parseBool(env.GOOGLE_DIRECT, true),
     googleDirectHosts: (env.GOOGLE_DIRECT_HOSTS || "")
       .split(/[;,\s]+/)
