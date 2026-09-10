@@ -194,3 +194,21 @@ describe("proxy credentials", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("google direct (proxy bypass)", () => {
+  it("defaults to sending google sign-in direct", () => {
+    // Google scores the sign-in by the address it comes from, and a shared
+    // datacenter proxy earns an image captcha at the email step.
+    expect(loadConfig({} as NodeJS.ProcessEnv).googleDirect).toBe(true);
+  });
+  it("can be turned off entirely", () => {
+    expect(loadConfig({ GOOGLE_DIRECT: "0" } as NodeJS.ProcessEnv).googleDirect).toBe(false);
+    expect(applyArgsToEnv(parseArgs(["--no-google-direct"]), {}).GOOGLE_DIRECT).toBe("0");
+    expect(applyArgsToEnv(parseArgs(["--google-direct"]), {}).GOOGLE_DIRECT).toBe("1");
+  });
+  it("the host list is overridable and tolerant of separators", () => {
+    const c = loadConfig({ GOOGLE_DIRECT_HOSTS: "a.com; b.com , c.com" } as NodeJS.ProcessEnv);
+    expect(c.googleDirectHosts).toEqual(["a.com", "b.com", "c.com"]);
+    expect(loadConfig({} as NodeJS.ProcessEnv).googleDirectHosts).toEqual([]);
+  });
+});

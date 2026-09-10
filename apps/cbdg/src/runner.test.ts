@@ -52,6 +52,7 @@ mock.module("@ifqy/google-oauth", () => ({
   // here fails the whole file at import.
   isPaceName: (v: unknown) => v === "fast" || v === "human" || v === "careful",
   classifyNetworkError: () => null,
+  GOOGLE_DIRECT_HOSTS: ["accounts.google.com"],
 }));
 
 // import AFTER mocks are registered

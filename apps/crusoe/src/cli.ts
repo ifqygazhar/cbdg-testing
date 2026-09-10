@@ -15,6 +15,7 @@ interface Args {
   delaySec?: number;
   useProxy?: boolean;
   proxyFile?: string;
+  googleDirect?: boolean;
 }
 
 /** Pure: merge parsed CLI flags into an env object (CLI wins over env file). */
@@ -27,6 +28,7 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.useProxy !== undefined) env.USE_PROXY = args.useProxy ? "1" : "0";
   if (args.proxyFile !== undefined) env.SEED_PROXY = args.proxyFile;
   if (args.pace !== undefined) env.PACE = args.pace;
+  if (args.googleDirect !== undefined) env.GOOGLE_DIRECT = args.googleDirect ? "1" : "0";
   return env;
 }
 
@@ -49,6 +51,8 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--fast") args.pace = "fast";
     else if (a === "--careful") args.pace = "careful";
     else if (a === "--pace") args.pace = next();
+    else if (a === "--google-direct") args.googleDirect = true;
+    else if (a === "--no-google-direct") args.googleDirect = false;
     else if (a === "--help" || a === "-h") {
       console.log(
         `Usage: bun run crusoe -- [--headless] [--headed] [-w N] [--dry-run] [--retry-failed]
@@ -62,7 +66,8 @@ export function parseArgs(argv: string[]): Args {
 ` +
         `  --delay    seconds between accounts — this is the risk-control knob, not --fast\n` +
         `  --no-proxy ignore proxy.txt and run every account from this IP\n` +
-        `  --proxy F  use a specific proxy file (default proxy.txt)`,
+        `  --proxy F  use a specific proxy file (default proxy.txt)\n` +
+        `  --no-google-direct  kirim google sign-in lewat proxy juga (default: langsung)`,
       );
       process.exit(0);
     }

@@ -14,7 +14,31 @@ export interface ProxySpec {
   server: string; // e.g. http://host:port  (or socks5://...)
   username?: string;
   password?: string;
+  /**
+   * Hosts that must NOT go through the proxy (Chrome --proxy-bypass-list).
+   * One browser, one session, but these hosts connect directly. This is how
+   * you keep the target site on the proxy while letting Google see your real
+   * address — see GOOGLE_DIRECT_HOSTS.
+   */
+  bypass?: string[];
 }
+
+/**
+ * Google scores sign-ins by the address they come from, and shared datacenter
+ * proxies are scored badly enough to serve an image captcha at the email step.
+ * Sending only the auth surface direct keeps that scoring on a normal
+ * residential address while the site being automated still sees the proxy.
+ *
+ * Deliberately NOT `*.google.com`: www.google.com serves reCAPTCHA for the
+ * sites we automate, and that check should stay on the same address the site
+ * sees.
+ */
+export const GOOGLE_DIRECT_HOSTS = [
+  "accounts.google.com",
+  "accounts.youtube.com",
+  "ssl.gstatic.com",
+  "www.gstatic.com",
+];
 
 /**
  * Chrome reports proxy trouble as a bare `net::ERR_*` on the first navigation,
@@ -161,6 +185,9 @@ export async function launchGoogleOAuthBrowser(
     console.log(`[browser] Using: ${found.name} (${found.path})`);
   }
 
+  if (options.proxy?.bypass?.length) {
+    (launchOpts.args as string[]).push(`--proxy-bypass-list=${options.proxy.bypass.join(";")}`);
+  }
   if (options.disableWebSecurity) {
     (launchOpts.args as string[]).push("--disable-web-security");
   }

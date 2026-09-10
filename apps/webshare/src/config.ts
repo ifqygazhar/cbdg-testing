@@ -26,6 +26,15 @@ export interface AppConfig {
   interAccountDelaySec: number;
   /** UI cadence: fast | human | careful */
   pace: PaceName;
+  /**
+   * Let Google's sign-in reach us directly even when the run is proxied.
+   * Google serves an image captcha to shared datacenter addresses; the site
+   * being automated still sees the proxy. Off means everything goes through
+   * the proxy, captcha included.
+   */
+  googleDirect: boolean;
+  /** hosts sent direct; empty falls back to the library's Google auth list */
+  googleDirectHosts: string[];
   /** seconds to wait for the dashboard to appear after OAuth */
   dashboardTimeoutSec: number;
   /** seconds to wait for the proxy list API response */
@@ -54,6 +63,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     retryFailed: parseBool(env.RETRY_FAILED, false),
     interAccountDelaySec: int(env.INTER_ACCOUNT_DELAY_SEC, 0),
     pace: isPaceName(env.PACE) ? env.PACE : "human",
+    googleDirect: parseBool(env.GOOGLE_DIRECT, true),
+    googleDirectHosts: (env.GOOGLE_DIRECT_HOSTS || "")
+      .split(/[;,\s]+/)
+      .map((h) => h.trim())
+      .filter(Boolean),
     dashboardTimeoutSec: int(env.DASHBOARD_TIMEOUT_SEC, 90),
     proxyListTimeoutSec: int(env.PROXY_LIST_TIMEOUT_SEC, 60),
     proxyFormat: env.WEBSHARE_PROXY_FORMAT === "webshare" ? "webshare" : "url",

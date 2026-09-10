@@ -70,6 +70,15 @@ export interface AppConfig {
    * pool is empty or suspect, and the wrong one for a long batch.
    */
   useProxy: boolean;
+  /**
+   * Let Google's sign-in reach us directly even when the run is proxied.
+   * Google serves an image captcha to shared datacenter addresses; the site
+   * being automated still sees the proxy. Off means everything goes through
+   * the proxy, captcha included.
+   */
+  googleDirect: boolean;
+  /** hosts sent direct; empty falls back to the library's Google auth list */
+  googleDirectHosts: string[];
   seedGsuite: string;
   seedVcc: string;
   seedProxy: string;
@@ -95,6 +104,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     retryFailed: parseBool(env.RETRY_FAILED, false),
     interAccountDelaySec: int(env.INTER_ACCOUNT_DELAY_SEC, 0),
     useProxy: parseBool(env.USE_PROXY, true),
+    googleDirect: parseBool(env.GOOGLE_DIRECT, true),
+    googleDirectHosts: (env.GOOGLE_DIRECT_HOSTS || "")
+      .split(/[;,\s]+/)
+      .map((h) => h.trim())
+      .filter(Boolean),
     seedGsuite: resolve(env.SEED_GSUITE || path.join(cwd, "gsuite.txt")),
     seedVcc: resolve(env.SEED_VCC || path.join(cwd, "vcc.txt")),
     seedProxy: resolveProxySeed(cwd, env.SEED_PROXY),

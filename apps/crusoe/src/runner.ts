@@ -2,6 +2,7 @@
 import {
   launchGoogleOAuthBrowser,
   classifyNetworkError,
+  GOOGLE_DIRECT_HOSTS,
   type GoogleOAuthOptions,
 } from "@ifqy/google-oauth";
 import { randomBytes } from "node:crypto";
@@ -40,9 +41,25 @@ export async function runAccount(
     log: log as ULog,
   };
 
+  if (proxy && cfg.googleDirect) {
+    log("info", `proxy ${proxy.server} dipakai untuk situsnya; google sign-in lewat koneksi langsung`);
+  }
+
   const handle = await launchGoogleOAuthBrowser({
     proxy: proxy
-      ? { server: proxy.server, username: proxy.username, password: proxy.password }
+      ? {
+          server: proxy.server,
+          username: proxy.username,
+          password: proxy.password,
+          // Google's sign-in is scored by the address it comes from, and a
+          // shared datacenter proxy earns an image captcha at the email step.
+          // Send just that surface direct; the site still sees the proxy.
+          bypass: cfg.googleDirect
+            ? cfg.googleDirectHosts.length
+              ? cfg.googleDirectHosts
+              : GOOGLE_DIRECT_HOSTS
+            : undefined,
+        }
       : null,
     headless: cfg.headless,
     opts: googleOAuth,

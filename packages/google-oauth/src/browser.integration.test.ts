@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import {
   launchGoogleOAuthBrowser,
+  GOOGLE_DIRECT_HOSTS,
   findInstalledBrowser,
   dom,
   type GoogleOAuthBrowser,
@@ -46,6 +47,41 @@ describe("browser integration (real launch)", () => {
     const title = await page.evaluate(() => document.querySelector("h1")?.textContent);
     expect(title).toBe("hello");
   });
+
+  it("a proxy bypass list reaches chrome as a launch flag", async () => {
+    if (!hasBrowser) return;
+    // Sending only Google's sign-in direct is what keeps a datacenter proxy
+    // from earning an image captcha, so the flag has to actually be passed.
+    const withBypass = await launchGoogleOAuthBrowser({
+      headless: true,
+      proxy: { server: "http://127.0.0.1:9", bypass: GOOGLE_DIRECT_HOSTS },
+    });
+    try {
+      const args = withBypass.browser.process()?.spawnargs ?? [];
+      expect(args.some((a) => a === "--proxy-server=http://127.0.0.1:9")).toBe(true);
+      const bypass = args.find((a) => a.startsWith("--proxy-bypass-list="));
+      expect(bypass).toContain("accounts.google.com");
+      // www.google.com serves reCAPTCHA for the sites we automate; that check
+      // must stay on the same address the site sees.
+      expect(bypass).not.toContain("www.google.com");
+    } finally {
+      await withBypass.close();
+    }
+  }, 60_000);
+
+  it("no bypass flag when none was asked for", async () => {
+    if (!hasBrowser) return;
+    const plain = await launchGoogleOAuthBrowser({
+      headless: true,
+      proxy: { server: "http://127.0.0.1:9" },
+    });
+    try {
+      const args = plain.browser.process()?.spawnargs ?? [];
+      expect(args.some((a) => a.startsWith("--proxy-bypass-list="))).toBe(false);
+    } finally {
+      await plain.close();
+    }
+  }, 60_000);
 
   it("does not pin a navigation Accept header onto XHR/fetch", async () => {
     if (!handle) return;

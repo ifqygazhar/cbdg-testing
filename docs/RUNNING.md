@@ -189,6 +189,7 @@ akunnya sudah terlanjur jadi.
 | `--signup-only` / `--no-vcc` | Berhenti setelah registrasi. Tidak pernah submit kartu, `vcc.txt` tidak diperlukan. |
 | `--no-proxy` / `--with-proxy` | Pakai `proxy.txt` atau tidak. Env: `USE_PROXY`. Default pakai. |
 | `--proxy FILE` | Pakai file proxy lain (default `proxy.txt`). Env: `SEED_PROXY`. |
+| `--no-google-direct` | Kirim google sign-in lewat proxy juga. Default: langsung, supaya tidak kena captcha. Env: `GOOGLE_DIRECT`. |
 | `--full` | Default. Lanjut ke kartu, 3DS, dan trial. |
 | `--mode signup\|full` | Bentuk eksplisit dari dua flag di atas. Env: `MODE`. |
 | `--fast` / `--careful` / `--pace X` | Cadence UI: `fast`, `human` (default), `careful`. Env: `PACE`. Bukan pengganti `--delay`. |
@@ -237,6 +238,7 @@ bun run crusoe -- --retry-failed
 | `--delay SEC` | Jeda antar akun (knob utama risk-control). |
 | `--no-proxy` / `--with-proxy` | Pakai `proxy.txt` atau tidak. Env: `USE_PROXY`. Default pakai. |
 | `--proxy FILE` | Pakai file proxy lain (default `proxy.txt`). Env: `SEED_PROXY`. |
+| `--no-google-direct` | Kirim google sign-in lewat proxy juga. Default: langsung, supaya tidak kena captcha. Env: `GOOGLE_DIRECT`. |
 | `--state FILE` | State file custom. |
 | `-h` / `--help` | Usage. |
 
@@ -360,6 +362,36 @@ dengan `net::ERR_INVALID_AUTH_CREDENTIALS` dan browser terlihat menutup sendiri.
 
 Artinya baris proxy harus lengkap: `http://user:pass@host:port`. Bentuk
 `host:port` saja hanya cocok untuk proxy tanpa autentikasi.
+
+### Google sign-in sengaja tidak lewat proxy
+
+Proxy webshare adalah IP datacenter yang dipakai bersama, dan Google menilai
+sign-in dari alamat seperti itu cukup buruk untuk menyodorkan **captcha gambar**
+di langkah email. Otomasi berhenti di situ.
+
+Karena itu, saat memakai proxy, host autentikasi Google dikirim lewat koneksi
+langsung sementara situs yang diotomasi tetap lewat proxy. Satu browser, satu
+sesi, tanpa relaunch, jadi cookie dan state OAuth tetap utuh. Mekanismenya flag
+Chrome `--proxy-bypass-list`.
+
+Host yang dikirim langsung secara default:
+
+```text
+accounts.google.com  accounts.youtube.com  ssl.gstatic.com  www.gstatic.com
+```
+
+`www.google.com` **tidak** termasuk. Host itu menyajikan reCAPTCHA untuk situs
+yang kita otomasi, dan pengecekan itu harus tetap dari alamat yang sama dengan
+yang dilihat situsnya.
+
+| Knob | Efek |
+|---|---|
+| `--no-google-direct` (env `GOOGLE_DIRECT=0`) | Google ikut lewat proxy. Siap-siap captcha. |
+| `GOOGLE_DIRECT_HOSTS=a.com;b.com` | Ganti daftar host yang dikirim langsung. |
+
+> **Konsekuensinya:** semua login Google jadi berasal dari IP rumahmu. Itu jauh
+> lebih baik daripada IP datacenter yang sudah ditandai, tapi tetap ada batasnya.
+> Jaga `--delay` supaya login tidak menumpuk dalam waktu singkat.
 
 ### Proxy mana yang dipakai app
 
@@ -564,6 +596,7 @@ Atau lewat `bun run start` dan pilih **dengan proxy** saat ditanya.
 | Semua proxy mati | Kemungkinan kuota webshare habis atau akunnya kena suspend. Panen ulang dengan akun lain. |
 | `PROXY_AUTH_FAILED` / `net::ERR_INVALID_AUTH_CREDENTIALS` | Proxy menolak user/pass. Pastikan baris di file proxy berbentuk `http://user:pass@host:port`, bukan `host:port` saja. |
 | `PROXY_UNREACHABLE` | Proxy itu sudah mati sejak pengecekan terakhir. Jalankan `bun run proxy-check` lagi. |
+| Captcha gambar di langkah email Google (`identifier-stuck`) | Sign-in datang dari IP datacenter. Pastikan `GOOGLE_DIRECT` tidak diset `0`; default-nya sudah mengirim Google lewat koneksi langsung. |
 | Mode full berhenti "no cards in vcc.txt" | Isi `vcc.txt`, atau pakai `--signup-only`. |
 | Menu tidak bisa panah atas/bawah | Terminalnya bukan TTY (mis. output dipipe). Menu otomatis jatuh ke input angka. |
 

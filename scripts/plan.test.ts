@@ -10,6 +10,7 @@ import {
   PROXY_CAPABLE,
   buildArgs,
   commandLine,
+  googleDirectEnabled,
   readSeeds,
   warningsFor,
   type RunPlan,
@@ -24,6 +25,7 @@ const base: RunPlan = {
   pace: "human",
   mode: "full",
   useProxy: true,
+  googleDirect: true,
   headless: false,
   retryFailed: false,
   dryRun: false,
@@ -53,6 +55,28 @@ describe("buildArgs", () => {
     const loud = buildArgs({ ...base, workers: 3, retryFailed: true, dryRun: true, headless: true });
     expect(loud).toContain("--headless");
     expect(loud).toEqual(expect.arrayContaining(["-w", "3", "--retry-failed", "--dry-run"]));
+  });
+  it("spells out google-direct only when it is turned off", () => {
+    // The printed command has to reproduce the run. With GOOGLE_DIRECT=0 in
+    // .env and no flag emitted, pasting it elsewhere would silently behave
+    // differently.
+    expect(buildArgs({ ...base, googleDirect: true })).not.toContain("--no-google-direct");
+    expect(buildArgs({ ...base, googleDirect: false })).toContain("--no-google-direct");
+    // nothing to bypass when the run is not proxied at all
+    expect(buildArgs({ ...base, useProxy: false, googleDirect: false })).not.toContain("--no-google-direct");
+    // and it is not a knob webshare has
+    expect(buildArgs({ ...base, app: "webshare", mode: undefined, useProxy: undefined, googleDirect: false }))
+      .not.toContain("--no-google-direct");
+  });
+  it("warns only when google is pushed through the proxy", () => {
+    const seeds = { accounts: 5, proxies: 5, live: 5, cards: 2 };
+    expect(warningsFor({ ...base, mode: "signup", googleDirect: false }, seeds).join(" ")).toContain("captcha");
+    expect(warningsFor({ ...base, mode: "signup", googleDirect: true }, seeds)).toEqual([]);
+  });
+  it("googleDirectEnabled reads the same knob the apps read", () => {
+    expect(googleDirectEnabled({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(googleDirectEnabled({ GOOGLE_DIRECT: "0" } as NodeJS.ProcessEnv)).toBe(false);
+    expect(googleDirectEnabled({ GOOGLE_DIRECT: "yes" } as NodeJS.ProcessEnv)).toBe(true);
   });
   it("commandLine is copy-pasteable", () => {
     expect(commandLine(base)).toBe("bun run cbdg -- --headed --pace human --full --with-proxy --delay 60");

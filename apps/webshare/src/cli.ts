@@ -8,6 +8,7 @@ import { processQueue } from "./queue.js";
 interface Args {
   headless?: boolean;
   pace?: string;
+  googleDirect?: boolean;
   workers?: number;
   state?: string;
   dryRun?: boolean;
@@ -23,6 +24,7 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.retryFailed !== undefined) env.RETRY_FAILED = args.retryFailed ? "1" : "0";
   if (args.delaySec !== undefined) env.INTER_ACCOUNT_DELAY_SEC = String(args.delaySec);
   if (args.pace !== undefined) env.PACE = args.pace;
+  if (args.googleDirect !== undefined) env.GOOGLE_DIRECT = args.googleDirect ? "1" : "0";
   return env;
 }
 
@@ -42,6 +44,8 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--fast") args.pace = "fast";
     else if (a === "--careful") args.pace = "careful";
     else if (a === "--pace") args.pace = next();
+    else if (a === "--google-direct") args.googleDirect = true;
+    else if (a === "--no-google-direct") args.googleDirect = false;
     else if (a === "--help" || a === "-h") {
       console.log(
         `Usage: bun run webshare -- [--headless] [--headed] [-w N] [--dry-run] [--retry-failed]

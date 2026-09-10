@@ -139,6 +139,33 @@ without, and navigate anywhere. The difference is the whole diagnosis.
 
 ---
 
+## Captcha that only appears through the proxy
+
+**Symptom.** With a proxy, Google serves an image captcha at the email step and
+the flow parks there ("identifier-stuck"). Without a proxy the same accounts
+sail through.
+
+**Cause.** Shared datacenter addresses score badly with Google's sign-in risk
+engine. The proxy is doing its job for the site being automated and ruining the
+part that runs on Google.
+
+**Fix.** Do not toggle the proxy off and on — that means relaunching the browser
+and losing the OAuth session. Chrome can split the routing inside one session:
+`--proxy-server=... --proxy-bypass-list=accounts.google.com;...`. The site keeps
+the proxy address, Google sees the machine's own.
+
+Keep `www.google.com` OUT of the bypass list: it serves reCAPTCHA for the sites
+being automated, and that check should come from the same address the site sees.
+
+**Tell.** One browser, two navigations: a bypassed IP-echo host answers with your
+own address, a non-bypassed one answers with the proxy's. If both agree, the
+flag never reached Chrome.
+
+**Cost to state out loud.** Every Google login now comes from one address. Better
+than a flagged datacenter range, but keep the inter-account delay.
+
+---
+
 ## Popup stolen by a sibling worker
 
 **Symptom.** With parallel workers, one account's OAuth window ends up driven

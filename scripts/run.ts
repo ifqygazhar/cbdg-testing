@@ -10,6 +10,7 @@ import {
   APP_ENTRY,
   IS_TOOL,
   PROXY_CAPABLE,
+  googleDirectEnabled,
   buildArgs,
   commandLine,
   readSeeds,
@@ -64,12 +65,16 @@ async function askPlan(): Promise<RunPlan> {
   }
 
   let useProxy: boolean | undefined;
+  let googleDirect: boolean | undefined;
   if (PROXY_CAPABLE.includes(app)) {
     const pool = seeds.live > 0 ? `proxy-live.txt (${seeds.live} sudah dicek)` : `proxy.txt (${seeds.proxies}, belum dicek)`;
     useProxy = await select<boolean>("Pakai proxy?", [
       { value: true, label: "Dengan proxy", hint: `${pool}, 1 akun 1 proxy bergiliran` },
       { value: false, label: "Tanpa proxy", hint: "semua akun dari IP mesin ini" },
     ], seeds.live > 0 || seeds.proxies > 0 ? 0 : 1);
+    // Reads the same knob the apps read, so the review and the printed command
+    // tell the truth even when .env overrides the default.
+    googleDirect = useProxy ? googleDirectEnabled() : undefined;
   }
 
   const pace = await select<Pace>("Kecepatan?", [
@@ -84,7 +89,7 @@ async function askPlan(): Promise<RunPlan> {
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, useProxy, pace, delaySec, workers, retryFailed, headless, dryRun };
+  return { app, mode, useProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun };
 }
 
 function review(plan: RunPlan): void {
@@ -114,6 +119,9 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
               : "tanpa proxy",
           ],
         ] as Array<[string, string]>)),
+    ...(plan.useProxy
+      ? ([["google", plan.googleDirect === false ? "lewat proxy" : "langsung (hindari captcha)"]] as Array<[string, string]>)
+      : []),
     ["pace", plan.pace],
     ["jeda", `${plan.delaySec}s`],
     ["worker", String(plan.workers)],

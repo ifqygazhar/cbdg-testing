@@ -15,6 +15,7 @@ interface Args {
   delaySec?: number;
   useProxy?: boolean;
   proxyFile?: string;
+  googleDirect?: boolean;
   mode?: string;
   pace?: string;
 }
@@ -31,6 +32,7 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.proxyFile !== undefined) env.SEED_PROXY = args.proxyFile;
   if (args.mode !== undefined) env.MODE = args.mode;
   if (args.pace !== undefined) env.PACE = args.pace;
+  if (args.googleDirect !== undefined) env.GOOGLE_DIRECT = args.googleDirect ? "1" : "0";
   return env;
 }
 
@@ -47,6 +49,8 @@ export const USAGE = [
   "  --delay        seconds between accounts — the risk-control knob, not --fast",
   "  --no-proxy     ignore proxy.txt and run every account from this IP",
   "  --proxy FILE   use a specific proxy file (default proxy.txt)",
+  "  --no-google-direct  send google sign-in through the proxy too (default: direct,",
+  "                 because a datacenter address earns an image captcha)",
 ].join("\n");
 
 /** Printing usage and exiting is the CLI's job, not the parser's. */
@@ -83,6 +87,8 @@ export function parseArgs(argv: string[], onHelp: () => void = printUsageAndExit
     else if (a === "--fast") args.pace = "fast";
     else if (a === "--careful") args.pace = "careful";
     else if (a === "--pace") args.pace = next();
+    else if (a === "--google-direct") args.googleDirect = true;
+    else if (a === "--no-google-direct") args.googleDirect = false;
     else if (a === "--help" || a === "-h") {
       onHelp();
       return args;

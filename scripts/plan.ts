@@ -23,6 +23,12 @@ export interface RunPlan {
   mode?: CbdgMode;
   /** cbdg + crusoe: read proxies from the seed file, or run from this IP */
   useProxy?: boolean;
+  /**
+   * cbdg + crusoe: send Google's sign-in direct while the site keeps the
+   * proxy. Carried on the plan rather than read from the environment at print
+   * time, so the command shown is the command that runs.
+   */
+  googleDirect?: boolean;
   headless: boolean;
   retryFailed: boolean;
   dryRun: boolean;
@@ -40,6 +46,17 @@ export const APP_ENTRY: Record<AppName, string> = {
 /** Apps whose accounts can be spread over the harvested proxies. */
 export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe"];
 
+/**
+ * Whether Google's sign-in will bypass the proxy on this run. Defaults on; the
+ * apps read GOOGLE_DIRECT, so the menu has to read the same knob to stay
+ * truthful about what it is about to do.
+ */
+export function googleDirectEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.GOOGLE_DIRECT ?? "").toLowerCase();
+  if (v === "") return true;
+  return ["1", "true", "yes", "y", "on"].includes(v);
+}
+
 export function buildArgs(plan: RunPlan): string[] {
   const args: string[] = [];
   // The checker takes no run-shaping flags: it reads proxy.txt and writes
@@ -48,7 +65,12 @@ export function buildArgs(plan: RunPlan): string[] {
   args.push(plan.headless ? "--headless" : "--headed");
   args.push(`--pace`, plan.pace);
   if (plan.app === "cbdg") args.push(plan.mode === "signup" ? "--signup-only" : "--full");
-  if (PROXY_CAPABLE.includes(plan.app)) args.push(plan.useProxy ? "--with-proxy" : "--no-proxy");
+  if (PROXY_CAPABLE.includes(plan.app)) {
+    args.push(plan.useProxy ? "--with-proxy" : "--no-proxy");
+    // Only worth spelling out when it differs from the default, and only when
+    // there is a proxy for it to differ from.
+    if (plan.useProxy && plan.googleDirect === false) args.push("--no-google-direct");
+  }
   if (plan.workers > 1) args.push("-w", String(plan.workers));
   if (plan.delaySec > 0) args.push("--delay", String(plan.delaySec));
   if (plan.retryFailed) args.push("--retry-failed");
@@ -114,6 +136,9 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
     } else if (seeds.live === 0) {
       out.push(`proxy.txt terisi (${seeds.proxies}) tapi belum dicek — jalankan proxy-check dulu.`);
     }
+  }
+  if (PROXY_CAPABLE.includes(plan.app) && plan.useProxy && plan.googleDirect === false) {
+    out.push("google sign-in ikut lewat proxy — siap-siap captcha gambar di langkah email.");
   }
   if (PROXY_CAPABLE.includes(plan.app) && !plan.useProxy && seeds.accounts > 1) {
     out.push(`tanpa proxy: ${seeds.accounts} akun berbagi satu IP, risk control gampang melihatnya.`);
