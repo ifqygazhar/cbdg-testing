@@ -29,9 +29,10 @@ usage() {
   cat <<'USAGE'
 Usage: bash vps-bootstrap.sh --from <base-url> [opsi]
 
-  --from URL     Lokasi bundle (runner.js + package.json). Wajib.
-                 Untuk fine-grained PAT, pakai bentuk api.github.com:
-                 https://api.github.com/repos/OWNER/REPO/contents/dist
+  --from SRC     Sumber bundle (runner.js + package.json). Wajib. Boleh:
+                 - folder lokal, mis. /root/dist (paling gampang, tanpa token)
+                 - https://api.github.com/repos/OWNER/REPO/contents/dist
+                 - https://raw.githubusercontent.com/OWNER/REPO/BRANCH/dist
   --token TOK    Authorization: Bearer <tok>, untuk repo privat.
   --ref BRANCH   Branch yang dibaca kalau --from memakai api.github.com
                  (default main).
@@ -163,6 +164,12 @@ cd "$CODE_DIR"
 # tidak ada. Endpoint API menerima token klasik maupun fine-grained.
 fetch() {
   local name="$1"
+  # Folder lokal: dipakai kalau berkasnya sudah disalin sendiri ke VPS
+  # (scp/rsync). Tidak butuh token, tidak butuh GitHub.
+  if [ -d "$FROM" ]; then
+    cp "$FROM/$name" "$name"
+    return
+  fi
   local url="$FROM/$name"
   local -a args=(-fsSL)
   [ -n "$TOKEN" ] && args+=(-H "Authorization: Bearer $TOKEN")

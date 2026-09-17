@@ -9,6 +9,10 @@ Semua perintah di bawah tinggal disalin. Urutannya dari atas ke bawah.
 
 ## 1. Buat token (di laptop, lewat browser)
 
+> Langkah ini **hanya perlu kalau kamu pakai Cara B** di langkah 2. Cara A
+> menyalin berkasnya langsung dengan `scp` dan tidak butuh token sama sekali.
+
+
 **Jangan pakai `gh auth token`.** Token itu punya scope `repo`, `gist`,
 `read:org` dan `workflow` untuk **semua** repo-mu. Kalau VPS-nya jebol, seluruh
 akun GitHub-mu ikut jebol.
@@ -18,8 +22,8 @@ Buat token khusus yang cuma bisa membaca satu repo ini:
 1. Buka <https://github.com/settings/personal-access-tokens/new>
 2. **Token name**: `vps-runner`
 3. **Expiration**: 30 hari (atau sependek mungkin)
-4. **Repository access** → *Only select repositories* → pilih `cbdg-testing`
-5. **Permissions** → *Repository permissions* → **Contents: Read-only**
+4. **Repository access** → _Only select repositories_ → pilih `cbdg-testing`
+5. **Permissions** → _Repository permissions_ → **Contents: Read-only**
 6. Generate, lalu salin tokennya (`github_pat_...`)
 
 Token ini cuma bisa membaca isi satu repo. Tidak bisa menulis, tidak bisa
@@ -29,55 +33,64 @@ menyentuh repo lain.
 
 ## 2. Pasang di VPS
 
+Ada dua cara. Yang pertama tidak melibatkan GitHub sama sekali, jadi tidak ada
+token yang bisa salah. Pakai itu dulu.
+
+### Cara A: salin langsung dari laptop (paling gampang)
+
+Di **laptop**, dari folder projek:
+
 ```bash
-ssh root@IP-VPS
+bun run build:dist
+scp dist/runner.js dist/package.json scripts/vps-bootstrap.sh root@IP-VPS:/root/
 ```
 
-Lalu di VPS. Ganti `github_pat_xxx` dengan tokenmu:
+Lalu di **VPS**:
+
+```bash
+mkdir -p /root/dist && mv /root/runner.js /root/package.json /root/dist/
+bash /root/vps-bootstrap.sh --from /root/dist --dir ~/runner --ephemeral
+```
+
+Selesai. Tidak perlu token, tidak perlu repo, tidak ada yang bisa 404.
+
+Kalau nanti kodenya diperbarui, ulangi `scp` lalu jalankan bootstrap lagi.
+
+### Cara B: tarik dari repo private
+
+Perlu token dari langkah 1.
 
 ```bash
 export TOKEN=github_pat_xxx
 export API=https://api.github.com/repos/ifqygazhar/cbdg-testing/contents
 
-curl -fsSL -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/vnd.github.raw" \
-  "$API/scripts/vps-bootstrap.sh?ref=main" |
+curl -fsSL -H "Authorization: Bearer $TOKEN"   -H "Accept: application/vnd.github.raw"   "$API/scripts/vps-bootstrap.sh?ref=main" |
   bash -s -- --from $API/dist --token $TOKEN --ref main --dir ~/runner --ephemeral
 ```
 
-> **Kenapa `api.github.com`, bukan `raw.githubusercontent.com`?**
-> Token fine-grained (`github_pat_...`) ditolak oleh `raw.githubusercontent.com`
-> dan jawabannya **404**, sama persis dengan jawaban untuk berkas yang memang
-> tidak ada. Endpoint API menerima token fine-grained maupun klasik, jadi
-> bentuk ini yang dipakai. Bootstrap mengenali kedua bentuk URL.
-
-Bootstrap memasang chromium, font, Xvfb, bun, mengambil `runner.js`,
-menjalankan `bun install`, lalu menguji browsernya. Yang terakhir muncul
-kira-kira begini:
-
-```text
-  ok    browser: chromium (/usr/bin/chromium)
-  ok    browser jalan, keluar lewat ip 203.0.113.9
-  ok    stealth aktif (navigator.webdriver bukan true)
-```
-
-Kalau ada baris `GAGAL`, beresin dulu sebelum lanjut.
-
-### Kalau masih 404
-
-Uji tokennya sendiri dulu, di VPS:
+**Kalau dapat 404**, jangan tebak-tebak. Cek tokennya sendiri dulu:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" \
-  -H "Authorization: Bearer $TOKEN" \
-  https://api.github.com/repos/ifqygazhar/cbdg-testing
+curl -s -o /dev/null -w "%{http_code}"   -H "Authorization: Bearer $TOKEN"   https://api.github.com/repos/ifqygazhar/cbdg-testing
 ```
 
-| Hasil | Artinya |
-|---|---|
-| `200` | Token benar. Kalau tetap 404 saat mengambil berkas, periksa ejaan path dan `--ref`. |
-| `404` | Token tidak punya akses ke repo ini. Di halaman token, pastikan *Only select repositories* memuat `cbdg-testing` dan *Contents* diset **Read-only**. |
-| `401` | Token salah ketik, kedaluwarsa, atau sudah dicabut. |
+| Hasil | Artinya | Tindakan |
+|---|---|---|
+| `200` | Token oke | Kalau pengambilan berkas tetap 404, periksa ejaan path dan `--ref` |
+| `404` | Token valid tapi **tidak punya akses ke repo ini** | Perbaiki di halaman token, lihat di bawah |
+| `401` | Token salah ketik, kedaluwarsa, atau sudah dicabut | Buat token baru |
+
+`404` hampir selalu berarti repositorinya tidak terpilih saat token dibuat.
+Buka tokennya di <https://github.com/settings/personal-access-tokens>, lalu:
+
+1. **Resource owner** harus `ifqygazhar`, bukan organisasi
+2. **Repository access** → *Only select repositories* → `cbdg-testing` benar-benar
+   terpilih di daftarnya. Bawaannya *Public repositories*, dan itu tidak mencakup
+   repo private ini
+3. **Permissions** → *Repository permissions* → **Contents: Read-only**
+4. Simpan. Perubahan izin berlaku langsung, tidak perlu token baru
+
+Kalau tetap rewel, pakai **Cara A**. Tokennya bisa diurus lain kali.
 
 ## 3. Isi akun
 
@@ -101,10 +114,10 @@ Simpan dengan `Ctrl+O`, `Enter`, lalu `Ctrl+X`.
 **Tidak perlu.** Semua punya nilai bawaan, dan flag di baris perintah sudah
 menutupi yang penting. Dua bawaan yang perlu kamu tahu:
 
-| Bawaan | Akibatnya di VPS | Penawarnya |
-|---|---|---|
-| browser jalan *headed* | VPS tidak punya layar | tambah `--headless`, atau biarkan Xvfb yang menanganinya (bagian 9) |
-| cbdg jalan mode *full* | butuh `vcc.txt`, antrean berhenti kalau kosong | pakai `--signup-only` |
+| Bawaan                 | Akibatnya di VPS                               | Penawarnya                                                          |
+| ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------- |
+| browser jalan _headed_ | VPS tidak punya layar                          | tambah `--headless`, atau biarkan Xvfb yang menanganinya (bagian 9) |
+| cbdg jalan mode _full_ | butuh `vcc.txt`, antrean berhenti kalau kosong | pakai `--signup-only`                                               |
 
 Contoh perintah di bawah sudah memakai keduanya, jadi tidak ada yang perlu
 disiapkan lagi.
@@ -245,12 +258,12 @@ Bisa, dan bootstrap sudah memasang `xvfb` untukmu. Cukup **jangan** menulis
 dibungkus `xvfb-run` dengan layar palsu 1280x800. Kalau Xvfb tidak terpasang dan
 tidak ada `DISPLAY`, ia berhenti dengan pesan jelas, bukan gagal setengah jalan.
 
-| | `--headless` | tanpa `--headless` (Xvfb) |
-|---|---|---|
-| RAM | ~400-700 MB | ~700 MB-1 GB |
-| Sidik jari | build headless punya ciri khas sendiri | jendela Chrome biasa |
-| Screenshot | jalan | jalan |
-| Captcha manual | tidak bisa | tidak bisa juga, kecuali dipasangi VNC |
+|                | `--headless`                           | tanpa `--headless` (Xvfb)              |
+| -------------- | -------------------------------------- | -------------------------------------- |
+| RAM            | ~400-700 MB                            | ~700 MB-1 GB                           |
+| Sidik jari     | build headless punya ciri khas sendiri | jendela Chrome biasa                   |
+| Screenshot     | jalan                                  | jalan                                  |
+| Captcha manual | tidak bisa                             | tidak bisa juga, kecuali dipasangi VNC |
 
 Stealth plugin memang sudah menambal penanda headless yang paling umum, jadi
 headless bukan berarti pasti ketahuan. Xvfb menutup sisa penanda yang tidak
@@ -299,13 +312,13 @@ terowongan ssh.
 
 ## Kalau ada yang gagal
 
-| Gejala | Artinya |
-|---|---|
-| `HTTP 404` saat mengambil bootstrap | Token salah, kedaluwarsa, atau `BRANCH` tidak cocok |
-| `chromium tidak bisa dipasang otomatis` | Distro tidak dikenal, pasang chromium manual lalu ulangi |
-| `doctor` bilang browser gagal dijalankan | Biasanya RAM kurang; VPS 1 GB adalah batas bawah |
-| `proxy-live.txt kosong padahal proxy.txt terisi` | Jalankan `./run.sh start proxy-check` |
+| Gejala                                            | Artinya                                                                       |
+| ------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `HTTP 404` saat mengambil bootstrap               | Token salah, kedaluwarsa, atau `BRANCH` tidak cocok                           |
+| `chromium tidak bisa dipasang otomatis`           | Distro tidak dikenal, pasang chromium manual lalu ulangi                      |
+| `doctor` bilang browser gagal dijalankan          | Biasanya RAM kurang; VPS 1 GB adalah batas bawah                              |
+| `proxy-live.txt kosong padahal proxy.txt terisi`  | Jalankan `./run.sh start proxy-check`                                         |
 | Banyak akun `kehabisan proxy yang belum terpakai` | IP unik lebih sedikit dari jumlah akun, panen lagi atau pakai `--reuse-proxy` |
-| `ACCOUNT_RESTRICTED` | Blokir dari sisi mereka, akun itu tidak akan diulang |
+| `ACCOUNT_RESTRICTED`                              | Blokir dari sisi mereka, akun itu tidak akan diulang                          |
 
 Log lengkap tiap run ada di `~/runner/logs/`.

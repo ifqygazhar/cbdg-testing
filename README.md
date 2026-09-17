@@ -44,10 +44,10 @@ Satu bundel berisi ketiga app plus library-nya, tanpa source apa pun:
 ```bash
 bun run build:dist        # dist/runner.js (~94 KB), ikut di-commit
 
-# di VPS: repo private tetap bisa diambil dengan token
-API=https://api.github.com/repos/ifqygazhar/cbdg-testing/contents
-curl -fsSL -H "Authorization: Bearer <token>" -H "Accept: application/vnd.github.raw"   "$API/scripts/vps-bootstrap.sh?ref=main" |
-  bash -s -- --from $API/dist --token <token> --ref main --ephemeral
+# salin ke VPS, lalu pasang dari folder lokal (tanpa token)
+scp dist/runner.js dist/package.json scripts/vps-bootstrap.sh root@IP-VPS:/root/
+ssh root@IP-VPS 'mkdir -p /root/dist && mv /root/runner.js /root/package.json /root/dist/ &&
+  bash /root/vps-bootstrap.sh --from /root/dist --dir ~/runner --ephemeral'
 ```
 
 Di VPS, jalankan lewat wrapper supaya laptop boleh dimatikan:
