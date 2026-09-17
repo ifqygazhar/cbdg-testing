@@ -39,7 +39,16 @@ export async function main(argv: string[] = []): Promise<number> {
     failures++;
   }
 
-  // 2. seed
+  // 2. layar: kalau mau jalan headed di mesin tanpa monitor, butuh Xvfb
+  if (process.platform === "linux") {
+    const display = process.env.DISPLAY ?? "";
+    const hasXvfb = ["/usr/bin/xvfb-run", "/usr/local/bin/xvfb-run"].some((p) => fs.existsSync(p));
+    if (display) ok(`layar: DISPLAY=${display} — mode headed bisa dipakai`);
+    else if (hasXvfb) ok("layar: xvfb-run terpasang — mode headed jalan di layar palsu");
+    else info("layar: tidak ada, dan xvfb-run belum terpasang — pakai --headless");
+  }
+
+  // 3. seed
   const accounts = countEntries(path.join(cwd, "gsuite.txt"));
   if (accounts > 0) ok(`gsuite.txt: ${accounts} akun`);
   else {
@@ -56,7 +65,7 @@ export async function main(argv: string[] = []): Promise<number> {
   const cards = countEntries(path.join(cwd, "vcc.txt"));
   info(`vcc.txt: ${cards} kartu (cuma perlu untuk cbdg --full)`);
 
-  // 3. yang paling sering jadi masalah di VPS: browser bisa dipasang tapi
+  // 4. yang paling sering jadi masalah di VPS: browser bisa dipasang tapi
   //    tidak bisa jalan karena shared library atau /dev/shm.
   if (browser) {
     try {
@@ -86,7 +95,7 @@ export async function main(argv: string[] = []): Promise<number> {
     }
   }
 
-  // 4. satu proxy dari kolam, kalau ada
+  // 5. satu proxy dari kolam, kalau ada
   if (withProxy && live > 0) {
     const first = fs
       .readFileSync(path.join(cwd, "proxy-live.txt"), "utf8")

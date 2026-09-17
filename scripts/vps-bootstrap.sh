@@ -78,13 +78,13 @@ install_base() {
   if command -v apt-get >/dev/null; then
     say "memasang alat dasar (apt)"
     $SUDO apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq       ca-certificates curl unzip fonts-liberation fonts-noto-color-emoji >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq       ca-certificates curl unzip xvfb       fonts-liberation fonts-noto-color-emoji >/dev/null 2>&1 || true
   elif command -v dnf >/dev/null; then
     say "memasang alat dasar (dnf)"
-    $SUDO dnf install -y -q ca-certificates curl unzip       liberation-fonts google-noto-emoji-color-fonts >/dev/null 2>&1 || true
+    $SUDO dnf install -y -q ca-certificates curl unzip xorg-x11-server-Xvfb       liberation-fonts google-noto-emoji-color-fonts >/dev/null 2>&1 || true
   elif command -v apk >/dev/null; then
     say "memasang alat dasar (apk)"
-    $SUDO apk add --no-cache ca-certificates curl unzip bash       font-noto font-noto-emoji >/dev/null 2>&1 || true
+    $SUDO apk add --no-cache ca-certificates curl unzip bash xvfb-run       font-noto font-noto-emoji >/dev/null 2>&1 || true
   fi
   command -v curl >/dev/null || die "curl tidak ada dan tidak bisa dipasang"
   command -v unzip >/dev/null || say "peringatan: unzip tidak ada, pemasangan bun bisa gagal"
@@ -225,15 +225,33 @@ case "${1:-}" in
       exit 1
     fi
     LOG="logs/$1-$(date +%Y%m%d-%H%M%S).log"
+    # Tanpa --headless, browser butuh layar. Xvfb menyediakan layar palsu, jadi
+    # chrome jalan sebagai jendela sungguhan tanpa monitor. Bedanya bukan cuma
+    # kosmetik: build headless punya sidik jari sendiri yang bisa dikenali.
+    USE_XVFB=""
+    case " $* " in
+      *" --headless "*) ;;
+      *)
+        if [ -n "${DISPLAY:-}" ]; then
+          :
+        elif command -v xvfb-run >/dev/null; then
+          USE_XVFB=1
+          echo "mode headed lewat Xvfb (layar palsu 1280x800)"
+        else
+          echo "tidak ada layar dan xvfb-run tidak terpasang — tambahkan --headless" >&2
+          exit 1
+        fi
+        ;;
+    esac
     # setsid melepas proses dari sesi terminal, jadi ssh boleh diputus dan
     # laptop boleh dimatikan. Kalau setsid tidak ada, nohup masih menolong.
     # Exit code ikut ditulis ke log. Tanpa itu, perintah yang selesai dalam
     # sedetik (proxy-check, --dry-run) tidak bisa dibedakan dari yang mati.
-    INNER='bun "$CODE_DIR/runner.js" "$@"; echo "[run.sh] selesai exit=$?"'
+    INNER='if [ -n "${USE_XVFB:-}" ]; then xvfb-run -a -s "-screen 0 1280x800x24" bun "$CODE_DIR/runner.js" "$@"; else bun "$CODE_DIR/runner.js" "$@"; fi; echo "[run.sh] selesai exit=$?"'
     if command -v setsid >/dev/null; then
-      setsid nohup env CODE_DIR="$CODE_DIR" bash -c "$INNER" _ "$@" >"$LOG" 2>&1 < /dev/null &
+      setsid nohup env CODE_DIR="$CODE_DIR" USE_XVFB="$USE_XVFB" bash -c "$INNER" _ "$@" >"$LOG" 2>&1 < /dev/null &
     else
-      nohup env CODE_DIR="$CODE_DIR" bash -c "$INNER" _ "$@" >"$LOG" 2>&1 < /dev/null &
+      nohup env CODE_DIR="$CODE_DIR" USE_XVFB="$USE_XVFB" bash -c "$INNER" _ "$@" >"$LOG" 2>&1 < /dev/null &
     fi
     echo $! > "$PIDFILE"
     echo "jalan di background (pid $(cat "$PIDFILE"))"

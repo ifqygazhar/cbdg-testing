@@ -81,7 +81,7 @@ menutupi yang penting. Dua bawaan yang perlu kamu tahu:
 
 | Bawaan | Akibatnya di VPS | Penawarnya |
 |---|---|---|
-| browser jalan *headed* | VPS tidak punya layar, browser gagal dibuka | selalu tambah `--headless` |
+| browser jalan *headed* | VPS tidak punya layar | tambah `--headless`, atau biarkan Xvfb yang menanganinya (bagian 9) |
 | cbdg jalan mode *full* | butuh `vcc.txt`, antrean berhenti kalau kosong | pakai `--signup-only` |
 
 Contoh perintah di bawah sudah memakai keduanya, jadi tidak ada yang perlu
@@ -188,6 +188,90 @@ Bersihkan juga jejaknya di VPS:
 unset TOKEN
 history -c
 ```
+
+---
+
+## 9. Headless, Xvfb, dan screenshot
+
+### Screenshot saat gagal sudah otomatis
+
+Tidak perlu menyalakan apa pun. Setiap kegagalan yang bisa diduga sudah memotret
+layarnya sendiri, dan itu berjalan di headless juga karena potretnya diambil
+lewat protokol browser, bukan dari layar fisik.
+
+Yang dipotret: captcha Google, halaman sign-in yang mandek, akun yang diblokir,
+tombol Google yang tak muncul, dashboard yang tak terbuka, form kartu yang
+hilang, sampai API key yang gagal dibaca. Untuk dua kasus terakhir, HTML
+halamannya ikut disimpan supaya nilainya masih bisa diambil manual.
+
+Semuanya mendarat di `~/runner/screenshots*/`. Ambil ke laptop:
+
+```bash
+scp -r root@IP-VPS:'~/runner/screenshots-*' .
+```
+
+### Xvfb: jalan headed di mesin tanpa monitor
+
+Bisa, dan bootstrap sudah memasang `xvfb` untukmu. Cukup **jangan** menulis
+`--headless`:
+
+```bash
+./run.sh start cbdg --signup-only --with-proxy --delay 60
+```
+
+`run.sh` memeriksa sendiri: ada `--headless` maka jalan langsung, tidak ada maka
+dibungkus `xvfb-run` dengan layar palsu 1280x800. Kalau Xvfb tidak terpasang dan
+tidak ada `DISPLAY`, ia berhenti dengan pesan jelas, bukan gagal setengah jalan.
+
+| | `--headless` | tanpa `--headless` (Xvfb) |
+|---|---|---|
+| RAM | ~400-700 MB | ~700 MB-1 GB |
+| Sidik jari | build headless punya ciri khas sendiri | jendela Chrome biasa |
+| Screenshot | jalan | jalan |
+| Captcha manual | tidak bisa | tidak bisa juga, kecuali dipasangi VNC |
+
+Stealth plugin memang sudah menambal penanda headless yang paling umum, jadi
+headless bukan berarti pasti ketahuan. Xvfb menutup sisa penanda yang tidak
+ditambal, dengan ongkos RAM. Di VPS 1 GB, pilih `--headless`. Di 2 GB ke atas,
+Xvfb layak dicoba, terutama kalau kamu curiga blokirnya karena deteksi browser.
+
+Cek mana yang tersedia:
+
+```bash
+./run.sh doctor
+```
+
+Barisnya akan menyebut salah satu:
+
+```text
+  ok    layar: xvfb-run terpasang — mode headed jalan di layar palsu
+  ·     layar: tidak ada, dan xvfb-run belum terpasang — pakai --headless
+```
+
+### Kalau mau benar-benar melihat layarnya
+
+Xvfb tidak punya penonton. Tambahkan VNC kalau ingin mengintip atau
+menyelesaikan captcha sendiri:
+
+```bash
+# di VPS
+apt-get install -y x11vnc
+Xvfb :99 -screen 0 1280x800x24 &
+DISPLAY=:99 x11vnc -localhost -nopw -forever &
+
+# di laptop, terowongkan lalu buka dengan klien VNC ke localhost:5900
+ssh -N -L 5900:127.0.0.1:5900 root@IP-VPS
+```
+
+Lalu jalankan dengan `DISPLAY=:99` supaya memakai layar yang sama:
+
+```bash
+DISPLAY=:99 ./run.sh start cbdg --signup-only --delay 60
+```
+
+`run.sh` melihat `DISPLAY` sudah ada dan tidak akan membungkusnya lagi dengan
+Xvfb. Jangan buka port 5900 ke internet; `-localhost` sudah menguncinya ke
+terowongan ssh.
 
 ---
 
