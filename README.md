@@ -37,6 +37,31 @@ Pilih app, mode, pakai proxy atau tidak, dan kecepatannya lewat menu. Sebelum
 jalan ia menampilkan ringkasan, peringatan yang relevan, dan perintah persisnya
 supaya lain kali bisa langsung diketik. Detail di `docs/RUNNING.md` bagian 4.
 
+## Menjalankan di VPS
+
+Satu bundel berisi ketiga app plus library-nya, tanpa source apa pun:
+
+```bash
+bun run build:dist        # dist/runner.js (~94 KB), ikut di-commit
+
+# di VPS: repo private tetap bisa diambil dengan token
+RAW=https://raw.githubusercontent.com/ifqygazhar/cbdg-testing/main
+curl -fsSL -H "Authorization: Bearer <token>" $RAW/scripts/vps-bootstrap.sh |
+  bash -s -- --from $RAW/dist --token <token> --ephemeral
+```
+
+Di VPS, jalankan lewat wrapper supaya laptop boleh dimatikan:
+
+```bash
+cd ~/runner
+./run.sh start webshare --headless --fast --delay 60
+./run.sh logs      # ikuti     ./run.sh status     ./run.sh stop
+```
+
+`curl | bash` tidak menyembunyikan apa pun dari pemilik VPS, dan `gsuite.txt`
+berisi password Google yang lebih berharga daripada kodenya. Detailnya di
+`docs/RUNNING.md` bagian 14.
+
 ## Aplikasi di repo ini
 
 | app | perintah | hasil |

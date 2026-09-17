@@ -610,7 +610,207 @@ bun run cbdg -- --signup-only --with-proxy --delay 60
 
 Atau lewat `bun run start` dan pilih **dengan proxy** saat ditanya.
 
-## 14. Troubleshooting
+## 14. Menjalankan di VPS tanpa menaruh source di sana
+
+Kalau VPS-nya disewa dan penyedianya tidak sepenuhnya dipercaya, mulai dari satu
+kenyataan ini: **`curl | bash` tidak menyembunyikan apa pun dari pemilik mesin.**
+Siapa pun yang punya root bisa membaca berkasnya, memori prosesnya, dan lalu
+lintas jaringannya. Yang berubah cuma tingkat kerepotannya.
+
+Dan di folder kerja itu, berkas paling berharga bukan kodenya. `gsuite.txt`
+berisi password akun Google dalam bentuk teks biasa.
+
+### Yang dikirim ke VPS
+
+```bash
+bun run build:dist
+```
+
+Hasilnya `dist/` berisi tiga berkas:
+
+| Berkas | Isi |
+|---|---|
+| `runner.js` | cbdg, crusoe, webshare, proxy-check dan library `@ifqy/google-oauth`, semuanya dalam satu bundel terminifikasi. Sekitar 91 KB. |
+| `package.json` | Tiga paket puppeteer yang dipasang di VPS lewat `bun install`. |
+| `RUN.md` | Cara menjalankannya. |
+
+Tidak ada satu pun berkas `.ts`, tidak ada komentar, dan nama fungsi aslinya
+hilang. Yang tetap terbaca adalah teks literal seperti selector dan pesan error,
+dan itu memang tidak bisa dihilangkan.
+
+Tiga paket puppeteer sengaja tidak ikut dibundel. Paket itu publik, dan stealth
+plugin memuat evasion-nya lewat `require` dinamis yang tidak bisa diikuti
+bundler mana pun. (`bun build --compile` memang menghasilkan satu binary, tapi
+binary-nya mati saat membuka browser dengan `Cannot find package 'kind-of'`.)
+
+### Memasangnya
+
+`dist/` sengaja ikut di-commit ke repo ini, karena dari situlah VPS mengambilnya.
+
+Repo ini private, dan itu tidak jadi masalah: `raw.githubusercontent.com`
+melayani repo private asal request-nya membawa token. Sudah diuji, dengan token
+HTTP 200 dan tanpa token HTTP 404. Jadi tidak perlu repo publik sama sekali.
+
+```bash
+# di laptop: ambil token sekali
+gh auth token
+
+# di VPS (ganti <token> dengan hasil di atas)
+RAW=https://raw.githubusercontent.com/ifqygazhar/cbdg-testing/main
+curl -fsSL -H "Authorization: Bearer <token>" $RAW/scripts/vps-bootstrap.sh |
+  bash -s -- --from $RAW/dist --token <token> --ephemeral
+```
+
+Tokennya dipakai dua kali: sekali untuk mengambil bootstrap-nya, sekali oleh
+bootstrap untuk mengambil `runner.js`. Pakai token yang hanya punya izin baca
+untuk repo ini, dan cabut kalau VPS-nya dilepas.
+
+Bootstrap memasang chromium beserta fontnya, memasang bun, mengambil
+`runner.js`, menjalankan `bun install`, menyiapkan `gsuite.txt` dan
+`proxy-live.txt` dengan izin 600, lalu menulis `run.sh`.
+
+| Flag | Guna |
+|---|---|
+| `--from URL` | Lokasi bundle. Wajib. |
+| `--token TOK` | Kirim `Authorization: Bearer`, untuk rilis privat. |
+| `--dir PATH` | Folder kerja, default `~/runner`. |
+| `--ephemeral` | Kode di `/dev/shm` (hilang saat reboot), data tetap di `--dir`. |
+
+### Yang dipasang bootstrap, dan yang tidak perlu kamu siapkan
+
+| | Dipasang otomatis |
+|---|---|
+| chromium atau google-chrome | ya |
+| font liberation + noto emoji | ya |
+| curl, unzip, ca-certificates | ya |
+| bun | ya |
+| tiga paket puppeteer | ya, lewat `bun install` |
+| `gsuite.txt`, `proxy-live.txt` | dibuat kosong dengan izin 600 |
+
+Jadi tidak ada yang perlu dipasang manual. Yang perlu kamu siapkan cuma isi
+`gsuite.txt`.
+
+Alat dasar dipasang **selalu**, bukan cuma saat browser belum ada. Image VPS
+yang sudah membawa chromium akan melewatkan tahap itu kalau digabung, lalu bun
+gagal dipasang karena installernya butuh `unzip`, dan halaman jadi kotak-kotak
+karena fontnya tidak ada.
+
+Di akhir, bootstrap menjalankan `bun runner.js doctor` sebagai uji nyala:
+
+```text
+  ok    browser: chromium (/usr/bin/chromium)
+  ok    gsuite.txt: 34 akun
+  ok    proxy-live.txt: 129 baris
+  ok    browser jalan, keluar lewat ip 203.0.113.9
+  ok    stealth aktif (navigator.webdriver bukan true)
+  ok    proxy pertama hidup, keluar lewat ip 45.38.107.97
+```
+
+Browser bisa terpasang tapi tetap tidak mau jalan, biasanya karena shared
+library kurang atau `/dev/shm` terlalu kecil di container. Lebih baik ketahuan
+di sini daripada saat akun pertama sudah dipakai. Jalankan ulang kapan saja
+dengan `bun runner.js doctor`.
+
+### Menaruh kode di RAM supaya hilang tiap reboot
+
+```bash
+curl -fsSL <url>/vps-bootstrap.sh | bash -s -- --from <url-dist> --ephemeral
+```
+
+`--ephemeral` memisahkan kode dari data:
+
+| | Lokasi | Nasib saat reboot |
+|---|---|---|
+| `runner.js`, `node_modules` | `/dev/shm/runner-code` | **hilang** |
+| `gsuite.txt`, hasil, `logs/`, `run.sh` | `~/runner` | tetap ada |
+
+Pemisahan ini mungkin karena dependensi di-resolve dari sebelah `runner.js`,
+sedangkan seed dan hasil mengikuti folder kerja. Jadi kode bisa ditaruh di RAM
+tanpa ikut menghapus panenmu. Kalau semuanya ditaruh di `/dev/shm`, reboot juga
+akan menghapus `apikey.txt`, `proxy.txt` dan `state.jsonl`, dan akun yang sudah
+diproses akan diulang dari nol.
+
+`/dev/shm` adalah tmpfs, jadi isinya benar-benar hilang saat reboot, bukan cuma
+ditandai terhapus. Ukurannya sekitar 47 MB (hampir semuanya `node_modules`,
+`runner.js` sendiri cuma 94 KB). Default `/dev/shm` adalah separuh RAM, jadi di
+VPS 1 GB pun lapang.
+
+Setelah reboot, `run.sh` tidak akan berpura-pura jalan:
+
+```text
+kode tidak ada di /dev/shm/runner-code (hilang setelah reboot?)
+pasang ulang:
+  curl -fsSL <url>/vps-bootstrap.sh | bash -s -- --from <url> --dir /root/runner --ephemeral
+```
+
+Perintah pemasangan ulangnya ditulis ke dalam `run.sh` saat bootstrap, jadi
+tinggal disalin. Token privat sengaja tidak ikut disimpan; tambahkan sendiri
+kalau memang dipakai.
+
+> **Yang tidak dilindungi.** Selama proses jalan, root tetap bisa membaca
+> `/dev/shm` dan memori prosesnya. Ephemeral melindungi dari pemeriksaan disk
+> **setelah** server mati, bukan dari pemilik mesin yang sedang aktif. Dan
+> `gsuite.txt` tetap di disk karena harus bertahan; kalau itu yang paling
+> dikhawatirkan, hapus dia setelah batch selesai.
+
+### Menjalankannya supaya laptop boleh dimatikan
+
+```bash
+cd ~/runner
+nano gsuite.txt
+
+./run.sh start webshare --headless --fast --delay 60
+./run.sh logs            # ikuti jalannya
+./run.sh status          # dari sesi ssh baru kapan saja
+./run.sh stop            # berhenti, chromium-nya ikut dimatikan
+```
+
+`run.sh start` melepas proses dari sesi terminal dengan `setsid`, jadi ssh boleh
+diputus dan laptop boleh dimatikan. Log tiap run disimpan di `logs/` dengan
+stempel waktu, dan baris terakhirnya selalu memuat exit code, jadi run yang
+selesai dalam sedetik bisa dibedakan dari yang mati.
+
+Semua perintah juga bisa dipanggil langsung tanpa wrapper:
+
+```bash
+bun runner.js cbdg --headless --signup-only --with-proxy --delay 60
+bun runner.js proxy-check
+```
+
+Urutan yang biasa dipakai:
+
+```bash
+./run.sh start webshare --headless --fast --delay 60     # panen proxy
+./run.sh start proxy-check                               # saring yang mati
+./run.sh start cbdg --headless --signup-only --with-proxy --delay 60
+```
+
+Hasilnya menumpuk di folder yang sama: `apikey.txt`, `proxy.txt`,
+`proxy-live.txt`, `akun-result-*.txt`, `state-*.jsonl`, dan `screenshots-*/`.
+Ambil ke laptop kapan saja:
+
+```bash
+scp -r root@ip-vps:'~/runner/*.txt' .
+```
+
+Di VPS selalu pakai `--headless`, dan ingat captcha serta 3DS tidak bisa
+diselesaikan manual di sana.
+
+### Kalau ternyata yang kamu butuh cuma IP-nya
+
+Tidak perlu menaruh apa pun di VPS:
+
+```bash
+ssh -N -D 1080 root@ip-vps                      # biarkan terbuka
+echo "socks5://127.0.0.1:1080" > proxy-live.txt
+bun run cbdg -- --signup-only --with-proxy --delay 60
+```
+
+`ssh -D` membuka SOCKS5 di mesinmu yang keluar lewat IP VPS, dan loader sudah
+menerima baris `socks5://`. Bedanya: laptop harus tetap menyala, dan
+`proxy-check` tidak bisa menguji baris SOCKS karena ia mengetes lewat HTTP.
+
+## 15. Troubleshooting
 
 | Gejala | Kemungkinan penyebab / solusi |
 |---|---|
@@ -633,7 +833,7 @@ Atau lewat `bun run start` dan pilih **dengan proxy** saat ditanya.
 | Mode full berhenti "no cards in vcc.txt" | Isi `vcc.txt`, atau pakai `--signup-only`. |
 | Menu tidak bisa panah atas/bawah | Terminalnya bukan TTY (mis. output dipipe). Menu otomatis jatuh ke input angka. |
 
-## 15. Struktur Terkait (untuk konteks)
+## 16. Struktur Terkait (untuk konteks)
 
 ```
 packages/google-oauth/     # library reusable @ifqy/google-oauth
@@ -658,6 +858,10 @@ scripts/                   # launcher + tooling
   prompt.ts                  # select/confirm/askNumber + pembaca stdin
   proxy-check.ts             # cek proxy.txt → proxy-live.txt
   proxy-lib.ts               # parsing + verdict hidup/mati (pure, ada test-nya)
+  runner-entry.ts            # satu entry: cbdg | crusoe | webshare | proxy-check | doctor
+  doctor.ts                  # uji nyala: browser, seed, proxy
+  build-dist.ts              # bundle terminifikasi untuk dikirim ke VPS
+  vps-bootstrap.sh           # installer sekali jalan di VPS (curl | bash)
 dataset_target/            # HTML asli (dipakai test validasi selector)
 crusoe_ai_dataset/         # HTML asli crusoe (dipakai test validasi selector)
 webshare_dataset/          # HTML asli webshare (dipakai test validasi selector)

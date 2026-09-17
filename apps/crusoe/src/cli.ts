@@ -79,8 +79,12 @@ export function parseArgs(argv: string[]): Args {
   return args;
 }
 
-async function main() {
-  const args = parseArgs(Bun.argv.slice(2));
+/**
+ * `argv` is a parameter so one bundled binary can host every app: the
+ * dispatcher hands each command its own slice of the real argv.
+ */
+export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
+  const args = parseArgs(argv);
   const env = applyArgsToEnv(args, process.env);
   const cfg = loadConfig(env);
   ensureDirs(cfg);

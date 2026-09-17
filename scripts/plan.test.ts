@@ -181,3 +181,58 @@ describe("proxy-check as a menu action", () => {
     expect(warningsFor(plan, { accounts: 0, proxies: 3, live: 0, liveAddresses: 0, cards: 0 })).toEqual([]);
   });
 });
+
+// ── bundle untuk VPS ───────────────────────────────────────────────
+describe("runner-entry", () => {
+  it("mengenali setiap app dan menolak yang lain", async () => {
+    const { main } = await import("./runner-entry.js");
+    const said: string[] = [];
+    const log = console.log;
+    const err = console.error;
+    console.log = (m: string) => said.push(String(m));
+    console.error = (m: string) => said.push(String(m));
+    try {
+      // tanpa perintah → usage, exit 1
+      expect(await main([])).toBe(1);
+      expect(said.join(" ")).toContain("webshare");
+      // perintah asing → usage, exit 1
+      said.length = 0;
+      expect(await main(["bogus"])).toBe(1);
+      expect(said.join(" ")).toContain("tidak dikenal");
+      // --help → usage, exit 0
+      expect(await main(["--help"])).toBe(0);
+    } finally {
+      console.log = log;
+      console.error = err;
+    }
+  });
+
+  it("doctor ikut terdaftar sebagai perintah", async () => {
+    const { main } = await import("./runner-entry.js");
+    const said: string[] = [];
+    const log = console.log;
+    console.log = (m: string) => said.push(String(m));
+    try {
+      await main(["--help"]);
+    } finally {
+      console.log = log;
+    }
+    expect(said.join(" ")).toContain("doctor");
+  });
+
+  it("meneruskan flag ke app yang dipilih", async () => {
+    const { main } = await import("./runner-entry.js");
+    const said: string[] = [];
+    const log = console.log;
+    console.log = (m: string) => said.push(String(m));
+    try {
+      // --dry-run berhenti sebelum browser, jadi aman dipakai sebagai bukti
+      // bahwa argumennya benar-benar sampai ke app-nya.
+      expect(await main(["cbdg", "--dry-run", "--signup-only"])).toBe(0);
+    } finally {
+      console.log = log;
+    }
+    expect(said.join(" ")).toContain("dry-run");
+    expect(said.join(" ")).toContain('"mode":"signup"');
+  });
+});
