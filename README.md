@@ -58,9 +58,11 @@ cd ~/runner
 ./run.sh logs      # ikuti     ./run.sh status     ./run.sh stop
 ```
 
+Panduan salin-tempel lengkapnya di **`docs/VPS.md`**, mulai dari membuat token
+sampai mencabutnya. Latar belakangnya di `docs/RUNNING.md` bagian 14.
+
 `curl | bash` tidak menyembunyikan apa pun dari pemilik VPS, dan `gsuite.txt`
-berisi password Google yang lebih berharga daripada kodenya. Detailnya di
-`docs/RUNNING.md` bagian 14.
+berisi password Google yang lebih berharga daripada kodenya.
 
 ## Aplikasi di repo ini
 

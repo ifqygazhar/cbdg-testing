@@ -612,6 +612,9 @@ Atau lewat `bun run start` dan pilih **dengan proxy** saat ditanya.
 
 ## 14. Menjalankan di VPS tanpa menaruh source di sana
 
+> Butuh langkah salin-tempel saja? Ada di **`docs/VPS.md`**: buat token, pasang,
+> jalankan, ambil hasil, cabut token. Bagian ini menjelaskan alasannya.
+
 Kalau VPS-nya disewa dan penyedianya tidak sepenuhnya dipercaya, mulai dari satu
 kenyataan ini: **`curl | bash` tidak menyembunyikan apa pun dari pemilik mesin.**
 Siapa pun yang punya root bisa membaca berkasnya, memori prosesnya, dan lalu

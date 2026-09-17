@@ -247,6 +247,10 @@ case "${1:-}" in
       tail -3 "$LOG"
     fi
     ;;
+  doctor)
+    # Jalan di depan, bukan di background: hasilnya memang untuk dibaca.
+    exec bun "$CODE_DIR/runner.js" doctor "${@:2}"
+    ;;
   logs)
     LOG="$(latest_log)"
     [ -n "$LOG" ] || { echo "belum ada log" >&2; exit 1; }
@@ -283,6 +287,7 @@ Usage:
   ./run.sh logs                         ikuti log yang sedang berjalan
   ./run.sh status                       cek masih jalan atau tidak
   ./run.sh stop                         hentikan (beserta chromium-nya)
+  ./run.sh doctor                       cek browser, seed dan proxy
 
 Perintah: webshare | proxy-check | crusoe | cbdg
 Contoh:
