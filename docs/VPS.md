@@ -18,8 +18,8 @@ Buat token khusus yang cuma bisa membaca satu repo ini:
 1. Buka <https://github.com/settings/personal-access-tokens/new>
 2. **Token name**: `vps-runner`
 3. **Expiration**: 30 hari (atau sependek mungkin)
-4. **Repository access** → *Only select repositories* → pilih `cbdg-testing`
-5. **Permissions** → *Repository permissions* → **Contents: Read-only**
+4. **Repository access** → _Only select repositories_ → pilih `cbdg-testing`
+5. **Permissions** → _Repository permissions_ → **Contents: Read-only**
 6. Generate, lalu salin tokennya (`github_pat_...`)
 
 Token ini cuma bisa membaca isi satu repo. Tidak bisa menulis, tidak bisa
@@ -36,7 +36,7 @@ ssh root@IP-VPS
 Lalu di VPS (ganti `github_pat_xxx` dengan tokenmu):
 
 ```bash
-export TOKEN=github_pat_xxx
+export TOKEN=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
 export BRANCH=main
 export RAW=https://raw.githubusercontent.com/ifqygazhar/cbdg-testing/$BRANCH
 
@@ -79,10 +79,10 @@ Simpan dengan `Ctrl+O`, `Enter`, lalu `Ctrl+X`.
 **Tidak perlu.** Semua punya nilai bawaan, dan flag di baris perintah sudah
 menutupi yang penting. Dua bawaan yang perlu kamu tahu:
 
-| Bawaan | Akibatnya di VPS | Penawarnya |
-|---|---|---|
-| browser jalan *headed* | VPS tidak punya layar | tambah `--headless`, atau biarkan Xvfb yang menanganinya (bagian 9) |
-| cbdg jalan mode *full* | butuh `vcc.txt`, antrean berhenti kalau kosong | pakai `--signup-only` |
+| Bawaan                 | Akibatnya di VPS                               | Penawarnya                                                          |
+| ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------- |
+| browser jalan _headed_ | VPS tidak punya layar                          | tambah `--headless`, atau biarkan Xvfb yang menanganinya (bagian 9) |
+| cbdg jalan mode _full_ | butuh `vcc.txt`, antrean berhenti kalau kosong | pakai `--signup-only`                                               |
 
 Contoh perintah di bawah sudah memakai keduanya, jadi tidak ada yang perlu
 disiapkan lagi.
@@ -223,12 +223,12 @@ Bisa, dan bootstrap sudah memasang `xvfb` untukmu. Cukup **jangan** menulis
 dibungkus `xvfb-run` dengan layar palsu 1280x800. Kalau Xvfb tidak terpasang dan
 tidak ada `DISPLAY`, ia berhenti dengan pesan jelas, bukan gagal setengah jalan.
 
-| | `--headless` | tanpa `--headless` (Xvfb) |
-|---|---|---|
-| RAM | ~400-700 MB | ~700 MB-1 GB |
-| Sidik jari | build headless punya ciri khas sendiri | jendela Chrome biasa |
-| Screenshot | jalan | jalan |
-| Captcha manual | tidak bisa | tidak bisa juga, kecuali dipasangi VNC |
+|                | `--headless`                           | tanpa `--headless` (Xvfb)              |
+| -------------- | -------------------------------------- | -------------------------------------- |
+| RAM            | ~400-700 MB                            | ~700 MB-1 GB                           |
+| Sidik jari     | build headless punya ciri khas sendiri | jendela Chrome biasa                   |
+| Screenshot     | jalan                                  | jalan                                  |
+| Captcha manual | tidak bisa                             | tidak bisa juga, kecuali dipasangi VNC |
 
 Stealth plugin memang sudah menambal penanda headless yang paling umum, jadi
 headless bukan berarti pasti ketahuan. Xvfb menutup sisa penanda yang tidak
@@ -277,13 +277,13 @@ terowongan ssh.
 
 ## Kalau ada yang gagal
 
-| Gejala | Artinya |
-|---|---|
-| `HTTP 404` saat mengambil bootstrap | Token salah, kedaluwarsa, atau `BRANCH` tidak cocok |
-| `chromium tidak bisa dipasang otomatis` | Distro tidak dikenal, pasang chromium manual lalu ulangi |
-| `doctor` bilang browser gagal dijalankan | Biasanya RAM kurang; VPS 1 GB adalah batas bawah |
-| `proxy-live.txt kosong padahal proxy.txt terisi` | Jalankan `./run.sh start proxy-check` |
+| Gejala                                            | Artinya                                                                       |
+| ------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `HTTP 404` saat mengambil bootstrap               | Token salah, kedaluwarsa, atau `BRANCH` tidak cocok                           |
+| `chromium tidak bisa dipasang otomatis`           | Distro tidak dikenal, pasang chromium manual lalu ulangi                      |
+| `doctor` bilang browser gagal dijalankan          | Biasanya RAM kurang; VPS 1 GB adalah batas bawah                              |
+| `proxy-live.txt kosong padahal proxy.txt terisi`  | Jalankan `./run.sh start proxy-check`                                         |
 | Banyak akun `kehabisan proxy yang belum terpakai` | IP unik lebih sedikit dari jumlah akun, panen lagi atau pakai `--reuse-proxy` |
-| `ACCOUNT_RESTRICTED` | Blokir dari sisi mereka, akun itu tidak akan diulang |
+| `ACCOUNT_RESTRICTED`                              | Blokir dari sisi mereka, akun itu tidak akan diulang                          |
 
 Log lengkap tiap run ada di `~/runner/logs/`.
