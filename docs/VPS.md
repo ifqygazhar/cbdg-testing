@@ -92,22 +92,73 @@ Buka tokennya di <https://github.com/settings/personal-access-tokens>, lalu:
 
 Kalau tetap rewel, pakai **Cara A**. Tokennya bisa diurus lain kali.
 
-## 3. Isi akun
+## 3. Isi akun dan proxy
+
+Semuanya di **`~/runner`** (kalau login sebagai root berarti `/root/runner`).
+Itu folder yang kamu tunjuk lewat `--dir`, dan di situ pula semua hasil nanti
+ditulis.
+
+```text
+~/runner/
+  gsuite.txt        ← akun Google, WAJIB diisi
+  proxy.txt         ← hasil panen webshare (dibuat sendiri oleh webshare)
+  proxy-live.txt    ← proxy yang lolos proxy-check, dipakai cbdg & crusoe
+  vcc.txt           ← hanya untuk cbdg --full
+  run.sh            ← dibuat bootstrap
+  logs/             ← log tiap run
+```
+
+Yang **bukan** tempatnya: `/root/dist` cuma titipan bundle, dan
+`/dev/shm/runner-code` isinya kode yang hilang saat reboot. Jangan taruh seed
+di situ.
+
+### Cara termudah: salin dari laptop
+
+Mengetik puluhan akun lewat nano itu menyiksa. Dari **laptop**:
+
+```bash
+scp gsuite.txt root@IP-VPS:~/runner/
+scp proxy.txt root@IP-VPS:~/runner/        # kalau sudah punya hasil panen
+ssh root@IP-VPS 'chmod 600 ~/runner/gsuite.txt'
+```
+
+Lalu di VPS, saring proxynya dari jaringan VPS itu sendiri:
+
+```bash
+cd ~/runner && ./run.sh start proxy-check
+```
+
+Pengecekan ulang ini penting: `proxy-live.txt` dari laptop dibuat berdasarkan
+jaringan laptop. Yang menentukan sekarang adalah jaringan VPS.
+
+### Atau ketik langsung di VPS
 
 ```bash
 nano ~/runner/gsuite.txt
 ```
 
-Satu akun per baris:
+Satu akun per baris, tanpa spasi:
 
 ```text
 user.satu@domain.com:PasswordRahasia123
 user.dua@domain.com:PasswordLain456
 ```
 
-Simpan dengan `Ctrl+O`, `Enter`, lalu `Ctrl+X`.
+Simpan dengan `Ctrl+O`, `Enter`, lalu `Ctrl+X`. Cek sudah terbaca:
 
----
+```bash
+cd ~/runner && ./run.sh doctor
+```
+
+Barisnya harus berbunyi `ok    gsuite.txt: N akun`.
+
+Kalau belum punya proxy sama sekali, biarkan `proxy-live.txt` apa adanya dan
+panen dulu:
+
+```bash
+./run.sh start webshare --headless --fast --delay 60
+./run.sh start proxy-check
+```
 
 ## 4. Perlu set `.env` dulu?
 
