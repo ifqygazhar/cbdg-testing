@@ -17,6 +17,7 @@ set -euo pipefail
 
 FROM=""
 TOKEN=""
+REF="main"
 DIR="${HOME}/runner"
 EPHEMERAL=0
 BUNDLE="runner.js"
@@ -29,7 +30,11 @@ usage() {
 Usage: bash vps-bootstrap.sh --from <base-url> [opsi]
 
   --from URL     Lokasi bundle (runner.js + package.json). Wajib.
-  --token TOK    Authorization: Bearer <tok>, untuk rilis privat.
+                 Untuk fine-grained PAT, pakai bentuk api.github.com:
+                 https://api.github.com/repos/OWNER/REPO/contents/dist
+  --token TOK    Authorization: Bearer <tok>, untuk repo privat.
+  --ref BRANCH   Branch yang dibaca kalau --from memakai api.github.com
+                 (default main).
   --dir PATH     Folder kerja (default ~/runner).
   --ephemeral    Taruh KODE di /dev/shm (RAM) supaya hilang saat reboot.
                  Seed dan hasil tetap di --dir yang permanen.
@@ -43,6 +48,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --from) FROM="${2:-}"; shift 2 ;;
     --token) TOKEN="${2:-}"; shift 2 ;;
+    --ref) REF="${2:-}"; shift 2 ;;
     --dir) DIR="${2:-}"; shift 2 ;;
     --ephemeral) EPHEMERAL=1; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -147,13 +153,26 @@ say "bun: $(bun --version)"
 mkdir -p "$CODE_DIR" "$DATA_DIR"
 cd "$CODE_DIR"
 
+# Dua bentuk sumber didukung:
+#
+#   raw.githubusercontent.com/OWNER/REPO/BRANCH/dist
+#   api.github.com/repos/OWNER/REPO/contents/dist   (+ --ref BRANCH)
+#
+# Bentuk kedua wajib untuk fine-grained PAT (`github_pat_...`): raw tidak
+# menerimanya dan menjawab 404, yang gampang disalahartikan sebagai berkas
+# tidak ada. Endpoint API menerima token klasik maupun fine-grained.
 fetch() {
   local name="$1"
-  if [ -n "$TOKEN" ]; then
-    curl -fsSL -H "Authorization: Bearer $TOKEN" -o "$name" "$FROM/$name"
-  else
-    curl -fsSL -o "$name" "$FROM/$name"
-  fi
+  local url="$FROM/$name"
+  local -a args=(-fsSL)
+  [ -n "$TOKEN" ] && args+=(-H "Authorization: Bearer $TOKEN")
+  case "$FROM" in
+    *api.github.com*)
+      args+=(-H "Accept: application/vnd.github.raw")
+      url="$FROM/$name?ref=$REF"
+      ;;
+  esac
+  curl "${args[@]}" -o "$name" "$url"
 }
 
 say "mengambil bundle dari $FROM"

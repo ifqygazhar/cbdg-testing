@@ -45,9 +45,9 @@ Satu bundel berisi ketiga app plus library-nya, tanpa source apa pun:
 bun run build:dist        # dist/runner.js (~94 KB), ikut di-commit
 
 # di VPS: repo private tetap bisa diambil dengan token
-RAW=https://raw.githubusercontent.com/ifqygazhar/cbdg-testing/main
-curl -fsSL -H "Authorization: Bearer <token>" $RAW/scripts/vps-bootstrap.sh |
-  bash -s -- --from $RAW/dist --token <token> --ephemeral
+API=https://api.github.com/repos/ifqygazhar/cbdg-testing/contents
+curl -fsSL -H "Authorization: Bearer <token>" -H "Accept: application/vnd.github.raw"   "$API/scripts/vps-bootstrap.sh?ref=main" |
+  bash -s -- --from $API/dist --token <token> --ref main --ephemeral
 ```
 
 Di VPS, jalankan lewat wrapper supaya laptop boleh dimatikan:

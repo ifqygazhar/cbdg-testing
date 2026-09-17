@@ -33,19 +33,27 @@ menyentuh repo lain.
 ssh root@IP-VPS
 ```
 
-Lalu di VPS (ganti `github_pat_xxx` dengan tokenmu):
+Lalu di VPS. Ganti `github_pat_xxx` dengan tokenmu:
 
 ```bash
 export TOKEN=github_pat_xxx
-export BRANCH=main
-export RAW=https://raw.githubusercontent.com/ifqygazhar/cbdg-testing/$BRANCH
+export API=https://api.github.com/repos/ifqygazhar/cbdg-testing/contents
 
-curl -fsSL -H "Authorization: Bearer $TOKEN" $RAW/scripts/vps-bootstrap.sh |
-  bash -s -- --from $RAW/dist --token $TOKEN --dir ~/runner --ephemeral
+curl -fsSL -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.github.raw" \
+  "$API/scripts/vps-bootstrap.sh?ref=main" |
+  bash -s -- --from $API/dist --token $TOKEN --ref main --dir ~/runner --ephemeral
 ```
 
-Bootstrap memasang chromium, font, bun, mengambil `runner.js`, menjalankan
-`bun install`, lalu menguji browsernya. Yang terakhir muncul kira-kira begini:
+> **Kenapa `api.github.com`, bukan `raw.githubusercontent.com`?**
+> Token fine-grained (`github_pat_...`) ditolak oleh `raw.githubusercontent.com`
+> dan jawabannya **404**, sama persis dengan jawaban untuk berkas yang memang
+> tidak ada. Endpoint API menerima token fine-grained maupun klasik, jadi
+> bentuk ini yang dipakai. Bootstrap mengenali kedua bentuk URL.
+
+Bootstrap memasang chromium, font, Xvfb, bun, mengambil `runner.js`,
+menjalankan `bun install`, lalu menguji browsernya. Yang terakhir muncul
+kira-kira begini:
 
 ```text
   ok    browser: chromium (/usr/bin/chromium)
@@ -55,7 +63,21 @@ Bootstrap memasang chromium, font, bun, mengambil `runner.js`, menjalankan
 
 Kalau ada baris `GAGAL`, beresin dulu sebelum lanjut.
 
----
+### Kalau masih 404
+
+Uji tokennya sendiri dulu, di VPS:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "Authorization: Bearer $TOKEN" \
+  https://api.github.com/repos/ifqygazhar/cbdg-testing
+```
+
+| Hasil | Artinya |
+|---|---|
+| `200` | Token benar. Kalau tetap 404 saat mengambil berkas, periksa ejaan path dan `--ref`. |
+| `404` | Token tidak punya akses ke repo ini. Di halaman token, pastikan *Only select repositories* memuat `cbdg-testing` dan *Contents* diset **Read-only**. |
+| `401` | Token salah ketik, kedaluwarsa, atau sudah dicabut. |
 
 ## 3. Isi akun
 

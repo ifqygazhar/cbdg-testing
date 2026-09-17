@@ -650,18 +650,23 @@ binary-nya mati saat membuka browser dengan `Cannot find package 'kind-of'`.)
 
 `dist/` sengaja ikut di-commit ke repo ini, karena dari situlah VPS mengambilnya.
 
-Repo ini private, dan itu tidak jadi masalah: `raw.githubusercontent.com`
-melayani repo private asal request-nya membawa token. Sudah diuji, dengan token
-HTTP 200 dan tanpa token HTTP 404. Jadi tidak perlu repo publik sama sekali.
+Repo ini private, dan itu tidak jadi masalah: GitHub melayani isinya asal
+request-nya membawa token. Jadi tidak perlu repo publik sama sekali.
+
+Pakai endpoint **`api.github.com/.../contents`**, bukan `raw.githubusercontent.com`.
+Raw menolak token fine-grained (`github_pat_...`) dengan **404**, jawaban yang
+sama persis dengan berkas yang memang tidak ada, jadi salah baca gampang sekali.
+Endpoint API menerima token fine-grained maupun klasik. Bootstrap mengenali
+kedua bentuk URL, dan `--ref` menentukan branch untuk bentuk API.
 
 ```bash
 # di laptop: ambil token sekali
 gh auth token
 
-# di VPS (ganti <token> dengan hasil di atas)
-RAW=https://raw.githubusercontent.com/ifqygazhar/cbdg-testing/main
-curl -fsSL -H "Authorization: Bearer <token>" $RAW/scripts/vps-bootstrap.sh |
-  bash -s -- --from $RAW/dist --token <token> --ephemeral
+# di VPS (ganti <token> dengan tokenmu)
+API=https://api.github.com/repos/ifqygazhar/cbdg-testing/contents
+curl -fsSL -H "Authorization: Bearer <token>" -H "Accept: application/vnd.github.raw"   "$API/scripts/vps-bootstrap.sh?ref=main" |
+  bash -s -- --from $API/dist --token <token> --ref main --ephemeral
 ```
 
 Tokennya dipakai dua kali: sekali untuk mengambil bootstrap-nya, sekali oleh
