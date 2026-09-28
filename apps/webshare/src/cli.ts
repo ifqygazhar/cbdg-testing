@@ -48,7 +48,7 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--pace") args.pace = next();
     else if (a === "--google-direct") args.googleDirect = true;
     else if (a === "--no-google-direct") args.googleDirect = false;
-    else if (a === "--reuse-proxy") args.reuseProxy = true;
+    else if (a === "--reuse-proxy" || a === "--rotate-proxy" || a === "--loop-proxy") args.reuseProxy = true;
     else if (a === "--unique-proxy") args.reuseProxy = false;
     else if (a === "--help" || a === "-h") {
       console.log(
@@ -60,6 +60,10 @@ export function parseArgs(argv: string[]): Args {
         `  --fast     human-shaped but no dead waiting (~1 min/account instead of ~2)
 ` +
         `  --careful  slower than a real user; for hostile risk engines
+` +
+        `  --reuse-proxy  rotasi/loop proxy: putar kembali dari awal jika habis
+` +
+        `  --rotate-proxy alias untuk --reuse-proxy
 ` +
         `  --delay    seconds between accounts — this is the risk-control knob, not --fast`,
       );

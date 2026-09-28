@@ -55,7 +55,7 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--pace") args.pace = next();
     else if (a === "--google-direct") args.googleDirect = true;
     else if (a === "--no-google-direct") args.googleDirect = false;
-    else if (a === "--reuse-proxy") args.reuseProxy = true;
+    else if (a === "--reuse-proxy" || a === "--rotate-proxy" || a === "--loop-proxy") args.reuseProxy = true;
     else if (a === "--unique-proxy") args.reuseProxy = false;
     else if (a === "--help" || a === "-h") {
       console.log(
@@ -71,6 +71,9 @@ export function parseArgs(argv: string[]): Args {
         `  --delay    seconds between accounts — this is the risk-control knob, not --fast\n` +
         `  --no-proxy ignore proxy.txt and run every account from this IP\n` +
         `  --proxy F  use a specific proxy file (default proxy.txt)\n` +
+        `  --reuse-proxy       rotasi/loop proxy: putar kembali dari awal jika habis\n` +
+        `  --rotate-proxy      alias untuk --reuse-proxy\n` +
+        `  --unique-proxy      default: 1 akun 1 alamat unik, tahan akun jika proxy habis\n` +
         `  --no-google-direct  kirim google sign-in lewat proxy juga (default: langsung)`,
       );
       process.exit(0);

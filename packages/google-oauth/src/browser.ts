@@ -82,35 +82,101 @@ export interface GoogleOAuthBrowser {
 }
 
 export function findInstalledBrowser(): { path: string; name: string } | null {
+  // 1. Explicit env override
+  const envPath =
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+    process.env.CHROME_BIN ||
+    process.env.BROWSER_PATH;
+  if (envPath && fs.existsSync(envPath)) {
+    return { path: envPath, name: path.basename(envPath).replace(/\.exe$/i, "") };
+  }
+
   const platform = os.platform();
   let candidates: string[] = [];
 
   if (platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || "";
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+
     candidates = [
-      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      // Edge
+      path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
+      path.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+      // Chrome
+      path.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+      // Brave
+      path.join(programFiles, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+      path.join(programFilesX86, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+      path.join(localAppData, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
     ];
   } else if (platform === "linux") {
     candidates = [
+      // Google Chrome
       "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+      // Brave Browser
+      "/usr/bin/brave-browser",
+      "/usr/bin/brave",
+      "/snap/bin/brave",
+      // Chromium
       "/usr/bin/chromium",
       "/usr/bin/chromium-browser",
-      "/usr/bin/microsoft-edge",
       "/snap/bin/chromium",
+      // Microsoft Edge
+      "/usr/bin/microsoft-edge",
+      "/usr/bin/microsoft-edge-stable",
+      "/usr/bin/microsoft-edge-dev",
+      // Vivaldi & Opera
+      "/usr/bin/vivaldi",
+      "/usr/bin/vivaldi-stable",
+      "/usr/bin/opera",
     ];
   } else if (platform === "darwin") {
     candidates = [
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
       "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
       "/Applications/Chromium.app/Contents/MacOS/Chromium",
     ];
   }
 
   for (const p of candidates) {
-    if (fs.existsSync(p)) return { path: p, name: path.basename(p).replace(/\.exe$/i, "") };
+    if (p && fs.existsSync(p)) return { path: p, name: path.basename(p).replace(/\.exe$/i, "") };
   }
+
+  // Fallback: search system PATH for known Chromium-based browser binaries
+  const pathDirs = (process.env.PATH || "").split(path.delimiter);
+  const binaryNames =
+    platform === "win32"
+      ? ["msedge.exe", "chrome.exe", "brave.exe"]
+      : [
+          "google-chrome",
+          "google-chrome-stable",
+          "brave-browser",
+          "brave",
+          "chromium",
+          "chromium-browser",
+          "microsoft-edge",
+          "microsoft-edge-stable",
+        ];
+
+  for (const bin of binaryNames) {
+    for (const dir of pathDirs) {
+      if (!dir) continue;
+      const fullPath = path.join(dir, bin);
+      try {
+        if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+          return { path: fullPath, name: bin.replace(/\.exe$/i, "") };
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   return null;
 }
 
@@ -135,6 +201,8 @@ export interface LaunchGoogleOAuthBrowserOptions {
   disableWebSecurity?: boolean;
   /** extra Chrome flags appended verbatim */
   extraArgs?: string[];
+  /** Optional custom browser executable path */
+  executablePath?: string;
 }
 
 export async function launchGoogleOAuthBrowser(
@@ -144,7 +212,16 @@ export async function launchGoogleOAuthBrowser(
   const screenshotOnError = options.screenshotOnError ?? true;
   const puppeteer = await getPuppeteer();
   const viewport = getRandomViewport();
-  const found = findInstalledBrowser();
+  const found = options.executablePath
+    ? { path: options.executablePath, name: path.basename(options.executablePath).replace(/\.exe$/i, "") }
+    : findInstalledBrowser();
+
+  if (!found) {
+    throw new Error(
+      "No supported Chromium-based browser found (checked Chrome, Brave, Chromium, Edge). " +
+      "Please install Brave, Chrome, or Edge, or specify PUPPETEER_EXECUTABLE_PATH in .env",
+    );
+  }
 
   const launchOpts: Record<string, unknown> = {
     headless: headless ? "new" : false,
@@ -178,12 +255,10 @@ export async function launchGoogleOAuthBrowser(
       "--lang=en-US",
     ] as string[],
     defaultViewport: viewport,
+    executablePath: found.path,
   };
 
-  if (found) {
-    launchOpts.executablePath = found.path;
-    console.log(`[browser] Using: ${found.name} (${found.path})`);
-  }
+  console.log(`[browser] Using: ${found.name} (${found.path})`);
 
   if (options.proxy?.bypass?.length) {
     (launchOpts.args as string[]).push(`--proxy-bypass-list=${options.proxy.bypass.join(";")}`);

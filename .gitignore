@@ -19,3 +19,4 @@ proxy-dead.txt
 *.log
 .DS_Store
 bun.lockb
+.codebase-memory/

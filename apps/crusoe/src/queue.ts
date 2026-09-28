@@ -89,13 +89,13 @@ export async function processQueue(cfg: AppConfig, store: JsonlStore): Promise<v
   };
   const previous = new Map<string, string>();
   for (const rec of store.all()) {
-    if (rec.proxy) previous.set(rec.email, addressOf(rec.proxy));
+    if (rec.proxy) previous.set(rec.email, cfg.reuseProxy ? rec.proxy : addressOf(rec.proxy));
   }
   const { paired, heldBack, remaining, distinct } = assignUniqueProxies({
     accounts: todo,
     proxies,
     idOf: (a) => a.email,
-    keyOf: (p) => addressOf(p.server),
+    keyOf: (p) => (cfg.reuseProxy ? p.server : addressOf(p.server)),
     previous,
     reuse: cfg.reuseProxy,
   });

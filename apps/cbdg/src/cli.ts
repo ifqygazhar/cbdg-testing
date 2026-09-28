@@ -51,6 +51,9 @@ export const USAGE = [
   "  --delay        seconds between accounts — the risk-control knob, not --fast",
   "  --no-proxy     ignore proxy.txt and run every account from this IP",
   "  --proxy FILE   use a specific proxy file (default proxy.txt)",
+  "  --reuse-proxy  rotasi/loop proxy: putar kembali dari urutan pertama jika habis",
+  "  --rotate-proxy alias untuk --reuse-proxy",
+  "  --unique-proxy default: 1 akun 1 alamat unik, tahan akun jika proxy habis",
   "  --no-google-direct  send google sign-in through the proxy too (default: direct,",
   "                 because a datacenter address earns an image captcha)",
 ].join("\n");
@@ -91,7 +94,7 @@ export function parseArgs(argv: string[], onHelp: () => void = printUsageAndExit
     else if (a === "--pace") args.pace = next();
     else if (a === "--google-direct") args.googleDirect = true;
     else if (a === "--no-google-direct") args.googleDirect = false;
-    else if (a === "--reuse-proxy") args.reuseProxy = true;
+    else if (a === "--reuse-proxy" || a === "--rotate-proxy" || a === "--loop-proxy") args.reuseProxy = true;
     else if (a === "--unique-proxy") args.reuseProxy = false;
     else if (a === "--help" || a === "-h") {
       onHelp();
