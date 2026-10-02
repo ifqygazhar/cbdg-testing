@@ -25,6 +25,14 @@
         "puppeteer-core": "^23.0.0",
       },
     },
+    "apps/fastrouter": {
+      "name": "@ifqy/fastrouter-signup",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ifqy/google-oauth": "0.1.0",
+        "puppeteer-core": "^23.0.0",
+      },
+    },
     "apps/webshare": {
       "name": "@ifqy/webshare-signup",
       "version": "0.1.0",
@@ -47,6 +55,8 @@
     "@ifqy/cbdg-credit": ["@ifqy/cbdg-credit@workspace:apps/cbdg"],
 
     "@ifqy/crusoe-signup": ["@ifqy/crusoe-signup@workspace:apps/crusoe"],
+
+    "@ifqy/fastrouter-signup": ["@ifqy/fastrouter-signup@workspace:apps/fastrouter"],
 
     "@ifqy/google-oauth": ["@ifqy/google-oauth@workspace:packages/google-oauth"],
 

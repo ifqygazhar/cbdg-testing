@@ -1,0 +1,4 @@
+sign up : https://fastrouter.ai/sign-up
+membutuhkan complete signup, setelah signup lewat google oauth : https://fastrouter.ai/sign-up/continue
+welcome setelah complete signup isi organisasi bebas beserta spend $ nya itu $1k-$10k random, dan isi checklist bebas : https://dashboard.fastrouter.ai/welcome
+sample dashboard, terus bikin apikey dan pastikan credit $1 nya ada di halaman nya artinya sudah selesai, dan simpan ke apikey-fastrouter : https://dashboard.fastrouter.ai/${organization_name}___bdfe31b8-be07-11f1-a3ea-36d5e2b7441a/keys

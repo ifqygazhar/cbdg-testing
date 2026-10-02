@@ -11,6 +11,7 @@ import {
   IS_TOOL,
   PROXY_CAPABLE,
   googleDirectEnabled,
+  proxyReuseEnabled,
   buildArgs,
   commandLine,
   readSeeds,
@@ -41,6 +42,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "webshare", label: "webshare", hint: "daftar via Google → panen proxy gratis ke proxy.txt" },
     { value: "proxy-check", label: "cek proxy", hint: "proxy.txt → uji hidup/mati → proxy-live.txt" },
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
+    { value: "fastrouter", label: "fastrouter", hint: "daftar FastRouter → kredit $1 + API key ke apikey-fastrouter" },
     { value: "cbdg", label: "cbdg", hint: "daftar CodeBuddy → kredit new-user (+ VCC opsional)" },
   ]);
 
@@ -66,6 +68,7 @@ async function askPlan(): Promise<RunPlan> {
   }
 
   let useProxy: boolean | undefined;
+  let reuseProxy: boolean | undefined;
   let googleDirect: boolean | undefined;
   if (PROXY_CAPABLE.includes(app)) {
     const pool =
@@ -73,9 +76,28 @@ async function askPlan(): Promise<RunPlan> {
         ? `proxy-live.txt (${seeds.liveAddresses} alamat unik)`
         : `proxy.txt (${seeds.proxies} baris, belum dicek)`;
     useProxy = await select<boolean>("Pakai proxy?", [
-      { value: true, label: "Dengan proxy", hint: `${pool}, 1 akun 1 alamat` },
+      { value: true, label: "Dengan proxy", hint: pool },
       { value: false, label: "Tanpa proxy", hint: "semua akun dari IP mesin ini" },
     ], seeds.live > 0 || seeds.proxies > 0 ? 0 : 1);
+
+    if (useProxy) {
+      const defReuse = proxyReuseEnabled();
+      reuseProxy = await select<boolean>("Alokasi proxy?", [
+        {
+          value: false,
+          label: "1 akun 1 alamat unik (default)",
+          hint: "tahan akun jika kehabisan IP baru (aman untuk risk engine)",
+        },
+        {
+          value: true,
+          label: "Reuse / rotasi proxy yang ada",
+          hint:
+            seeds.accounts > seeds.liveAddresses && seeds.liveAddresses > 0
+              ? `putar ulang dari awal (${seeds.accounts} akun, ${seeds.liveAddresses} IP)`
+              : "putar ulang dari awal jika jumlah akun melebihi proxy",
+        },
+      ], defReuse ? 1 : 0);
+    }
     // Reads the same knob the apps read, so the review and the printed command
     // tell the truth even when .env overrides the default.
     googleDirect = useProxy ? googleDirectEnabled() : undefined;
@@ -93,7 +115,7 @@ async function askPlan(): Promise<RunPlan> {
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, useProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun };
+  return { app, mode, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun };
 }
 
 function review(plan: RunPlan): void {
@@ -123,6 +145,16 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
               : "tanpa proxy",
           ],
         ] as Array<[string, string]>)),
+    ...(plan.useProxy
+      ? ([
+          [
+            "alokasi",
+            plan.reuseProxy
+              ? "reuse / rotasi (putar ulang jika habis)"
+              : "1 akun 1 alamat unik",
+          ],
+        ] as Array<[string, string]>)
+      : []),
     ...(plan.useProxy
       ? ([["google", plan.googleDirect === false ? "lewat proxy" : "langsung (hindari captcha)"]] as Array<[string, string]>)
       : []),

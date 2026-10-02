@@ -11,6 +11,7 @@ import {
   buildArgs,
   commandLine,
   googleDirectEnabled,
+  proxyReuseEnabled,
   readSeeds,
   warningsFor,
   type RunPlan,
@@ -18,6 +19,7 @@ import {
 } from "./plan.js";
 import { parseArgs as parseCbdg, applyArgsToEnv as envCbdg } from "../apps/cbdg/src/cli.js";
 import { parseArgs as parseCrusoe, applyArgsToEnv as envCrusoe } from "../apps/crusoe/src/cli.js";
+import { parseArgs as parseFastrouter, applyArgsToEnv as envFastrouter } from "../apps/fastrouter/src/cli.js";
 import { parseArgs as parseWebshare, applyArgsToEnv as envWebshare } from "../apps/webshare/src/cli.js";
 
 const base: RunPlan = {
@@ -73,6 +75,25 @@ describe("buildArgs", () => {
     expect(warningsFor({ ...base, mode: "signup", googleDirect: false }, seeds).join(" ")).toContain("captcha");
     expect(warningsFor({ ...base, mode: "signup", googleDirect: true }, seeds)).toEqual([]);
   });
+  it("spells out reuse-proxy when enabled and unique-proxy when overriding env", () => {
+    expect(buildArgs({ ...base, reuseProxy: true })).toContain("--reuse-proxy");
+    expect(buildArgs({ ...base, reuseProxy: false })).not.toContain("--reuse-proxy");
+    // overrides PROXY_REUSE=1 in env with --unique-proxy
+    const orig = process.env.PROXY_REUSE;
+    try {
+      process.env.PROXY_REUSE = "1";
+      expect(buildArgs({ ...base, reuseProxy: false })).toContain("--unique-proxy");
+    } finally {
+      if (orig !== undefined) process.env.PROXY_REUSE = orig;
+      else delete process.env.PROXY_REUSE;
+    }
+  });
+  it("proxyReuseEnabled reads PROXY_REUSE knob correctly", () => {
+    expect(proxyReuseEnabled({} as NodeJS.ProcessEnv)).toBe(false);
+    expect(proxyReuseEnabled({ PROXY_REUSE: "1" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(proxyReuseEnabled({ PROXY_REUSE: "true" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(proxyReuseEnabled({ PROXY_REUSE: "0" } as NodeJS.ProcessEnv)).toBe(false);
+  });
   it("googleDirectEnabled reads the same knob the apps read", () => {
     expect(googleDirectEnabled({} as NodeJS.ProcessEnv)).toBe(true);
     expect(googleDirectEnabled({ GOOGLE_DIRECT: "0" } as NodeJS.ProcessEnv)).toBe(false);
@@ -80,6 +101,9 @@ describe("buildArgs", () => {
   });
   it("commandLine is copy-pasteable", () => {
     expect(commandLine(base)).toBe("bun run cbdg -- --headed --pace human --full --with-proxy --delay 60");
+    expect(commandLine({ ...base, reuseProxy: true })).toBe(
+      "bun run cbdg -- --headed --pace human --full --with-proxy --reuse-proxy --delay 60",
+    );
   });
 });
 
@@ -87,9 +111,14 @@ describe("buildArgs", () => {
 describe("emitted flags are understood by the apps", () => {
   const cases: Array<[RunPlan, (a: string[]) => NodeJS.ProcessEnv]> = [
     [{ ...base }, (a) => envCbdg(parseCbdg(a, () => {}), {})],
+    [{ ...base, reuseProxy: true }, (a) => envCbdg(parseCbdg(a, () => {}), {})],
     [{ ...base, mode: "signup", useProxy: false }, (a) => envCbdg(parseCbdg(a, () => {}), {})],
     [{ ...base, app: "crusoe", mode: undefined }, (a) => envCrusoe(parseCrusoe(a), {})],
+    [{ ...base, app: "crusoe", mode: undefined, reuseProxy: true }, (a) => envCrusoe(parseCrusoe(a), {})],
     [{ ...base, app: "crusoe", mode: undefined, useProxy: false }, (a) => envCrusoe(parseCrusoe(a), {})],
+    [{ ...base, app: "fastrouter", mode: undefined }, (a) => envFastrouter(parseFastrouter(a), {})],
+    [{ ...base, app: "fastrouter", mode: undefined, reuseProxy: true }, (a) => envFastrouter(parseFastrouter(a), {})],
+    [{ ...base, app: "fastrouter", mode: undefined, useProxy: false }, (a) => envFastrouter(parseFastrouter(a), {})],
     [{ ...base, app: "webshare", mode: undefined, useProxy: undefined }, (a) => envWebshare(parseWebshare(a), {})],
   ];
 
@@ -102,6 +131,7 @@ describe("emitted flags are understood by the apps", () => {
       if (plan.app === "cbdg") expect(env.MODE).toBe(plan.mode);
       if (plan.useProxy !== undefined) expect(env.USE_PROXY).toBe(plan.useProxy ? "1" : "0");
       else expect(env.USE_PROXY).toBeUndefined();
+      if (plan.reuseProxy !== undefined) expect(env.PROXY_REUSE).toBe(plan.reuseProxy ? "1" : "0");
     }
   });
 
@@ -150,6 +180,13 @@ describe("seeds + warnings", () => {
     const w = warningsFor({ ...base, mode: "signup" }, seeds({ proxies: 7, live: 7 }));
     expect(w).toEqual([]);
   });
+  it("warns about holding accounts back unless reuseProxy is set", () => {
+    const held = warningsFor({ ...base, mode: "signup", reuseProxy: false }, seeds({ accounts: 10, liveAddresses: 4 }));
+    expect(held.join(" ")).toContain("ditahan sampai ada proxy baru");
+    const reuse = warningsFor({ ...base, mode: "signup", reuseProxy: true }, seeds({ accounts: 10, liveAddresses: 4 }));
+    expect(reuse.join(" ")).toContain("reuse-proxy aktif");
+    expect(reuse.join(" ")).not.toContain("ditahan");
+  });
   it("warns when many accounts share one IP", () => {
     const w = warningsFor({ ...base, mode: "signup", useProxy: false }, seeds({ accounts: 9 }));
     expect(w.join(" ")).toContain("berbagi satu IP");
@@ -159,7 +196,7 @@ describe("seeds + warnings", () => {
     expect(w.join(" ")).toContain("0 detik");
   });
   it("proxy-capable list is exactly the apps that read the proxy file", () => {
-    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe"]);
+    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter"]);
   });
 });
 

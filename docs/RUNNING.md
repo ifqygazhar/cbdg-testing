@@ -92,9 +92,10 @@ Satu pintu untuk semua aplikasi. Urutan pertanyaannya:
 
 1. **Mau jalankan yang mana** — webshare, cek proxy, crusoe, atau cbdg.
 2. **Sampai mana** (khusus cbdg) — signup saja, atau full sampai VCC.
-3. **Pakai proxy?** (cbdg dan crusoe) — dari `proxy.txt`, atau tanpa proxy.
-4. **Kecepatan** — `human`, `fast`, atau `careful`.
-5. Jeda antar akun, jumlah worker, retry akun gagal, headless, dan dry-run.
+3. **Pakai proxy?** (cbdg dan crusoe) — dari `proxy.txt` / `proxy-live.txt`, atau tanpa proxy.
+4. **Alokasi proxy?** (jika pakai proxy) — `1 akun 1 alamat unik` (default) atau `Reuse / rotasi proxy yang ada` (`--reuse-proxy`, putar ulang dari awal jika jumlah akun melebihi proxy).
+5. **Kecepatan** — `human`, `fast`, atau `careful`.
+6. Jeda antar akun, jumlah worker, retry akun gagal, headless, dan dry-run.
 
 Sebelum menjalankan, launcher menampilkan ringkasan rencana, peringatan yang
 relevan, dan **perintah persisnya**. Perintah itu bisa dipakai langsung lain kali

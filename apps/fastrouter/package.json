@@ -1,0 +1,11 @@
+{
+  "name": "@ifqy/fastrouter-signup",
+  "version": "0.1.0",
+  "description": "FastRouter AI signup automation ($1 credit + API key) on Bun + Puppeteer (@ifqy/google-oauth)",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ifqy/google-oauth": "0.1.0",
+    "puppeteer-core": "^23.0.0"
+  }
+}

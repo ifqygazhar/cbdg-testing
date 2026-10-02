@@ -6,6 +6,7 @@ bun runner.js doctor              # cek browser, seed dan proxy
 bun runner.js webshare --headless --fast --delay 60
 bun runner.js proxy-check
 bun runner.js crusoe --headless --fast --delay 60
+bun runner.js fastrouter --headless --fast --delay 60
 bun runner.js cbdg --headless --signup-only --with-proxy --delay 60
 ```
 

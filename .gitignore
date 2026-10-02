@@ -20,3 +20,11 @@ proxy-dead.txt
 .DS_Store
 bun.lockb
 .codebase-memory/
+state-fastrouter.jsonl
+akun-result-fastrouter.txt
+akun-failed-fastrouter.txt
+screenshots-fastrouter/
+apikey-fastrouter.txt
+*.png
+__pycache__/
+*.pyc

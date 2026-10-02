@@ -40,7 +40,7 @@ async function main(): Promise<number> {
   }
   const size = fs.statSync(path.join(outDir, OUT_NAME)).size;
   console.log(
-    `  ${OUT_NAME.padEnd(12)} ${(size / 1024).toFixed(0).padStart(4)} KB  (cbdg + crusoe + webshare + proxy-check + library)`,
+    `  ${OUT_NAME.padEnd(12)} ${(size / 1024).toFixed(0).padStart(4)} KB  (cbdg + crusoe + fastrouter + webshare + proxy-check + library)`,
   );
 
   // The target installs these itself; pinning the majors we tested against.
@@ -74,6 +74,7 @@ async function main(): Promise<number> {
       "bun runner.js webshare --headless --fast --delay 60",
       "bun runner.js proxy-check",
       "bun runner.js crusoe --headless --fast --delay 60",
+      "bun runner.js fastrouter --headless --fast --delay 60",
       "bun runner.js cbdg --headless --signup-only --with-proxy --delay 60",
       "```",
       "",

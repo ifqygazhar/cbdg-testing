@@ -4,13 +4,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type AppName = "cbdg" | "crusoe" | "webshare" | "proxy-check";
+export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "proxy-check";
 
 /** Maintenance actions have no accounts, pace or proxy of their own. */
 export const IS_TOOL: Record<AppName, boolean> = {
   cbdg: false,
   crusoe: false,
   webshare: false,
+  fastrouter: false,
   "proxy-check": true,
 };
 export type Pace = "fast" | "human" | "careful";
@@ -21,10 +22,12 @@ export interface RunPlan {
   pace: Pace;
   /** cbdg only: stop after signup, or go through the card */
   mode?: CbdgMode;
-  /** cbdg + crusoe: read proxies from the seed file, or run from this IP */
+  /** cbdg + crusoe + fastrouter: read proxies from the seed file, or run from this IP */
   useProxy?: boolean;
+  /** cbdg + crusoe + fastrouter: allow accounts to reuse/cycle through proxies */
+  reuseProxy?: boolean;
   /**
-   * cbdg + crusoe: send Google's sign-in direct while the site keeps the
+   * cbdg + crusoe + fastrouter: send Google's sign-in direct while the site keeps the
    * proxy. Carried on the plan rather than read from the environment at print
    * time, so the command shown is the command that runs.
    */
@@ -40,11 +43,12 @@ export const APP_ENTRY: Record<AppName, string> = {
   cbdg: "apps/cbdg/src/cli.ts",
   crusoe: "apps/crusoe/src/cli.ts",
   webshare: "apps/webshare/src/cli.ts",
+  fastrouter: "apps/fastrouter/src/cli.ts",
   "proxy-check": "scripts/proxy-check.ts",
 };
 
 /** Apps whose accounts can be spread over the harvested proxies. */
-export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe"];
+export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter"];
 
 /**
  * Whether Google's sign-in will bypass the proxy on this run. Defaults on; the
@@ -54,6 +58,16 @@ export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe"];
 export function googleDirectEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = (env.GOOGLE_DIRECT ?? "").toLowerCase();
   if (v === "") return true;
+  return ["1", "true", "yes", "y", "on"].includes(v);
+}
+
+/**
+ * Whether proxy reuse/rotation is enabled by default from environment.
+ * Off by default; the apps read PROXY_REUSE.
+ */
+export function proxyReuseEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.PROXY_REUSE ?? "").toLowerCase();
+  if (v === "") return false;
   return ["1", "true", "yes", "y", "on"].includes(v);
 }
 
@@ -69,7 +83,11 @@ export function buildArgs(plan: RunPlan): string[] {
     args.push(plan.useProxy ? "--with-proxy" : "--no-proxy");
     // Only worth spelling out when it differs from the default, and only when
     // there is a proxy for it to differ from.
-    if (plan.useProxy && plan.googleDirect === false) args.push("--no-google-direct");
+    if (plan.useProxy) {
+      if (plan.googleDirect === false) args.push("--no-google-direct");
+      if (plan.reuseProxy) args.push("--reuse-proxy");
+      else if (plan.reuseProxy === false && proxyReuseEnabled()) args.push("--unique-proxy");
+    }
   }
   if (plan.workers > 1) args.push("-w", String(plan.workers));
   if (plan.delaySec > 0) args.push("--delay", String(plan.delaySec));
@@ -162,10 +180,16 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
     } else if (seeds.live === 0) {
       out.push(`proxy.txt terisi (${seeds.proxies}) tapi belum dicek — jalankan proxy-check dulu.`);
     } else if (seeds.liveAddresses > 0 && seeds.accounts > seeds.liveAddresses) {
-      out.push(
-        `${seeds.accounts} akun tapi cuma ${seeds.liveAddresses} alamat unik — ` +
-          `${seeds.accounts - seeds.liveAddresses} akun ditahan sampai ada proxy baru (atau pakai --reuse-proxy).`,
-      );
+      if (plan.reuseProxy) {
+        out.push(
+          `reuse-proxy aktif: ${seeds.accounts} akun akan merotasi ${seeds.liveAddresses} alamat unik (beberapa akun berbagi IP).`,
+        );
+      } else {
+        out.push(
+          `${seeds.accounts} akun tapi cuma ${seeds.liveAddresses} alamat unik — ` +
+            `${seeds.accounts - seeds.liveAddresses} akun ditahan sampai ada proxy baru (atau pakai --reuse-proxy).`,
+        );
+      }
     }
   }
   if (PROXY_CAPABLE.includes(plan.app) && plan.useProxy && plan.googleDirect === false) {

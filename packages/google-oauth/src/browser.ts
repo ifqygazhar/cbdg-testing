@@ -260,6 +260,16 @@ export async function launchGoogleOAuthBrowser(
 
   console.log(`[browser] Using: ${found.name} (${found.path})`);
 
+  if (/brave/i.test(found.name) || /brave/i.test(found.path)) {
+    // Brave Shields & Farbling secara default mengacak hash Canvas/WebGL sehingga
+    // memicu Cloudflare Turnstile error "troubleshoot / failure".
+    (launchOpts.args as string[]).push(
+      "--disable-features=BraveShields,BraveShieldsV1",
+      "--disable-brave-extension",
+      "--disable-brave-update",
+    );
+  }
+
   if (options.proxy?.bypass?.length) {
     (launchOpts.args as string[]).push(`--proxy-bypass-list=${options.proxy.bypass.join(";")}`);
   }
