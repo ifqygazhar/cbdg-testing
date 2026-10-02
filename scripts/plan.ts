@@ -16,10 +16,15 @@ export const IS_TOOL: Record<AppName, boolean> = {
 };
 export type Pace = "fast" | "human" | "careful";
 export type CbdgMode = "signup" | "full";
+export type BrowserEngine = "bun" | "python";
+
+export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe"];
 
 export interface RunPlan {
   app: AppName;
   pace: Pace;
+  /** Browser engine: 'bun' (Chromium/Puppeteer) or 'python' (Camoufox/Firefox) */
+  engine?: BrowserEngine;
   /** cbdg only: stop after signup, or go through the card */
   mode?: CbdgMode;
   /** cbdg + crusoe + fastrouter: read proxies from the seed file, or run from this IP */
@@ -38,6 +43,7 @@ export interface RunPlan {
   delaySec: number;
   workers: number;
 }
+
 
 export const APP_ENTRY: Record<AppName, string> = {
   cbdg: "apps/cbdg/src/cli.ts",
@@ -93,8 +99,12 @@ export function buildArgs(plan: RunPlan): string[] {
   if (plan.delaySec > 0) args.push("--delay", String(plan.delaySec));
   if (plan.retryFailed) args.push("--retry-failed");
   if (plan.dryRun) args.push("--dry-run");
+  if (ENGINE_CAPABLE.includes(plan.app) && plan.engine === "python") {
+    args.push("--engine", "python");
+  }
   return args;
 }
+
 
 /** The exact line a person could paste to repeat this run. */
 export function commandLine(plan: RunPlan): string {

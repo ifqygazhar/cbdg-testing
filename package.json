@@ -23,6 +23,10 @@
     "crusoe": "bun run apps/crusoe/src/cli.ts",
     "webshare": "bun run apps/webshare/src/cli.ts",
     "fastrouter": "bun run apps/fastrouter/src/cli.ts",
+    "fastrouter:python": "/home/azhar/.venvs/camoufox/bin/python apps/fastrouter/camoufox_runner.py",
+    "crusoe:python": "/home/azhar/.venvs/camoufox/bin/python apps/crusoe/camoufox_runner.py",
+
+
     "test:fastrouter-units": "bun test apps/fastrouter/src/units.test.ts",
     "test:fastrouter-queue": "bun test apps/fastrouter/src/queue.test.ts",
     "test:webshare-units": "bun test apps/webshare/src/units.test.ts",

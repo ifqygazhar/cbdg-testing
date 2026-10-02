@@ -28,3 +28,6 @@ apikey-fastrouter.txt
 *.png
 __pycache__/
 *.pyc
+check_results.csv
+valid_keys.txt
+

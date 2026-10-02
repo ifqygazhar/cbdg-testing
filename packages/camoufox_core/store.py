@@ -1,0 +1,86 @@
+import json
+import os
+import time
+from typing import Dict, Any, Optional, Set
+
+class FlowState:
+    PENDING = "PENDING"
+    DONE = "DONE"
+    FAILED = "FAILED"
+
+class JsonlStore:
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        self._records: Dict[str, Dict[str, Any]] = {}
+        self._load()
+
+    def _load(self):
+        if not os.path.exists(self.filepath):
+            return
+        with open(self.filepath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    if "email" in record:
+                        self._records[record["email"]] = record
+                except Exception:
+                    pass
+
+    def get(self, email: str) -> Optional[Dict[str, Any]]:
+        return self._records.get(email)
+
+    def is_done(self, email: str) -> bool:
+        record = self.get(email)
+        return record is not None and record.get("status") == FlowState.DONE
+
+    def is_restricted_or_banned(self, email: str) -> bool:
+        record = self.get(email)
+        if not record or record.get("status") != FlowState.FAILED:
+            return False
+        err = (record.get("error") or "").lower()
+        return "restricted" in err or "disabled" in err or "banned" in err
+
+    def upsert(self, record: Dict[str, Any]):
+        email = record.get("email")
+        if not email:
+            return
+        record["updatedAt"] = int(time.time() * 1000)
+        self._records[email] = record
+        # Append to jsonl
+        os.makedirs(os.path.dirname(os.path.abspath(self.filepath)), exist_ok=True)
+        with open(self.filepath, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+class ResultWriter:
+    def __init__(self, key_files: list[str], account_result_file: str, account_failed_file: str):
+        self.key_files = key_files
+        self.account_result_file = account_result_file
+        self.account_failed_file = account_failed_file
+
+    def mark_success(self, email: str, password: str, api_key: str, extra: str = ""):
+        # Save API key to key files
+        for kf in self.key_files:
+            if not kf:
+                continue
+            os.makedirs(os.path.dirname(os.path.abspath(kf)), exist_ok=True)
+            with open(kf, "a", encoding="utf-8") as f:
+                f.write(f"{api_key}\n")
+
+        # Save to account result file
+        line = f"{email}:{password}"
+        if api_key:
+            line += f":{api_key}"
+        if extra:
+            line += f":{extra}"
+
+        os.makedirs(os.path.dirname(os.path.abspath(self.account_result_file)), exist_ok=True)
+        with open(self.account_result_file, "a", encoding="utf-8") as f:
+            f.write(f"{line}\n")
+
+    def mark_failed(self, email: str, password: str, reason: str):
+        os.makedirs(os.path.dirname(os.path.abspath(self.account_failed_file)), exist_ok=True)
+        with open(self.account_failed_file, "a", encoding="utf-8") as f:
+            f.write(f"{email}:{password} # {reason}\n")

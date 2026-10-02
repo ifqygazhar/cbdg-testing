@@ -58,6 +58,19 @@ describe("buildArgs", () => {
     expect(loud).toContain("--headless");
     expect(loud).toEqual(expect.arrayContaining(["-w", "3", "--retry-failed", "--dry-run"]));
   });
+  it("fastrouter and crusoe get the engine switch when python chosen", () => {
+    const frPython = buildArgs({ ...base, app: "fastrouter", engine: "python" });
+    expect(frPython).toEqual(expect.arrayContaining(["--engine", "python"]));
+    const crusoePython = buildArgs({ ...base, app: "crusoe", engine: "python" });
+    expect(crusoePython).toEqual(expect.arrayContaining(["--engine", "python"]));
+    // bun engine is default so no flag needed
+    const frBun = buildArgs({ ...base, app: "fastrouter", engine: "bun" });
+    expect(frBun).not.toContain("--engine");
+    // cbdg doesn't support camoufox engine
+    const cbdg = buildArgs({ ...base, app: "cbdg", engine: "python" });
+    expect(cbdg).not.toContain("--engine");
+  });
+
   it("spells out google-direct only when it is turned off", () => {
     // The printed command has to reproduce the run. With GOOGLE_DIRECT=0 in
     // .env and no flag emitted, pasting it elsewhere would silently behave

@@ -10,6 +10,7 @@ import {
   APP_ENTRY,
   IS_TOOL,
   PROXY_CAPABLE,
+  ENGINE_CAPABLE,
   googleDirectEnabled,
   proxyReuseEnabled,
   buildArgs,
@@ -19,8 +20,10 @@ import {
   type AppName,
   type CbdgMode,
   type Pace,
+  type BrowserEngine,
   type RunPlan,
 } from "./plan.js";
+
 
 function banner(seeds: ReturnType<typeof readSeeds>): void {
   const line = (label: string, n: number, file: string) =>
@@ -67,7 +70,24 @@ async function askPlan(): Promise<RunPlan> {
     ]);
   }
 
+  let engine: BrowserEngine | undefined;
+  if (ENGINE_CAPABLE.includes(app)) {
+    engine = await select<BrowserEngine>("Browser engine?", [
+      {
+        value: "python",
+        label: "Python (Camoufox / Firefox)",
+        hint: "Bypass Cloudflare Turnstile & anti-bot otomatis (disarankan)",
+      },
+      {
+        value: "bun",
+        label: "Bun (Puppeteer / Chromium)",
+        hint: "Engine Chromium bawaan",
+      },
+    ], app === "fastrouter" ? 0 : 1);
+  }
+
   let useProxy: boolean | undefined;
+
   let reuseProxy: boolean | undefined;
   let googleDirect: boolean | undefined;
   if (PROXY_CAPABLE.includes(app)) {
@@ -115,7 +135,7 @@ async function askPlan(): Promise<RunPlan> {
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun };
+  return { app, mode, engine, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun };
 }
 
 function review(plan: RunPlan): void {
@@ -132,7 +152,18 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
   }
   const rows: Array<[string, string]> = [
     ["app", plan.app],
+    ...(plan.engine
+      ? ([
+          [
+            "engine",
+            plan.engine === "python"
+              ? "Python (Camoufox / Firefox) - Anti-Turnstile"
+              : "Bun (Puppeteer / Chromium)",
+          ],
+        ] as Array<[string, string]>)
+      : []),
     ...(plan.mode ? ([["mode", plan.mode === "signup" ? "signup saja" : "full (VCC)"]] as Array<[string, string]>) : []),
+
     ...(plan.useProxy === undefined
       ? []
       : ([

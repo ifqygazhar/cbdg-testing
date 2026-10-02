@@ -49,5 +49,11 @@ export {
 export * as dom from "./dom.js";
 export * as antiDetect from "./antiDetect.js";
 export * as utils from "./utils.js";
+export {
+  findCamoufoxPython,
+  shouldUsePythonEngine,
+  spawnPythonRunner,
+  type PythonRunnerOptions,
+} from "./pythonBridge.js";
 
 export type { GoogleOAuthBrowser as GoogleOAuthHandle } from "./browser.js";

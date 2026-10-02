@@ -5,6 +5,27 @@ you have when you arrive.
 
 ---
 
+## Cloudflare Turnstile "troubleshoot" error / Clerk SSO blocked
+
+**Symptom.** Clicking "Sign up with Google" causes Clerk or Cloudflare to display
+a modal: *"Security check: Complete this verification to continue with SSO"*,
+or the Cloudflare Turnstile widget spins and ends in an error stating:
+*"Unable to verify / troubleshooting required"*. Even manual clicking fails.
+
+**Cause.** Chromium or Brave Browser's built-in shields randomize ("farble")
+canvas, audio, and WebGL outputs. Cloudflare Turnstile flags these mathematically
+inconsistent hashes as bot/tampering signals, instantly rejecting the token exchange.
+
+**Fix.**
+1. **Switch to Python Camoufox engine (`--engine python` or `--camoufox`).**
+   Camoufox is built on C++ patched Firefox with mathematically authentic hardware
+   fingerprints. In tests, it completely bypasses Turnstile challenges silently.
+2. In Bun/Chromium: Ensure `--disable-features=BraveShields,BraveShieldsV1` and
+   `--disable-brave-extension` flags are passed, or use standard Google Chrome stable.
+
+---
+
+
 ## Forced headers break the site's own API
 
 **Symptom.** The page renders. A button is visible and enabled. Clicking it
