@@ -32,6 +32,8 @@ from packages.camoufox_core import (
     ResultWriter,
     FlowState,
     create_logger,
+    setup_process_signals,
+    kill_descendant_processes,
 )
 
 
@@ -104,7 +106,16 @@ async def run_single_account(
             await human_delay(1500, 2500)
 
             # ── 2.5 Resolve Cloudflare Turnstile if presented ───────────────
-            await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
+            solved = await resolve_turnstile_if_present(page, timeout_sec=25, logger=logger)
+            if solved:
+                await human_delay(1500, 2500)
+                # If verified but still on sign-up page, re-click Google SSO if not already navigating
+                try:
+                    if "accounts.google.com" not in page.url and await page.locator('button[data-testid="oauth-signup-google"], button:has-text("Sign up with Google")').count() > 0:
+                        logger.info("Turnstile terverifikasi, memastikan tombol SSO terpicu...")
+                        await page.locator('button[data-testid="oauth-signup-google"], button:has-text("Sign up with Google")').first.click(timeout=3000)
+                except Exception:
+                    pass
 
             # ── 3. Google OAuth Flow ────────────────────────────────────────
 
@@ -382,11 +393,13 @@ async def main_async():
     logger.info(f"FastRouter Camoufox batch finished: {success_count}/{processed} succeeded.")
 
 def main():
+    setup_process_signals()
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:
         print("\nInterrupted by user.", file=sys.stderr)
-        sys.exit(130)
+        kill_descendant_processes()
+        os._exit(130)
 
 if __name__ == "__main__":
     main()

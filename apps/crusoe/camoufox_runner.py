@@ -32,6 +32,8 @@ from packages.camoufox_core import (
     ResultWriter,
     FlowState,
     create_logger,
+    setup_process_signals,
+    kill_descendant_processes,
 )
 
 
@@ -83,7 +85,7 @@ async def run_single_account(
             await human_delay(1500, 2500)
 
             # ── 2.5 Resolve Cloudflare Turnstile if presented ───────────────
-            await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
+            await resolve_turnstile_if_present(page, timeout_sec=25, logger=logger)
 
             # ── 3. Google OAuth Flow ────────────────────────────────────────
 
@@ -270,11 +272,13 @@ async def main_async():
     logger.info(f"Crusoe Camoufox batch finished: {success_count}/{processed} succeeded.")
 
 def main():
+    setup_process_signals()
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:
         print("\nInterrupted by user.", file=sys.stderr)
-        sys.exit(130)
+        kill_descendant_processes()
+        os._exit(130)
 
 if __name__ == "__main__":
     main()

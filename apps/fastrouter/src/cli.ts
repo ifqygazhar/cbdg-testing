@@ -103,7 +103,7 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
   // If python engine requested, delegate to Python Camoufox runner
   if (shouldUsePythonEngine(args.engine ?? env.BROWSER_ENGINE)) {
     const runnerPath = path.resolve(import.meta.dir, "../camoufox_runner.py");
-    spawnPythonRunner(runnerPath, {
+    await spawnPythonRunner(runnerPath, {
       headed: args.headless === false,
       useProxy: args.useProxy,
       proxyFile: args.proxyFile,
@@ -112,7 +112,7 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       stateFile: args.state ?? cfg.stateFile,
       dryRun: args.dryRun,
     });
-
+    return;
   }
 
   const log = createLog({ cli: "main" });

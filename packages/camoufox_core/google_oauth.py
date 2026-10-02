@@ -42,10 +42,10 @@ async def perform_google_oauth(
             break
 
         # Check if Turnstile popped up on the app page
-        ifr = await target_page.query_selector("iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile']")
-        if ifr:
-            from .turnstile import resolve_turnstile_if_present
-            await resolve_turnstile_if_present(target_page, timeout_sec=6, logger=logger)
+        from .turnstile import resolve_turnstile_if_present
+        solved = await resolve_turnstile_if_present(target_page, timeout_sec=2, logger=logger)
+        if solved:
+            await human_delay(1000, 2000)
 
         await asyncio.sleep(0.5)
 

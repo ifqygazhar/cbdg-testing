@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 
 /**
  * Finds the Python interpreter that has camoufox installed.
@@ -45,9 +45,51 @@ export interface PythonRunnerOptions {
 }
 
 /**
- * Spawns the corresponding Python Camoufox runner script with stdio forwarded.
+ * Recursively retrieves descendant PIDs of a process.
  */
-export function spawnPythonRunner(runnerPath: string, opts: PythonRunnerOptions): never {
+export function getDescendantPids(pid: number): number[] {
+  const pids: number[] = [];
+  try {
+    const out = execSync(`pgrep -P ${pid} 2>/dev/null || true`, { encoding: "utf8" });
+    const lines = out.trim().split(/\s+/).filter(Boolean);
+    for (const l of lines) {
+      const cid = Number(l);
+      if (!isNaN(cid) && cid > 0) {
+        pids.push(cid);
+        pids.push(...getDescendantPids(cid));
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return pids;
+}
+
+/**
+ * Force-terminates a process and all its child/grandchild processes.
+ */
+export function killProcessTree(pid: number, signal: NodeJS.Signals | "SIGKILL" = "SIGTERM"): void {
+  const descendants = getDescendantPids(pid);
+  for (const cid of descendants.reverse()) {
+    try {
+      process.kill(cid, signal);
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Spawns the corresponding Python Camoufox runner script with stdio forwarded.
+ * Handles SIGINT/SIGTERM cleanly so that Ctrl+C kills all Python, Playwright,
+ * and Camoufox browser processes immediately.
+ */
+export function spawnPythonRunner(runnerPath: string, opts: PythonRunnerOptions): Promise<never> {
   const pythonBin = findCamoufoxPython();
   const args = [runnerPath];
 
@@ -62,19 +104,55 @@ export function spawnPythonRunner(runnerPath: string, opts: PythonRunnerOptions)
   if (opts.outputFile) args.push("--output-file", opts.outputFile);
   if (opts.limit !== undefined) args.push("--limit", String(opts.limit));
 
-
   console.log(`[engine] Delegating to Python Camoufox (${pythonBin})...`);
   console.log(`[engine] Command: ${pythonBin} ${args.join(" ")}\n`);
 
-  const result = spawnSync(pythonBin, args, {
-    stdio: "inherit",
-    env: { ...process.env, PYTHONPATH: "." },
+  return new Promise<never>((_, reject) => {
+    const child = spawn(pythonBin, args, {
+      stdio: "inherit",
+      env: { ...process.env, PYTHONPATH: "." },
+    });
+
+    let terminating = false;
+    const cleanup = (sig: NodeJS.Signals) => {
+      if (terminating) return;
+      terminating = true;
+      if (child.pid) {
+        killProcessTree(child.pid, sig);
+        setTimeout(() => {
+          if (child.pid) {
+            killProcessTree(child.pid, "SIGKILL");
+          }
+          process.exit(130);
+        }, 1000).unref();
+      } else {
+        process.exit(130);
+      }
+    };
+
+    process.on("SIGINT", () => cleanup("SIGINT"));
+    process.on("SIGTERM", () => cleanup("SIGTERM"));
+    process.on("SIGHUP", () => cleanup("SIGHUP"));
+
+    process.on("exit", () => {
+      if (child.pid) {
+        killProcessTree(child.pid, "SIGKILL");
+      }
+    });
+
+    child.on("error", (err) => {
+      console.error(`[engine] Failed to launch Python Camoufox runner: ${err.message}`);
+      process.exit(1);
+    });
+
+    child.on("close", (code, signal) => {
+      if (child.pid) {
+        killProcessTree(child.pid, "SIGKILL");
+      }
+      if (signal) {
+        process.exit(128 + (signal === "SIGINT" ? 2 : signal === "SIGTERM" ? 15 : 1));
+      }
+      process.exit(code ?? 0);
+    });
   });
-
-  if (result.error) {
-    console.error(`[engine] Failed to launch Python Camoufox runner: ${result.error.message}`);
-    process.exit(1);
-  }
-
-  process.exit(result.status ?? 0);
 }

@@ -53,6 +53,8 @@ export {
   findCamoufoxPython,
   shouldUsePythonEngine,
   spawnPythonRunner,
+  killProcessTree,
+  getDescendantPids,
   type PythonRunnerOptions,
 } from "./pythonBridge.js";
 
