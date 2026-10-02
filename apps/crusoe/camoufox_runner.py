@@ -23,6 +23,7 @@ from packages.camoufox_core import (
     human_delay,
     human_type,
     perform_google_oauth,
+    resolve_turnstile_if_present,
     load_accounts,
     load_proxies,
     Account,
@@ -32,6 +33,7 @@ from packages.camoufox_core import (
     FlowState,
     create_logger,
 )
+
 
 CREDITS_RE = re.compile(r"credits?:?\s*\$5|\$5\.00|5\.00", re.I)
 API_KEY_RE = re.compile(r"^[A-Za-z0-9_\-./+=]{20,}$")
@@ -78,9 +80,13 @@ async def run_single_account(
 
             logger.info("clicking Sign up with Google...")
             await google_btn.click()
-            await human_delay(2000, 3000)
+            await human_delay(1500, 2500)
+
+            # ── 2.5 Resolve Cloudflare Turnstile if presented ───────────────
+            await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
 
             # ── 3. Google OAuth Flow ────────────────────────────────────────
+
             post_auth_page = await perform_google_oauth(
                 page=page,
                 email=account.email,

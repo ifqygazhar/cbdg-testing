@@ -35,12 +35,20 @@ async def perform_google_oauth(
     target_page = page
     start_time = asyncio.get_event_loop().time()
 
-    while asyncio.get_event_loop().time() - start_time < 30:
+    while asyncio.get_event_loop().time() - start_time < 35:
         found = await find_google_page(context, page)
         if GOOGLE_AUTH_URL_RE.search(found.url):
             target_page = found
             break
+
+        # Check if Turnstile popped up on the app page
+        ifr = await target_page.query_selector("iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile']")
+        if ifr:
+            from .turnstile import resolve_turnstile_if_present
+            await resolve_turnstile_if_present(target_page, timeout_sec=6, logger=logger)
+
         await asyncio.sleep(0.5)
+
 
     if not GOOGLE_AUTH_URL_RE.search(target_page.url):
         logger.warn(f"current URL is {target_page.url}, attempting to proceed")

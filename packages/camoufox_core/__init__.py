@@ -2,6 +2,7 @@ from .browser import launch_camoufox, human_delay, human_type
 from .google_oauth import perform_google_oauth
 from .loaders import load_accounts, load_proxies, Account, Proxy
 from .store import JsonlStore, ResultWriter, FlowState
+from .turnstile import resolve_turnstile_if_present
 from .log import create_logger, Logger
 
 __all__ = [
@@ -9,6 +10,7 @@ __all__ = [
     "human_delay",
     "human_type",
     "perform_google_oauth",
+    "resolve_turnstile_if_present",
     "load_accounts",
     "load_proxies",
     "Account",
@@ -19,3 +21,4 @@ __all__ = [
     "create_logger",
     "Logger",
 ]
+
