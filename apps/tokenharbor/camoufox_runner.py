@@ -7,12 +7,14 @@ creates API keys, and saves tokens.
 
 import argparse
 import asyncio
+from collections import deque
 import os
 import random
 import re
 import sys
 import time
-from typing import Optional, List
+from typing import Optional, List, Set
+from urllib.parse import urlparse
 
 # Ensure repo root is on sys.path so packages.camoufox_core can be imported
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -43,6 +45,56 @@ VERIFY_LINK_RE = re.compile(r"https://tokenharbor\.ai/verify-email\?token=[A-Za-
 DEFAULT_SIGNUP_URL = "https://tokenharbor.ai/login?mode=signup"
 DASHBOARD_URL = "https://tokenharbor.ai/dashboard"
 API_KEYS_URL = "https://tokenharbor.ai/dashboard/api-keys"
+
+class SmartProxyPool:
+    """Manages proxy allocation with intelligent failure handling and success reuse.
+    - Bad/rejected proxies are permanently discarded.
+    - Successful proxies are preserved in a reusable pool and recycled when fresh proxies run out.
+    - Every new attempt receives a distinct IP from the pool.
+    """
+    def __init__(self, proxies: List[Proxy]):
+        self.fresh_proxies: deque[Proxy] = deque(proxies)
+        self.good_proxies: List[Proxy] = []
+        self.bad_addresses: Set[str] = set()
+
+    @staticmethod
+    def address_of(proxy: Proxy) -> str:
+        try:
+            return urlparse(proxy.server).hostname or proxy.server
+        except Exception:
+            return proxy.server
+
+    def get_next_proxy(self) -> Optional[Proxy]:
+        # 1. Prefer fresh proxy with clean IP
+        while self.fresh_proxies:
+            p = self.fresh_proxies.popleft()
+            addr = self.address_of(p)
+            if addr not in self.bad_addresses:
+                return p
+
+        # 2. If fresh proxies exhausted, reuse from verified good proxies
+        if self.good_proxies:
+            p = self.good_proxies.pop(0)
+            self.good_proxies.append(p)
+            return p
+
+        return None
+
+    def mark_result(self, proxy: Optional[Proxy], success: bool, reason: str = ""):
+        if not proxy:
+            return
+        addr = self.address_of(proxy)
+        if success:
+            if proxy not in self.good_proxies:
+                self.good_proxies.append(proxy)
+        else:
+            self.bad_addresses.add(addr)
+            self.good_proxies = [p for p in self.good_proxies if self.address_of(p) != addr]
+            self.fresh_proxies = deque([p for p in self.fresh_proxies if self.address_of(p) != addr])
+
+    @property
+    def has_proxies(self) -> bool:
+        return bool(self.fresh_proxies or self.good_proxies)
 
 async def run_single_account(
     email: str,
@@ -128,103 +180,72 @@ async def run_single_account(
             logger.info("pausing naturally before submit (human verification)...")
             await human_delay(int(4000 * delay_mult), int(6000 * delay_mult))
 
-            # Submit signup with retry handling for speed warnings ("take a breath")
-            max_submit_retries = 3
-            submitted_successfully = False
-
-            for submit_attempt in range(1, max_submit_retries + 1):
-                submit_btn = await page.wait_for_selector(
-                    'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]',
-                    timeout=12000,
-                )
-                if not submit_btn:
-                    if "/dashboard" in page.url:
-                        submitted_successfully = True
-                        break
+            # Submit signup
+            submit_btn = await page.wait_for_selector(
+                'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]',
+                timeout=12000,
+            )
+            if not submit_btn:
+                if "/dashboard" not in page.url:
                     raise RuntimeError("Create account submit button not found")
 
-                # Move mouse smoothly over submit button
-                try:
-                    box = await submit_btn.bounding_box()
-                    if box:
-                        await page.mouse.move(
-                            box["x"] + box["width"] * random.uniform(0.3, 0.7),
-                            box["y"] + box["height"] * random.uniform(0.3, 0.7),
-                            steps=random.randint(6, 14),
-                        )
-                        await human_delay(300, 700)
-                except Exception:
-                    pass
-
-                logger.info(f"clicking Create account submit button (attempt {submit_attempt}/{max_submit_retries})...")
-                await submit_btn.click()
-
-                # Resolve Turnstile if challenged
-                await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
-
-                # Check for dashboard redirect or speed warning / error box
-                speed_rate_limited = False
-                error_found = None
-
-                for _ in range(14):  # poll for up to ~7 seconds
-                    if "/dashboard" in page.url:
-                        submitted_successfully = True
-                        break
-
-                    err_el = await page.query_selector(
-                        'form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500, p:has-text("fast"), div:has-text("breath")'
+            # Move mouse smoothly over submit button
+            try:
+                box = await submit_btn.bounding_box()
+                if box:
+                    await page.mouse.move(
+                        box["x"] + box["width"] * random.uniform(0.3, 0.7),
+                        box["y"] + box["height"] * random.uniform(0.3, 0.7),
+                        steps=random.randint(6, 14),
                     )
-                    if err_el:
-                        raw_msg = (await err_el.text_content() or "").strip()
-                        if any(w in raw_msg.lower() for w in ["fast", "breath", "slow down", "try again in a minute", "too many attempts"]):
-                            speed_rate_limited = True
-                            error_found = raw_msg
-                            break
-                        elif raw_msg and not any(w in raw_msg.lower() for w in ["sending", "checking", "one moment"]):
-                            error_found = raw_msg
-                            break
+                    await human_delay(300, 700)
+            except Exception:
+                pass
 
-                    await asyncio.sleep(0.5)
+            logger.info("clicking Create account submit button...")
+            await submit_btn.click()
 
+            # Resolve Turnstile if challenged
+            await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
+
+            # Check for immediate warning / error or dashboard redirect
+            logger.info("waiting for response or dashboard transition...")
+            signup_error = None
+            for _ in range(30):  # poll for up to ~15 seconds
                 if "/dashboard" in page.url:
-                    submitted_successfully = True
                     break
 
-                if speed_rate_limited:
-                    if submit_attempt < max_submit_retries:
-                        cooldown_secs = 12 + submit_attempt * 3
-                        logger.warn(f"Speed warning detected: '{error_found}'. Taking a breath (waiting {cooldown_secs}s) before retrying...")
-                        try:
-                            viewport = page.viewport_size or {"width": 1280, "height": 800}
-                            await page.mouse.move(random.randint(100, viewport["width"] - 100), random.randint(100, viewport["height"] - 100))
-                        except Exception:
-                            pass
-                        await human_delay(cooldown_secs * 1000, (cooldown_secs + 2) * 1000)
-                        continue
-                    else:
-                        raise RuntimeError(f"Rate limited by TokenHarbor (speed check): {error_found}. IP may need cooldown or rotation.")
+                error_msg = await page.evaluate("""() => {
+                    // Check dedicated form error paragraph (Next.js server action result container)
+                    const errEl = document.querySelector('form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500, .text-red-600');
+                    if (errEl && errEl.textContent) {
+                        const t = errEl.textContent.trim();
+                        if (t && !/sending|checking|one moment/i.test(t)) return t;
+                    }
+                    // Broader check for any alert/warning container
+                    const allEls = document.querySelectorAll('form p, form div, [role="alert"], p');
+                    const warningPattern = /couldn['’]t create your account|team has been alerted|not supported|take a breath|doing that a bit fast|too many attempts|slow down|support@tokenharbor\\.ai|try again in a minute|invalid email|already registered/i;
+                    for (const el of allEls) {
+                        const t = el.textContent ? el.textContent.trim() : "";
+                        if (t && warningPattern.test(t)) {
+                            return t;
+                        }
+                    }
+                    return null;
+                }""")
 
-                if error_found:
-                    raise RuntimeError(f"Signup error: {error_found}")
-
-                break
-
-            # Wait for dashboard transition if not already confirmed
-            logger.info("waiting for dashboard redirection...")
-            for _ in range(25):
-                if "/dashboard" in page.url:
-                    submitted_successfully = True
+                if error_msg:
+                    signup_error = error_msg
                     break
+
                 await asyncio.sleep(0.5)
 
+            if signup_error:
+                logger.warn(f"TokenHarbor warning/error detected: '{signup_error}'. Skipping account immediately to switch to different IP...")
+                raise RuntimeError(f"Signup rejected: {signup_error}")
+
             if "/dashboard" not in page.url:
-                err_el = await page.query_selector(
-                    'form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500'
-                )
-                if err_el:
-                    err_msg = (await err_el.text_content() or "").strip()
-                    raise RuntimeError(f"Signup error: {err_msg}")
-                logger.warn(f"current URL is {page.url}, attempting to continue to /dashboard")
+                raise RuntimeError(f"Signup timed out without reaching /dashboard (current URL: {page.url})")
 
             store.upsert({"email": email, "status": FlowState.DASHBOARD})
             await human_delay(2000, 3500)
@@ -389,22 +410,30 @@ async def main_async():
         logger.info("dry-run: config validated (no browser launched)")
         return
 
+    proxy_pool = SmartProxyPool(proxies) if proxies else None
     count = args.limit if args.limit > 0 else (len(proxies) if proxies else 1)
-    logger.info(f"Planning to process {count} account(s) using domain @{args.domain}")
+    logger.info(f"Planning to process target {count} account(s) using domain @{args.domain}")
 
     processed = 0
     success_count = 0
+    max_total_attempts = max(count * 4, len(proxies) * 2, 10) if proxies else count
 
-    for i in range(count):
-        if args.limit > 0 and processed >= args.limit:
-            break
+    while success_count < count and processed < max_total_attempts:
+        if not args.no_proxy and proxies:
+            proxy = proxy_pool.get_next_proxy()
+            if proxy is None:
+                logger.warn(f"All proxies ({len(proxies)}) have been exhausted or blacklisted. No usable proxies left.")
+                break
+            proxy_addr = proxy_pool.address_of(proxy)
+            reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
+            logger.info(f"Selected proxy: {proxy.server} ({proxy_addr}){reuse_tag}. (Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})")
+        else:
+            proxy = None
 
         # Generate fresh TempMail account
         acc_data = temp_mail.create_email(domain=args.domain)
         email = acc_data["email"]
         password = args.password
-
-        proxy = proxies[i % len(proxies)] if proxies else None
         acc_logger = create_logger(email)
 
         ok = await run_single_account(
@@ -421,15 +450,27 @@ async def main_async():
         )
 
         processed += 1
+        if proxy_pool and proxy:
+            if ok:
+                proxy_pool.mark_result(proxy, success=True)
+                logger.info(f"Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
+            else:
+                proxy_pool.mark_result(proxy, success=False)
+                logger.warn(f"Proxy {proxy.server} failed/rejected. Discarded and will not be reused.")
+
         if ok:
             success_count += 1
+            logger.info(f"Progress: {success_count}/{count} accounts completed successfully.")
 
-        if i < count - 1 and args.delay > 0:
-            sleep_time = args.delay if ok else min(3.0, float(args.delay))
-            logger.info(f"Waiting {sleep_time}s before next account...")
-            await asyncio.sleep(sleep_time)
+        if success_count < count:
+            if ok and args.delay > 0:
+                logger.info(f"Waiting {args.delay}s before next account...")
+                await asyncio.sleep(args.delay)
+            elif not ok:
+                logger.info("Switching immediately to next account with a fresh/different IP...")
+                await asyncio.sleep(1.5)
 
-    logger.info(f"TokenHarbor Camoufox batch finished: {success_count}/{processed} succeeded.")
+    logger.info(f"TokenHarbor Camoufox batch finished: {success_count}/{count} target achieved ({processed} total attempts).")
 
 def main():
     setup_process_signals()

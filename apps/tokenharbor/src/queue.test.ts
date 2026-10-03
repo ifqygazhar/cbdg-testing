@@ -65,3 +65,52 @@ describe("processQueue (tokenharbor)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("SmartProxyPool (tokenharbor)", () => {
+  it("rotates through fresh proxies and permanently discards failed/warning proxies", () => {
+    const { SmartProxyPool } = require("./queue.js");
+    const proxies = [
+      "http://1.1.1.1:8080",
+      "http://2.2.2.2:8080",
+      "http://3.3.3.3:8080",
+    ];
+    const pool = new SmartProxyPool(proxies);
+
+    // First account gets 1.1.1.1
+    const p1 = pool.getNextProxy();
+    expect(p1).toBe("http://1.1.1.1:8080");
+
+    // Account 1 encounters a warning/error -> marked failed
+    pool.markResult(p1, false);
+
+    // Second account MUST get a different fresh IP (2.2.2.2)
+    const p2 = pool.getNextProxy();
+    expect(p2).toBe("http://2.2.2.2:8080");
+
+    // Account 2 succeeds -> marked good (reusable)
+    pool.markResult(p2, true);
+
+    // Third account gets fresh IP (3.3.3.3)
+    const p3 = pool.getNextProxy();
+    expect(p3).toBe("http://3.3.3.3:8080");
+
+    // Account 3 encounters error -> marked failed
+    pool.markResult(p3, false);
+
+    // Fresh proxies are exhausted. The failed ones (1.1.1.1, 3.3.3.3) MUST NOT be returned!
+    // But the successful one (2.2.2.2) IS reusable!
+    const p4 = pool.getNextProxy();
+    expect(p4).toBe("http://2.2.2.2:8080");
+
+    // Another request reuses 2.2.2.2 again
+    const p5 = pool.getNextProxy();
+    expect(p5).toBe("http://2.2.2.2:8080");
+
+    // If 2.2.2.2 now encounters an error, it is discarded
+    pool.markResult(p5, false);
+
+    // Now all proxies are discarded -> getNextProxy returns null
+    const p6 = pool.getNextProxy();
+    expect(p6).toBeNull();
+  });
+});

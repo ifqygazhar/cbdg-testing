@@ -82,66 +82,55 @@ export async function stepSignUp(
   log("info", "pausing naturally before submit (human verification)");
   await utils.sleep(Math.round(utils.randomInt(4000, 6000) * mult));
 
-  // Submit loop with retry on speed limit ("take a breath")
-  const maxSubmitAttempts = 3;
-  for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
-    log("info", `submitting signup form (attempt ${attempt}/${maxSubmitAttempts})`);
-    const submitBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 10000);
-    if (!submitBtn) {
-      if (page.url().includes("/dashboard")) break;
+  // Click submit (Create account)
+  log("info", "submitting signup form");
+  const submitBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 10000);
+  if (!submitBtn) {
+    if (!page.url().includes("/dashboard")) {
       throw new Error("Create account button not found");
     }
+  } else {
     await submitBtn.click();
     await submitBtn.dispose().catch(() => {});
+  }
 
-    // Poll for dashboard redirect or speed warning / error box
-    let speedWarning: string | null = null;
-    let otherError: string | null = null;
-
-    for (let i = 0; i < 14; i++) {
-      if (page.url().includes("/dashboard")) break;
-      const foundError = await page.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        return el ? el.textContent?.trim() || null : null;
-      }, SELECTORS.errorMessage);
-
-      if (foundError) {
-        if (/fast|breath|slow down|too many attempts/i.test(foundError)) {
-          speedWarning = foundError;
-          break;
-        } else if (!/sending|checking|one moment/i.test(foundError)) {
-          otherError = foundError;
-          break;
-        }
-      }
-      await utils.sleep(500);
-    }
-
+  // Poll for dashboard redirect or immediate error / warning
+  let signupError: string | null = null;
+  for (let i = 0; i < 30; i++) {
     if (page.url().includes("/dashboard")) break;
 
-    if (speedWarning) {
-      if (attempt < maxSubmitAttempts) {
-        const waitSec = 12 + attempt * 3;
-        log("warn", `Speed warning detected: "${speedWarning}". Taking a breath (waiting ${waitSec}s) and retrying submit...`);
-        await utils.sleep(waitSec * 1000);
-        continue;
-      } else {
-        throw new Error(`Rate limited by TokenHarbor (speed check): ${speedWarning}. IP may need cooldown or rotation.`);
+    const foundError = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (el && el.textContent) {
+        const t = el.textContent.trim();
+        if (t && !/sending|checking|one moment/i.test(t)) return t;
       }
-    }
+      const allEls = document.querySelectorAll('form p, form div, [role="alert"], p');
+      const warningPattern = /couldn['’]t create your account|team has been alerted|not supported|take a breath|doing that a bit fast|too many attempts|slow down|support@tokenharbor\.ai|try again in a minute|invalid email|already registered/i;
+      for (const node of allEls) {
+        const t = node.textContent?.trim() || "";
+        if (t && warningPattern.test(t)) return t;
+      }
+      return null;
+    }, SELECTORS.errorMessage);
 
-    if (otherError) {
-      throw new Error(`Signup rejected: ${otherError}`);
+    if (foundError) {
+      signupError = foundError;
+      break;
     }
+    await utils.sleep(500);
+  }
 
-    break;
+  if (signupError) {
+    log("warn", `TokenHarbor warning/error detected: "${signupError}". Skipping account immediately to switch to different IP...`);
+    throw new Error(`Signup rejected: ${signupError}`);
   }
 
   // Wait for redirect to dashboard or navigation
   const reachedDashboard = await Promise.race([
-    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 25000 }).then(() => true).catch(() => false),
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 }).then(() => true).catch(() => false),
     (async () => {
-      for (let i = 0; i < 25; i++) {
+      for (let i = 0; i < 20; i++) {
         if (page.url().includes("/dashboard")) return true;
         await utils.sleep(500);
       }
@@ -157,6 +146,7 @@ export async function stepSignUp(
     if (errorText) {
       throw new Error(`Signup rejected: ${errorText}`);
     }
+    throw new Error(`Signup timed out without reaching /dashboard (URL: ${page.url()})`);
   }
 
   log("info", "dashboard reached after signup", { url: page.url() });

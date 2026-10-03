@@ -6,6 +6,71 @@ import { createLog } from "./log.js";
 import { FlowState, JsonlStore, ResultWriter } from "./store.js";
 import { runTokenHarborAccount } from "./runner.js";
 
+export class SmartProxyPool {
+  private freshProxies: string[];
+  public goodProxies: string[] = [];
+  public badAddresses = new Set<string>();
+
+  constructor(proxies: string[]) {
+    this.freshProxies = [...proxies];
+  }
+
+  public addressOf(proxyStr: string): string {
+    try {
+      const u = proxyStr.includes("://") ? proxyStr : `http://${proxyStr}`;
+      return new URL(u).hostname;
+    } catch {
+      return proxyStr;
+    }
+  }
+
+  public getNextProxy(): string | null {
+    // 1. Fresh proxy that hasn't failed
+    while (this.freshProxies.length > 0) {
+      const p = this.freshProxies.shift()!;
+      const addr = this.addressOf(p);
+      if (!this.badAddresses.has(addr)) {
+        return p;
+      }
+    }
+
+    // 2. Reuse proven good proxy
+    if (this.goodProxies.length > 0) {
+      const p = this.goodProxies.shift()!;
+      this.goodProxies.push(p);
+      return p;
+    }
+
+    return null;
+  }
+
+  public markResult(proxyStr: string | null, success: boolean) {
+    if (!proxyStr) return;
+    const addr = this.addressOf(proxyStr);
+    if (success) {
+      if (!this.goodProxies.includes(proxyStr)) {
+        this.goodProxies.push(proxyStr);
+      }
+    } else {
+      this.badAddresses.add(addr);
+      this.goodProxies = this.goodProxies.filter((p) => this.addressOf(p) !== addr);
+      this.freshProxies = this.freshProxies.filter((p) => this.addressOf(p) !== addr);
+    }
+  }
+
+  public get hasProxies(): boolean {
+    return this.freshProxies.length > 0 || this.goodProxies.length > 0;
+  }
+
+  public get freshCount(): number {
+    return this.freshProxies.length;
+  }
+
+  public get goodCount(): number {
+    return this.goodProxies.length;
+  }
+}
+
 export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): Promise<void> {
   const log = createLog({ queue: "main" });
   const results = new ResultWriter(cfg.resultSuccessFile, cfg.resultFailedFile, cfg.apiKeyFile);
@@ -19,14 +84,14 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
 
   log("info", "seeds loaded", { accounts: rawAccounts.length, proxies: proxies.length });
 
-  // Resolve items to process
-  let itemsToProcess: Array<{ account: Account | null; proxy: string | null }> = [];
+  const proxyPool = cfg.useProxy && proxies.length > 0 ? new SmartProxyPool(proxies) : null;
 
+  let todoAccounts: Account[] = [];
   if (rawAccounts.length > 0) {
     const succeeded = results.getSuccessfulEmails();
     const previouslyFailed = results.getFailedEmails();
 
-    const todoAccounts = rawAccounts.filter((acc) => {
+    todoAccounts = rawAccounts.filter((acc) => {
       if (succeeded.has(acc.email)) return false;
       const rec = store.get(acc.email);
       if (rec?.status === FlowState.DONE) return false;
@@ -42,50 +107,66 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
       skipped: rawAccounts.length - todoAccounts.length,
       retryFailed: cfg.retryFailed,
     });
-
-    itemsToProcess = todoAccounts.map((acc, i) => ({
-      account: acc,
-      proxy: proxies.length > 0 ? (cfg.proxyReuse ? proxies[i % proxies.length] : proxies[i] || null) : null,
-    }));
-  } else {
-    // Dynamic TempMail mode: create on-the-fly accounts
-    const count = cfg.limit > 0 ? cfg.limit : proxies.length > 0 ? proxies.length : 1;
-    log("info", "dynamic TempMail mode: generating accounts on-the-fly", { count, defaultDomain: cfg.tempMailDomain });
-
-    for (let i = 0; i < count; i++) {
-      const proxy = proxies.length > 0 ? (cfg.proxyReuse ? proxies[i % proxies.length] : proxies[i] || null) : null;
-      itemsToProcess.push({ account: null, proxy });
-    }
   }
 
-  if (cfg.limit > 0 && itemsToProcess.length > cfg.limit) {
-    itemsToProcess = itemsToProcess.slice(0, cfg.limit);
-  }
+  const targetCount = cfg.limit > 0 ? cfg.limit : (rawAccounts.length > 0 ? todoAccounts.length : (proxies.length > 0 ? proxies.length : 1));
+  log("info", "processing plan", { targetSuccess: targetCount, useProxy: cfg.useProxy, proxyCount: proxies.length });
 
-  let index = 0;
+  let accountCursor = 0;
   let successCount = 0;
+  let processedAttempts = 0;
+  const maxAttempts = proxyPool ? Math.max(targetCount * 4, proxies.length * 2, 10) : targetCount;
 
   async function worker(workerId: number): Promise<void> {
     while (true) {
-      const currentIdx = index++;
-      if (currentIdx >= itemsToProcess.length) break;
+      if (successCount >= targetCount) break;
+      if (processedAttempts >= maxAttempts) break;
 
-      const item = itemsToProcess[currentIdx];
-      const res = await runTokenHarborAccount(item.account, item.proxy, store, results, cfg);
-      if (res.success) {
-        successCount++;
+      let account: Account | null = null;
+      if (rawAccounts.length > 0) {
+        if (accountCursor >= todoAccounts.length) break;
+        account = todoAccounts[accountCursor++];
       }
 
-      if (currentIdx < itemsToProcess.length - 1 && cfg.interAccountDelaySec > 0) {
-        log("info", `worker #${workerId} waiting ${cfg.interAccountDelaySec}s before next account...`);
-        await new Promise((r) => setTimeout(r, cfg.interAccountDelaySec * 1000));
+      processedAttempts++;
+
+      let proxy: string | null = null;
+      if (proxyPool) {
+        proxy = proxyPool.getNextProxy();
+        if (proxy === null) {
+          log("warn", `worker #${workerId}: all proxies have been exhausted or blacklisted. No usable proxies left.`);
+          break;
+        }
+      }
+
+      const res = await runTokenHarborAccount(account, proxy, store, results, cfg);
+      if (proxyPool && proxy) {
+        proxyPool.markResult(proxy, res.success);
+        if (res.success) {
+          log("info", `proxy ${proxy} verified GOOD! Added to reusable proxy pool.`);
+        } else {
+          log("warn", `proxy ${proxy} failed/rejected. Discarded and will not be reused.`);
+        }
+      }
+
+      if (res.success) {
+        successCount++;
+        log("info", `progress: ${successCount}/${targetCount} accounts succeeded.`);
+      }
+
+      if (successCount < targetCount) {
+        const delaySec = res.success ? cfg.interAccountDelaySec : Math.min(1.5, cfg.interAccountDelaySec);
+        if (delaySec > 0) {
+          log("info", `worker #${workerId} waiting ${delaySec}s before next account...`);
+          await new Promise((r) => setTimeout(r, delaySec * 1000));
+        }
       }
     }
   }
 
-  const workerCount = Math.min(cfg.workers, itemsToProcess.length || 1);
-  log("info", "starting worker pool", { workers: workerCount, items: itemsToProcess.length });
+  const workerCount = Math.min(cfg.workers, targetCount || 1);
+  log("info", "starting worker pool", { workers: workerCount, target: targetCount });
   await Promise.all(Array.from({ length: workerCount }, (_, i) => worker(i + 1)));
 
-  log("info", "queue finished", { succeeded: successCount, total: itemsToProcess.length });
+  log("info", "queue finished", { succeeded: successCount, target: targetCount, totalAttempts: processedAttempts });
 }
