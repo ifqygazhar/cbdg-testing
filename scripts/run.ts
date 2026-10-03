@@ -58,6 +58,10 @@ async function askPlan(): Promise<RunPlan> {
       { value: "https://console.crusoecloud.com", label: "Crusoe", hint: "uji liveness + akses langsung ke crusoecloud.com" },
       { value: "https://www.codebuddy.ca", label: "CodeBuddy", hint: "uji liveness + akses langsung ke codebuddy.ca" },
     ]);
+    const appendMode = await select<boolean>("Mode penulisan ke proxy-live.txt?", [
+      { value: false, label: "Tulis real-time baru (default)", hint: "langsung tulis tiap proxy hidup saat ditemukan, timpa file saat yang pertama lolos" },
+      { value: true, label: "Append ke daftar yang sudah ada", hint: "tambahkan proxy baru ke proxy-live.txt yang sudah ada tanpa menghapus yang lama" },
+    ]);
     return {
       app,
       pace: "human",
@@ -67,6 +71,7 @@ async function askPlan(): Promise<RunPlan> {
       delaySec: 0,
       workers: 1,
       proxyTarget: targetSite || undefined,
+      proxyAppend: appendMode || undefined,
     };
   }
 

@@ -45,6 +45,7 @@ export interface RunPlan {
   workers: number;
   limit?: number;
   proxyTarget?: string;
+  proxyAppend?: boolean;
 }
 
 
@@ -84,10 +85,12 @@ export function proxyReuseEnabled(env: NodeJS.ProcessEnv = process.env): boolean
 export function buildArgs(plan: RunPlan): string[] {
   const args: string[] = [];
   // The checker takes no run-shaping flags: it reads proxy.txt and writes
-  // proxy-live.txt with its own defaults. Optional target flag can be passed.
+  // proxy-live.txt with its own defaults. Optional target & append flags can be passed.
   if (IS_TOOL[plan.app]) {
-    if (plan.proxyTarget) return ["--target", plan.proxyTarget];
-    return args;
+    const toolArgs: string[] = [];
+    if (plan.proxyTarget) toolArgs.push("--target", plan.proxyTarget);
+    if (plan.proxyAppend) toolArgs.push("--append");
+    return toolArgs;
   }
   args.push(plan.headless ? "--headless" : "--headed");
   args.push(`--pace`, plan.pace);

@@ -162,14 +162,20 @@ describe("options", () => {
     expect(o.input.endsWith("proxy.txt")).toBe(true);
     expect(o.output.endsWith("proxy-live.txt")).toBe(true);
     expect(o.force).toBe(false);
+    expect(o.append).toBe(false);
   });
   it("flags override the defaults", () => {
-    const o = parseArgs(["--in", "a.txt", "--out", "b.txt", "--timeout", "3", "-c", "4", "--force"], "/tmp/x");
+    const o = parseArgs(["--in", "a.txt", "--out", "b.txt", "--timeout", "3", "-c", "4", "--force", "--append"], "/tmp/x");
     expect(o.input.endsWith("a.txt")).toBe(true);
     expect(o.output.endsWith("b.txt")).toBe(true);
     expect(o.timeoutMs).toBe(3000);
     expect(o.concurrency).toBe(4);
     expect(o.force).toBe(true);
+    expect(o.append).toBe(true);
+  });
+  it("-a flag enables append mode", () => {
+    const o = parseArgs(["-a"], "/tmp/x");
+    expect(o.append).toBe(true);
   });
 });
 

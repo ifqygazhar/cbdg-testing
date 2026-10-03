@@ -29,6 +29,7 @@ export interface CheckOptions {
   timeoutMs: number;
   concurrency: number;
   force: boolean;
+  append: boolean;
 }
 
 export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
@@ -40,6 +41,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
     timeoutMs: Number(process.env.PROXY_CHECK_TIMEOUT_SEC || 12) * 1000,
     concurrency: Number(process.env.PROXY_CHECK_CONCURRENCY || 10),
     force: false,
+    append: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -52,20 +54,22 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
     else if (a === "--timeout") o.timeoutMs = Number(next()) * 1000;
     else if (a === "--concurrency" || a === "-c") o.concurrency = Number(next());
     else if (a === "--force") o.force = true;
+    else if (a === "--append" || a === "-a") o.append = true;
     else if (a === "--help" || a === "-h") {
       console.log(
         [
           "Usage: bun run proxy-check [--in FILE] [--out FILE] [--dead FILE]",
-          "                           [--timeout SEC] [-c N] [--url URL] [--target URL] [--force]",
+          "                           [--timeout SEC] [-c N] [--url URL] [--target URL] [--append] [--force]",
           "",
-          "  Membaca proxy.txt, mengecek satu per satu, menulis yang hidup ke",
-          "  proxy-live.txt (diurutkan dari yang tercepat).",
+          "  Membaca proxy.txt, mengecek satu per satu, dan langsung menulis yang",
+          "  hidup ke proxy-live.txt secara real-time (tanpa perlu menunggu scan beres).",
           "",
-          "  --target    verifikasi juga akses ke situs target (misal https://tokenharbor.ai)",
-          "  --timeout   detik per proxy (default 12)",
-          "  -c N        berapa proxy dicek bersamaan (default 10)",
-          "  --dead F    simpan juga yang mati beserta alasannya",
-          "  --force     tetap tulis file walau tidak ada yang hidup",
+          "  --target        verifikasi juga akses ke situs target (misal https://tokenharbor.ai)",
+          "  --append, -a    tambahkan ke proxy-live.txt yang sudah ada (tidak menimpa)",
+          "  --timeout       detik per proxy (default 12)",
+          "  -c N            berapa proxy dicek bersamaan (default 10)",
+          "  --dead F        simpan juga yang mati beserta alasannya",
+          "  --force         tetap tulis file walau tidak ada yang hidup",
         ].join("\n"),
       );
       process.exit(0);
@@ -189,21 +193,85 @@ export async function main(argv: string[]): Promise<number> {
     `\n${ui.bold("cek proxy")} ${ui.dim(
       `${entries.length} entri · ${opts.concurrency} paralel · timeout ${opts.timeoutMs / 1000}s · ip kita ${ourIp}${
         opts.target ? ` · target ${opts.target}` : ""
-      }`,
+      }${opts.append ? " · mode append" : " · stream real-time"}`,
     )}\n`,
   );
 
+  const existingParsed = fs.existsSync(opts.output)
+    ? parseProxyFile(fs.readFileSync(opts.output, "utf8"))
+    : { entries: [] };
+  const existingCount = existingParsed.entries.length;
+  const seenEndpoints = new Set(existingParsed.entries.map((e) => e.hostPort));
+
   let done = 0;
+  let newLiveCount = 0;
+  let liveCount = opts.append ? existingCount : 0;
+  let deadCount = 0;
+
+  const onSigint = () => {
+    const totalLive = opts.append ? liveCount : newLiveCount;
+    if (totalLive > 0) {
+      console.log(
+        `\n\n${ui.yellow("Dihentikan")} — ${ui.green(`${totalLive} proxy hidup`)} sudah langsung tersimpan di ${ui.bold(path.basename(opts.output))}.`,
+      );
+    } else {
+      console.log(`\n\n${ui.yellow("Dihentikan")} — belum ada proxy hidup yang ditemukan.`);
+    }
+    process.exit(130);
+  };
+  process.on("SIGINT", onSigint);
+
   const results = await pool(entries, opts.concurrency, async (entry) => {
     const r = await checkOne(entry, opts, ourIp);
     done++;
+
+    if (r.alive) {
+      if (opts.append) {
+        if (!seenEndpoints.has(entry.hostPort)) {
+          seenEndpoints.add(entry.hostPort);
+          fs.appendFileSync(opts.output, entry.raw + "\n", "utf8");
+          newLiveCount++;
+          liveCount++;
+        }
+      } else {
+        if (newLiveCount === 0) {
+          // Inisialisasi file saat proxy hidup pertama kali ditemukan
+          fs.writeFileSync(
+            opts.output,
+            [
+              "# proxy hidup per " + new Date().toISOString(),
+              "# sumber: " + path.basename(opts.input) + (opts.target ? ` · target: ${opts.target}` : "") + " (streaming)",
+              entry.raw,
+              "",
+            ].join("\n"),
+            "utf8",
+          );
+        } else {
+          // Stream/append langsung ke file
+          fs.appendFileSync(opts.output, entry.raw + "\n", "utf8");
+        }
+        newLiveCount++;
+        liveCount++;
+      }
+    } else if (opts.deadFile) {
+      if (deadCount === 0 && !fs.existsSync(opts.deadFile)) {
+        fs.writeFileSync(opts.deadFile, `${entry.raw}  # ${r.reason ?? "mati"}\n`, "utf8");
+      } else {
+        fs.appendFileSync(opts.deadFile, `${entry.raw}  # ${r.reason ?? "mati"}\n`, "utf8");
+      }
+      deadCount++;
+    }
+
     const tag = r.alive ? ui.green("hidup") : ui.red("mati ");
     const detail = r.alive ? ui.dim(r.exitIp ?? "") : ui.dim(r.reason ?? "");
+    const liveIndicator = liveCount > 0 ? ui.green(` [live: ${liveCount}]`) : "";
     console.log(
-      `  ${String(done).padStart(3)}/${entries.length} ${tag} ${String(r.ms).padStart(5)}ms  ${mask(entry.raw).padEnd(46)} ${detail}`,
+      `  ${String(done).padStart(3)}/${entries.length} ${tag} ${String(r.ms).padStart(5)}ms  ${mask(entry.raw).padEnd(46)} ${detail}${liveIndicator}`,
     );
     return r;
   });
+
+  process.off("SIGINT", onSigint);
 
   const alive = sortByLatency(results.filter((r) => r.alive));
   const stats = summarise(results);
@@ -212,33 +280,30 @@ export async function main(argv: string[]): Promise<number> {
       (stats.alive ? ` · ${ui.dim(`median ${stats.medianMs}ms`)}` : ""),
   );
 
-  if (opts.deadFile) {
-    const dead = results.filter((r) => !r.alive);
-    fs.writeFileSync(opts.deadFile, dead.map((r) => `${r.entry.raw}  # ${r.reason ?? "mati"}`).join("\n") + "\n", "utf8");
-    console.log(ui.dim(`  ${dead.length} proxy mati dicatat di ${path.basename(opts.deadFile)}`));
+  if (opts.deadFile && deadCount > 0) {
+    console.log(ui.dim(`  ${deadCount} proxy mati dicatat di ${path.basename(opts.deadFile)}`));
   }
 
   // Refuse to replace a usable pool with an empty one: a blip in our own
   // connection should not wipe the file the apps are about to read.
-  const existing = fs.existsSync(opts.output)
-    ? parseProxyFile(fs.readFileSync(opts.output, "utf8")).entries.length
-    : 0;
-  if (alive.length === 0 && existing > 0 && !opts.force) {
+  if (alive.length === 0 && existingCount > 0 && !opts.force && !opts.append) {
     console.log(
       ui.yellow(
-        `\n  tidak ada yang hidup — ${path.basename(opts.output)} lama (${existing} entri) dibiarkan.` +
+        `\n  tidak ada yang hidup — ${path.basename(opts.output)} lama (${existingCount} entri) dibiarkan.` +
           ` Pakai --force kalau memang mau dikosongkan.`,
       ),
     );
     return 2;
   }
 
-  // Only clean proxy lines below the header: the apps parse each line with
-  // `new URL(...)`, so a trailing "# 120ms" comment would make every entry
-  // unparseable. Timing lives in the header and in --dead.
-  fs.writeFileSync(opts.output, renderLiveFile(alive, opts, results.length), "utf8");
-  console.log(`  ${ui.green("→")} ${alive.length} proxy ditulis ke ${ui.bold(path.basename(opts.output))}`);
-  return alive.length > 0 ? 0 : 2;
+  // Final rewrite: sort by latency (fastest first) and write complete header
+  if (alive.length > 0 && !opts.append) {
+    fs.writeFileSync(opts.output, renderLiveFile(alive, opts, results.length), "utf8");
+    console.log(`  ${ui.green("→")} ${alive.length} proxy ditulis ke ${ui.bold(path.basename(opts.output))} (diurutkan dari tercepat)`);
+  } else if (opts.append && newLiveCount > 0) {
+    console.log(`  ${ui.green("→")} ${newLiveCount} proxy baru ditambahkan ke ${ui.bold(path.basename(opts.output))} (total ${liveCount})`);
+  }
+  return (opts.append ? liveCount : alive.length) > 0 ? 0 : 2;
 }
 
 if (import.meta.main) {

@@ -228,6 +228,11 @@ describe("proxy-check as a menu action", () => {
     expect(buildArgs(plan)).toEqual([]);
     expect(commandLine(plan)).toBe("bun run proxy-check");
   });
+  it("passes target and append flags when set", () => {
+    const withFlags: RunPlan = { ...plan, proxyTarget: "https://tokenharbor.ai", proxyAppend: true };
+    expect(buildArgs(withFlags)).toEqual(["--target", "https://tokenharbor.ai", "--append"]);
+    expect(commandLine(withFlags)).toBe("bun run proxy-check -- --target https://tokenharbor.ai --append");
+  });
   it("is flagged as a tool, not an account run", () => {
     expect(IS_TOOL["proxy-check"]).toBe(true);
     expect(IS_TOOL.cbdg).toBe(false);
