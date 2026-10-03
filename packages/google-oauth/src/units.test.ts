@@ -224,6 +224,12 @@ describe("classifyNetworkError", () => {
       "PROXY_UNREACHABLE",
     );
     expect(classifyNetworkError("net::ERR_PROXY_CONNECTION_FAILED")?.code).toBe("PROXY_UNREACHABLE");
+    expect(classifyNetworkError("net::ERR_SOCKS_CONNECTION_FAILED")?.code).toBe("PROXY_UNREACHABLE");
+  });
+  it("identifies unsupported SOCKS proxy authentication", () => {
+    const r = classifyNetworkError("net::ERR_NO_SUPPORTED_PROXIES", "socks5://1.2.3.4:1080");
+    expect(r?.code).toBe("PROXY_SOCKS_AUTH_UNSUPPORTED");
+    expect(r?.message).toContain("Chromium tidak mendukung autentikasi");
   });
   it("separates our own connection being down", () => {
     expect(classifyNetworkError("net::ERR_INTERNET_DISCONNECTED")?.code).toBe("NETWORK_DOWN");

@@ -89,8 +89,14 @@ export function loadProxies(file: string): ProxySeed[] {
         const m = hostPart.match(/:(\d+)$/);
         if (m) port = m[1];
       }
+      let protocol = u.protocol.toLowerCase();
+      if (protocol === "socks5h:" || protocol === "socks5:") {
+        protocol = "socks5:";
+      } else if (protocol === "socks4a:" || protocol === "socks4:" || protocol === "socks:") {
+        protocol = "socks4:";
+      }
       out.push({
-        server: port ? `${u.protocol}//${u.hostname}:${port}` : `${u.protocol}//${u.host}`,
+        server: port ? `${protocol}//${u.hostname}:${port}` : `${protocol}//${u.host}`,
         // URL-encodes them on the way in (see the webshare writer), so decode.
         username: u.username ? decodeURIComponent(u.username) : undefined,
         password: u.password ? decodeURIComponent(u.password) : undefined,

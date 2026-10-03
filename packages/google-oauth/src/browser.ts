@@ -56,6 +56,12 @@ export function classifyNetworkError(
       message: `proxy menolak kredensial${where} — cek user/pass di file proxy`,
     };
   }
+  if (/ERR_NO_SUPPORTED_PROXIES/.test(message)) {
+    return {
+      code: "PROXY_SOCKS_AUTH_UNSUPPORTED",
+      message: `Chromium tidak mendukung autentikasi user/pass untuk proxy SOCKS${where}. Gunakan format HTTP proxy atau aktifkan IP Whitelist di provider proxy.`,
+    };
+  }
   if (
     /ERR_PROXY_CONNECTION_FAILED|ERR_TUNNEL_CONNECTION_FAILED|ERR_CONNECTION_TIMED_OUT|ERR_CONNECTION_CLOSED|ERR_EMPTY_RESPONSE|ERR_SOCKS_CONNECTION_FAILED/.test(
       message,
@@ -280,7 +286,13 @@ export async function launchGoogleOAuthBrowser(
     (launchOpts.args as string[]).push(...options.extraArgs);
   }
   if (options.proxy) {
-    (launchOpts.args as string[]).push(`--proxy-server=${options.proxy.server}`);
+    let server = options.proxy.server;
+    if (server.startsWith("socks5h://")) {
+      server = server.replace("socks5h://", "socks5://");
+    } else if (server.startsWith("socks4a://") || server.startsWith("socks://")) {
+      server = server.replace(/^socks(4a)?:\/\//, "socks4://");
+    }
+    (launchOpts.args as string[]).push(`--proxy-server=${server}`);
   }
 
   const browser = (await puppeteer.launch(launchOpts)) as Browser;
@@ -294,6 +306,15 @@ export async function launchGoogleOAuthBrowser(
   // proxy challenges every page it sees, and OAuth opens popups, so
   // authenticating only this first page leaves those popups dying with
   // ERR_INVALID_AUTH_CREDENTIALS.
+  // Note: Chromium only supports HTTP proxy authentication via page.authenticate.
+  // SOCKS5 proxies requiring credentials are not supported by Chromium network stack.
+  if (options.proxy?.username && options.proxy.server.startsWith("socks")) {
+    console.warn(
+      `[browser] PERINGATAN: Chromium tidak mendukung autentikasi user/pass untuk proxy SOCKS (${options.proxy.server}). ` +
+      `Gunakan IP Whitelist di provider proxy (agar tanpa user/pass) atau ganti dengan format HTTP proxy.`
+    );
+  }
+
   const proxyCreds = options.proxy?.username
     ? { username: options.proxy.username, password: options.proxy.password ?? "" }
     : null;

@@ -81,6 +81,12 @@ async def launch_camoufox(
     }
 
     if proxy:
+        if proxy.server.lower().startswith("socks") and (proxy.username or proxy.password):
+            print(
+                f"[camoufox] PERINGATAN: Playwright / Firefox tidak mendukung autentikasi user:pass pada proxy SOCKS ({proxy.server}). "
+                f"Gunakan IP Whitelist pada provider proxy agar bisa diakses tanpa user:pass, atau gunakan format HTTP proxy.",
+                file=sys.stderr,
+            )
         proxy_dict: Dict[str, str] = {"server": proxy.server}
         if proxy.username:
             proxy_dict["username"] = proxy.username
@@ -110,7 +116,16 @@ async def launch_camoufox(
                 else:
                     launch_kwargs["geoip"] = False
 
-    return AsyncCamoufox(**launch_kwargs)
+    try:
+        return AsyncCamoufox(**launch_kwargs)
+    except Exception as e:
+        if "does not support socks5 proxy authentication" in str(e).lower():
+            raise RuntimeError(
+                f"Proxy SOCKS5 '{proxy.server if proxy else ''}' ditolak browser karena memakai username/password. "
+                f"Playwright & Firefox tidak mendukung autentikasi SOCKS5 secara native. "
+                f"Solusi: Aktifkan IP Whitelist di provider proxy (agar proxy bisa diakses tanpa user/pass) atau gunakan format HTTP proxy."
+            ) from e
+        raise
 
 async def human_delay(min_ms: int = 400, max_ms: int = 1200):
     delay = random.uniform(min_ms / 1000.0, max_ms / 1000.0)

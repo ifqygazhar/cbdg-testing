@@ -27,8 +27,14 @@ function parseProxyString(proxyStr: string | null | undefined) {
       const m = hostPart.match(/:(\d+)$/);
       if (m) port = m[1];
     }
+    let protocol = u.protocol.toLowerCase();
+    if (protocol === "socks5h:" || protocol === "socks5:") {
+      protocol = "socks5:";
+    } else if (protocol === "socks4a:" || protocol === "socks4:" || protocol === "socks:") {
+      protocol = "socks4:";
+    }
     return {
-      server: port ? `${u.protocol}//${u.hostname}:${port}` : `${u.protocol}//${u.host}`,
+      server: port ? `${protocol}//${u.hostname}:${port}` : `${protocol}//${u.host}`,
       username: u.username ? decodeURIComponent(u.username) : undefined,
       password: u.password ? decodeURIComponent(u.password) : undefined,
     };

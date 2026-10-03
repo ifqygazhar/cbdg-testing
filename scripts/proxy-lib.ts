@@ -93,19 +93,26 @@ export function parseProxyLine(line: string): ProxyEntry | null {
     ];
     if (!allowed.includes(protocol)) return null;
 
+    let normProtocol = protocol;
+    if (normProtocol === "socks5h:" || normProtocol === "socks5:") {
+      normProtocol = "socks5:";
+    } else if (normProtocol === "socks4a:" || normProtocol === "socks4:" || normProtocol === "socks:") {
+      normProtocol = "socks4:";
+    }
+
     const username = u.username ? decodeURIComponent(u.username) : undefined;
     const password = u.password ? decodeURIComponent(u.password) : undefined;
 
     const authPart = username
       ? `${encodeURIComponent(username)}${password ? `:${encodeURIComponent(password)}` : ""}@`
       : "";
-    const url = `${protocol}//${authPart}${u.hostname}:${port}`;
+    const url = `${normProtocol}//${authPart}${u.hostname}:${port}`;
 
     return {
       raw,
       url,
       hostPort: `${u.hostname}:${port}`,
-      protocol,
+      protocol: normProtocol,
       hostname: u.hostname,
       port,
       username,

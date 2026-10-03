@@ -60,9 +60,14 @@ def parse_proxy(line: str) -> Optional[Proxy]:
                     port = 443
                 elif parsed.scheme.startswith("socks"):
                     port = 1080
-                else:
-                    port = 80
-        server = f"{parsed.scheme}://{parsed.hostname}:{port}"
+        raw_scheme = parsed.scheme.lower()
+        if raw_scheme in ("socks5h", "socks5"):
+            scheme = "socks5"
+        elif raw_scheme in ("socks4a", "socks4", "socks"):
+            scheme = "socks4"
+        else:
+            scheme = raw_scheme
+        server = f"{scheme}://{parsed.hostname}:{port}"
         return Proxy(server=server, username=parsed.username, password=parsed.password)
 
     if len(parts) == 2 and "://" not in line:
