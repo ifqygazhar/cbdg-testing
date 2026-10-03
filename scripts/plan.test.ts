@@ -55,9 +55,9 @@ describe("buildArgs", () => {
     const quiet = buildArgs({ ...base, delaySec: 0, workers: 1 });
     expect(quiet).not.toContain("--delay");
     expect(quiet).not.toContain("-w");
-    const loud = buildArgs({ ...base, workers: 3, retryFailed: true, dryRun: true, headless: true });
+    const loud = buildArgs({ ...base, workers: 3, retryFailed: true, dryRun: true, headless: true, limit: 5 });
     expect(loud).toContain("--headless");
-    expect(loud).toEqual(expect.arrayContaining(["-w", "3", "--retry-failed", "--dry-run"]));
+    expect(loud).toEqual(expect.arrayContaining(["-w", "3", "--retry-failed", "--dry-run", "--limit", "5"]));
   });
   it("fastrouter, crusoe, and tokenharbor get the engine switch when python chosen", () => {
     const frPython = buildArgs({ ...base, app: "fastrouter", engine: "python" });

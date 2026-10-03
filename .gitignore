@@ -30,4 +30,8 @@ __pycache__/
 *.pyc
 check_results.csv
 valid_keys.txt
-
+state-tokenharbor.jsonl
+akun-result-tokenharbor.txt
+akun-failed-tokenharbor.txt
+screenshots-tokenharbor/
+apikey-tokenharbor.txt

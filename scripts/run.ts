@@ -130,13 +130,18 @@ async function askPlan(): Promise<RunPlan> {
     { value: "careful", label: "careful", hint: "lebih pelan dari manusia, buat risk engine galak" },
   ]);
 
+  let limit: number | undefined;
+  if (app === "tokenharbor") {
+    limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
+  }
+
   const delaySec = await askNumber("Jeda antar akun", 60, " detik");
   const workers = await askNumber("Jumlah worker paralel", 1);
   const retryFailed = await confirm("Ulangi akun yang tercatat gagal?", false);
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, engine, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun };
+  return { app, mode, engine, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit };
 }
 
 function review(plan: RunPlan): void {
@@ -191,6 +196,7 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
       ? ([["google", plan.googleDirect === false ? "lewat proxy" : "langsung (hindari captcha)"]] as Array<[string, string]>)
       : []),
     ["pace", plan.pace],
+    ...(plan.limit ? ([["target", `${plan.limit} akun`]] as Array<[string, string]>) : []),
     ["jeda", `${plan.delaySec}s`],
     ["worker", String(plan.workers)],
     ["browser", plan.headless ? "headless" : "headed"],
