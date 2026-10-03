@@ -11,6 +11,7 @@ from .loaders import load_accounts, load_proxies, Account, Proxy
 from .store import JsonlStore, ResultWriter, FlowState
 from .turnstile import resolve_turnstile_if_present
 from .log import create_logger, Logger
+from .tempmail import TempMailClient
 
 __all__ = [
     "launch_camoufox",
@@ -30,5 +31,6 @@ __all__ = [
     "FlowState",
     "create_logger",
     "Logger",
+    "TempMailClient",
 ]
 

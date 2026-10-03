@@ -1,0 +1,113 @@
+"""
+TempMail-Pro Client for Python / Camoufox automation.
+Handles email creation, inbox polling, verification link extraction, and deletion.
+"""
+
+import asyncio
+import os
+import re
+import urllib.request
+import urllib.parse
+import json
+from typing import Optional, List, Dict, Any
+
+class TempMailClient:
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        default_domain: Optional[str] = None,
+    ):
+        self.base_url = (base_url or os.getenv("TEMPMAIL_BASE_URL", "https://temp-postservice.verifwebsitepro.workers.dev")).rstrip("/")
+        self.api_key = api_key or os.getenv("TEMPMAIL_API_KEY", "anjingmemekkontol")
+        self.default_domain = default_domain or os.getenv("TEMPMAIL_DOMAIN", "ifqy.net")
+
+    def _headers(self) -> Dict[str, str]:
+        return {
+            "x-api-key": self.api_key,
+            "Content-Type": "application/json",
+            "User-Agent": "CBDG-TempMail-Client/1.0",
+        }
+
+    def create_email(self, domain: Optional[str] = None, username: Optional[str] = None) -> Dict[str, Any]:
+        """Creates a new temporary email address."""
+        target_domain = domain or self.default_domain
+        payload: Dict[str, str] = {"domain": target_domain}
+        if username:
+            payload["username"] = username
+
+        url = f"{self.base_url}/api/email/create"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=self._headers(),
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("status") != "ok" or not data.get("data", {}).get("email"):
+                raise RuntimeError(f"TempMail create_email failed: {data}")
+            return data["data"]
+
+    def get_inbox(self, address: str) -> List[Dict[str, Any]]:
+        """Retrieves list of received messages for an address."""
+        url = f"{self.base_url}/api/email/inbox?address={urllib.parse.quote(address)}"
+        req = urllib.request.Request(
+            url,
+            headers={"x-api-key": self.api_key, "User-Agent": "CBDG-TempMail-Client/1.0"},
+            method="GET",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("mails", [])
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return []
+            raise
+
+    async def wait_for_verification_link(
+        self,
+        address: str,
+        timeout_sec: int = 75,
+        interval_sec: float = 3.0,
+        filter_sender: str = "tokenharbor",
+        link_pattern: Optional[re.Pattern] = None,
+    ) -> str:
+        """Polls inbox until verification email arrives and returns the link."""
+        pattern = link_pattern or re.compile(r"https://tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-]+")
+        filter_sender_lower = filter_sender.lower() if filter_sender else ""
+        start_time = asyncio.get_event_loop().time()
+
+        while asyncio.get_event_loop().time() - start_time < timeout_sec:
+            try:
+                mails = await asyncio.to_thread(self.get_inbox, address)
+                for mail in mails:
+                    sender = mail.get("sender", "").lower()
+                    if not filter_sender_lower or filter_sender_lower in sender:
+                        body = f"{mail.get('content-plain', '')} {mail.get('content-html', '')}"
+                        match = pattern.search(body)
+                        if match:
+                            return match.group(0)
+            except Exception:
+                pass
+
+            await asyncio.sleep(interval_sec)
+
+        raise TimeoutError(f"Verification email for {address} did not arrive within {timeout_sec}s")
+
+    def delete_email(self, address: str) -> bool:
+        """Deletes email address and all its messages."""
+        url = f"{self.base_url}/api/email/delete?address={urllib.parse.quote(address)}"
+        req = urllib.request.Request(
+            url,
+            headers={"x-api-key": self.api_key, "User-Agent": "CBDG-TempMail-Client/1.0"},
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.status == 200
+        except Exception:
+            return False

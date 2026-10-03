@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "proxy-check";
+export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "proxy-check";
 
 /** Maintenance actions have no accounts, pace or proxy of their own. */
 export const IS_TOOL: Record<AppName, boolean> = {
@@ -12,13 +12,14 @@ export const IS_TOOL: Record<AppName, boolean> = {
   crusoe: false,
   webshare: false,
   fastrouter: false,
+  tokenharbor: false,
   "proxy-check": true,
 };
 export type Pace = "fast" | "human" | "careful";
 export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
 
-export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe"];
+export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "tokenharbor"];
 
 export interface RunPlan {
   app: AppName;
@@ -50,11 +51,12 @@ export const APP_ENTRY: Record<AppName, string> = {
   crusoe: "apps/crusoe/src/cli.ts",
   webshare: "apps/webshare/src/cli.ts",
   fastrouter: "apps/fastrouter/src/cli.ts",
+  tokenharbor: "apps/tokenharbor/src/cli.ts",
   "proxy-check": "scripts/proxy-check.ts",
 };
 
 /** Apps whose accounts can be spread over the harvested proxies. */
-export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter"];
+export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor"];
 
 /**
  * Whether Google's sign-in will bypass the proxy on this run. Defaults on; the
@@ -180,7 +182,9 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
     if (seeds.proxies === 0) out.push("proxy.txt kosong — jalankan webshare dulu.");
     return out;
   }
-  if (seeds.accounts === 0) out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
+  if (plan.app !== "tokenharbor" && seeds.accounts === 0) {
+    out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
+  }
   if (plan.app === "cbdg" && plan.mode === "full" && seeds.cards === 0) {
     out.push("vcc.txt kosong padahal mode full — antrean akan berhenti. Pakai signup-only.");
   }

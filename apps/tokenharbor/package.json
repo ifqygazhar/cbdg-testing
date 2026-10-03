@@ -1,0 +1,11 @@
+{
+  "name": "@ifqy/tokenharbor-signup",
+  "version": "0.1.0",
+  "description": "TokenHarbor AI signup automation (TempMail + email verification + API key generation) on Bun + Puppeteer & Python + Camoufox",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ifqy/google-oauth": "0.1.0",
+    "puppeteer-core": "^23.0.0"
+  }
+}

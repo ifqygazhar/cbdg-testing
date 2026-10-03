@@ -11,6 +11,7 @@ import { main as cbdg } from "../apps/cbdg/src/cli.js";
 import { main as crusoe } from "../apps/crusoe/src/cli.js";
 import { main as webshare } from "../apps/webshare/src/cli.js";
 import { main as fastrouter } from "../apps/fastrouter/src/cli.js";
+import { main as tokenharbor } from "../apps/tokenharbor/src/cli.js";
 import { main as proxyCheck } from "./proxy-check.js";
 import { main as doctor } from "./doctor.js";
 
@@ -21,6 +22,7 @@ const COMMANDS: Record<string, Command> = {
   crusoe: (argv) => crusoe(argv),
   webshare: (argv) => webshare(argv),
   fastrouter: (argv) => fastrouter(argv),
+  tokenharbor: (argv) => tokenharbor(argv),
   "proxy-check": (argv) => proxyCheck(argv),
   doctor: (argv) => doctor(argv),
 };
@@ -33,6 +35,7 @@ const USAGE = [
   "  crusoe        daftar Crusoe → bonus $5 + API key ke apikey.txt",
   "  fastrouter    daftar FastRouter → kredit $1 + API key ke apikey-fastrouter",
   "  cbdg          daftar CodeBuddy → kredit new-user (+ VCC opsional)",
+  "  tokenharbor   daftar TokenHarbor (TempMail) → API key ke apikey-tokenharbor.txt",
   "  doctor        cek mesin ini siap atau belum (browser, seed, proxy)",
   "",
   "Flag tiap perintah: bun runner.js <perintah> --help",

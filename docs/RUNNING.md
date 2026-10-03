@@ -8,6 +8,8 @@ dengan library bersama `@ifqy/google-oauth` (`packages/google-oauth`):
 | `apps/cbdg` | `bun run cbdg` | kredit CodeBuddy (signup saja, atau lanjut VCC + trial) |
 | `apps/crusoe` | `bun run crusoe` | bonus $5 Crusoe + API key ke `apikey.txt` |
 | `apps/webshare` | `bun run webshare` | 10 proxy gratis per akun ke `proxy.txt` |
+| `apps/fastrouter` | `bun run fastrouter` | kredit $1 FastRouter + API key ke `apikey-fastrouter.txt` |
+| `apps/tokenharbor` | `bun run tokenharbor` | API key TokenHarbor (via TempMail) ke `apikey-tokenharbor.txt` |
 | `scripts/proxy-check.ts` | `bun run proxy-check` | saring proxy hidup ke `proxy-live.txt` |
 
 Paling gampang lewat launcher: `bun run start` (lihat bagian 4).

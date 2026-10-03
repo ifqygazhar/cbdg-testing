@@ -20,6 +20,7 @@ import {
 import { parseArgs as parseCbdg, applyArgsToEnv as envCbdg } from "../apps/cbdg/src/cli.js";
 import { parseArgs as parseCrusoe, applyArgsToEnv as envCrusoe } from "../apps/crusoe/src/cli.js";
 import { parseArgs as parseFastrouter, applyArgsToEnv as envFastrouter } from "../apps/fastrouter/src/cli.js";
+import { parseArgs as parseTokenharbor, applyArgsToEnv as envTokenharbor } from "../apps/tokenharbor/src/cli.js";
 import { parseArgs as parseWebshare, applyArgsToEnv as envWebshare } from "../apps/webshare/src/cli.js";
 
 const base: RunPlan = {
@@ -58,14 +59,18 @@ describe("buildArgs", () => {
     expect(loud).toContain("--headless");
     expect(loud).toEqual(expect.arrayContaining(["-w", "3", "--retry-failed", "--dry-run"]));
   });
-  it("fastrouter and crusoe get the engine switch when python chosen", () => {
+  it("fastrouter, crusoe, and tokenharbor get the engine switch when python chosen", () => {
     const frPython = buildArgs({ ...base, app: "fastrouter", engine: "python" });
     expect(frPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     const crusoePython = buildArgs({ ...base, app: "crusoe", engine: "python" });
     expect(crusoePython).toEqual(expect.arrayContaining(["--engine", "python"]));
+    const thPython = buildArgs({ ...base, app: "tokenharbor", engine: "python" });
+    expect(thPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     // bun engine is default so no flag needed
     const frBun = buildArgs({ ...base, app: "fastrouter", engine: "bun" });
     expect(frBun).not.toContain("--engine");
+    const thBun = buildArgs({ ...base, app: "tokenharbor", engine: "bun" });
+    expect(thBun).not.toContain("--engine");
     // cbdg doesn't support camoufox engine
     const cbdg = buildArgs({ ...base, app: "cbdg", engine: "python" });
     expect(cbdg).not.toContain("--engine");
@@ -132,6 +137,9 @@ describe("emitted flags are understood by the apps", () => {
     [{ ...base, app: "fastrouter", mode: undefined }, (a) => envFastrouter(parseFastrouter(a), {})],
     [{ ...base, app: "fastrouter", mode: undefined, reuseProxy: true }, (a) => envFastrouter(parseFastrouter(a), {})],
     [{ ...base, app: "fastrouter", mode: undefined, useProxy: false }, (a) => envFastrouter(parseFastrouter(a), {})],
+    [{ ...base, app: "tokenharbor", mode: undefined }, (a) => envTokenharbor(parseTokenharbor(a), {})],
+    [{ ...base, app: "tokenharbor", mode: undefined, reuseProxy: true }, (a) => envTokenharbor(parseTokenharbor(a), {})],
+    [{ ...base, app: "tokenharbor", mode: undefined, useProxy: false }, (a) => envTokenharbor(parseTokenharbor(a), {})],
     [{ ...base, app: "webshare", mode: undefined, useProxy: undefined }, (a) => envWebshare(parseWebshare(a), {})],
   ];
 
@@ -209,7 +217,7 @@ describe("seeds + warnings", () => {
     expect(w.join(" ")).toContain("0 detik");
   });
   it("proxy-capable list is exactly the apps that read the proxy file", () => {
-    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter"]);
+    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor"]);
   });
 });
 

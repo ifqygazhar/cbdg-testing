@@ -47,6 +47,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
     { value: "fastrouter", label: "fastrouter", hint: "daftar FastRouter → kredit $1 + API key ke apikey-fastrouter" },
     { value: "cbdg", label: "cbdg", hint: "daftar CodeBuddy → kredit new-user (+ VCC opsional)" },
+    { value: "tokenharbor", label: "tokenharbor", hint: "daftar TokenHarbor (TempMail) → API key ke apikey-tokenharbor.txt" },
   ]);
 
   // The checker has nothing to configure: it reads one file and writes another.
@@ -83,7 +84,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;

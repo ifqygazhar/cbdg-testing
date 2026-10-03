@@ -79,6 +79,7 @@ describe("browser integration (real launch)", () => {
       const args = plain.browser.process()?.spawnargs ?? [];
       expect(args.some((a) => a.startsWith("--proxy-bypass-list="))).toBe(false);
     } finally {
+      await new Promise((r) => setTimeout(r, 150));
       await plain.close();
     }
   }, 60_000);
@@ -194,6 +195,7 @@ describe("browser integration (real launch)", () => {
   it("close() is idempotent", async () => {
     if (!hasBrowser) return;
     const h = await launchGoogleOAuthBrowser({ headless: true });
+    await new Promise((r) => setTimeout(r, 150));
     await h.close();
     await expect(h.close()).resolves.toBeUndefined();
   }, 90_000);

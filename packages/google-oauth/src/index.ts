@@ -58,4 +58,12 @@ export {
   type PythonRunnerOptions,
 } from "./pythonBridge.js";
 
+export {
+  TempMailClient,
+  type TempMailConfig,
+  type CreatedEmail,
+  type TempMessage,
+  type InboxResponse,
+} from "./tempmail.js";
+
 export type { GoogleOAuthBrowser as GoogleOAuthHandle } from "./browser.js";

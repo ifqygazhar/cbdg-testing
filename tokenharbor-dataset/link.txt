@@ -1,0 +1,191 @@
+web memakai nextjs
+
+signup link : https://tokenharbor.ai/login?mode=signup
+
+ketika di dashboard enable free model, setelah di tap enable free model lalu klik verify email : https://tokenharbor.ai/dashboard
+ketika sudah klik verif email, lihat verifikasi nya via api temp mail saya, ini contoh link verif nya : https://tokenharbor.ai/verify-email?token=NmRiNzMyNzYtMGZhOC00YWYwLThmNjktN2I4ODNlNTA1Mjk5LjE3OTExMTQ3NjExOTAueDBscmUtV2ZXel9GUHhUQ0lnRlRZMHk4R0pxZXpFanluLThCb1pfUmM2OA
+jika sudah verif email selanjutnya buat apikey ketika di url ini : https://tokenharbor.ai/dashboard/api-keys klik create apikey nanti label muncul, setelah label muncul buatkan nama label bebas dan create apikey, dan ketika sudah terbuat nanti muncul apikey nya, dan simpan ke apikey-tokenharbor.txt
+
+
+apikey temp email : anjingmemekkontol
+password default pendaftaran pakai ini : torabikA1###########
+
+dokumentais temp mail dan url dibawah sini 
+
+email yang sudah daftar ke tokenharbor bisa di cek verifikasi nya seperti apa : neatember891@ifqy.net
+
+Dokumentasi API
+API TempMail-Pro memungkinkan Anda membuat email sementara, mengecek inbox, menghapus email, dan menghapus pesan secara terprogram. Cocok untuk otomatisasi, testing, dan integrasi.
+
+Base URL
+
+Base URL
+Salin
+https://temp-postservice.verifwebsitepro.workers.dev
+Domain yang didukung:
+
+@ifqy.net
+@meongtopup.my.id
+@huzt.my.id
+Autentikasi
+Semua endpoint /api/* wajib menyertakan header x-api-key. Tanpa key yang benar, server mengembalikan 401 Unauthorized.
+
+Header
+Salin
+x-api-key: API_KEY_ANDA
+⚠️ Jaga kerahasiaan API key Anda. Jangan menaruhnya di kode sisi browser — panggil API dari sisi server.
+
+Buat Email
+POST
+/api/email/create
+Membuat alamat email sementara baru. Jika username dikosongkan, sistem akan membuat nama acak. Jika domain dikosongkan, memakai domain utama.
+
+Parameter
+
+Nama	Tipe	Wajib?	Keterangan
+username	string	opsional	Bagian sebelum @. Kosong = diacak otomatis.
+domain	string	opsional	Salah satu domain yang didukung. Default: ifqy.net.
+Contoh Request
+
+cURL
+Salin
+curl -X POST "https://temp-postservice.verifwebsitepro.workers.dev/api/email/create" \
+  -H "x-api-key: API_KEY_ANDA" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"budi","domain":"ifqy.net"}'
+Contoh Response
+
+JSON
+Salin
+{
+  "status": "ok",
+  "code": 201,
+  "msg": "Email berhasil dibuat",
+  "data": {
+    "email": "budi@ifqy.net",
+    "username": "budi",
+    "domain": "ifqy.net",
+    "created_at": "2026-07-12T07:12:39.273Z",
+    "expires_at": null
+  }
+}
+Cek Inbox
+GET
+/api/email/inbox
+Mengambil daftar pesan yang masuk ke sebuah alamat email. Gunakan field `id` tiap pesan untuk menghapus atau meneruskan pesan.
+
+Parameter
+
+Nama	Tipe	Wajib?	Keterangan
+address	query	wajib	Alamat email yang ingin dicek inbox-nya.
+Contoh Request
+
+cURL
+Salin
+curl "https://temp-postservice.verifwebsitepro.workers.dev/api/email/inbox?address=budi@ifqy.net" \
+  -H "x-api-key: API_KEY_ANDA"
+Contoh Response
+
+JSON
+Salin
+{
+  "status": "ok",
+  "code": 200,
+  "msg": "Inbox tersedia",
+  "address": "budi@ifqy.net",
+  "stats": { "count": "123" },
+  "mails": [
+    {
+      "id": "budi@ifqy.net-abc12345",
+      "sender": "noreply@github.com",
+      "subject": "Kode verifikasi",
+      "content-plain": "Kode kamu 123456",
+      "content-plain-formatted": "Kode kamu <b>123456</b>",
+      "content-html": "<p>Kode kamu <b>123456</b></p>",
+      "date": "2026-07-12T07:20:00.000Z"
+    }
+  ]
+}
+Inbox Realtime
+GET
+/api/email/stream
+Server-Sent Events (SSE): pesan di-push begitu email masuk, tanpa perlu polling. Event `snapshot` dikirim sekali di awal berisi inbox saat ini, lalu `mail` setiap ada email baru. Stream ditutup otomatis setelah 5 menit idle (ditandai event `idle`).
+
+Parameter
+
+Nama	Tipe	Wajib?	Keterangan
+address	query	wajib	Alamat email yang ingin dipantau.
+Contoh Request
+
+cURL
+Salin
+curl -N "https://temp-postservice.verifwebsitepro.workers.dev/api/email/stream?address=budi@ifqy.net" \
+  -H "x-api-key: API_KEY_ANDA"
+Contoh Response
+
+JSON
+Salin
+event: snapshot
+data: {"mails":[]}
+
+event: mail
+data: {"id":"budi@ifqy.net-abc12345","sender":"noreply@github.com","subject":"Kode verifikasi","content-plain":"Kode kamu 123456","content-plain-formatted":"Kode kamu <b>123456</b>","content-html":"<p>Kode kamu <b>123456</b></p>","date":"2026-07-12T07:20:00.000Z"}
+
+event: idle
+data: {}
+Hapus Email
+DELETE
+/api/email/delete
+Menghapus sebuah email (akun) beserta SELURUH pesan yang ada di dalamnya secara permanen.
+
+Parameter
+
+Nama	Tipe	Wajib?	Keterangan
+address	query	wajib	Alamat email yang ingin dihapus.
+Contoh Request
+
+cURL
+Salin
+curl -X DELETE "https://temp-postservice.verifwebsitepro.workers.dev/api/email/delete?address=budi@ifqy.net" \
+  -H "x-api-key: API_KEY_ANDA"
+Contoh Response
+
+JSON
+Salin
+{
+  "status": "ok",
+  "code": 200,
+  "msg": "Email beserta seluruh pesannya berhasil dihapus"
+}
+Hapus Pesan
+DELETE
+/api/message/delete
+Menghapus satu pesan tertentu. Nilai `id` diambil dari field `id` pada respons Cek Inbox.
+
+Parameter
+
+Nama	Tipe	Wajib?	Keterangan
+id	query	wajib	ID pesan (dari field `id` inbox).
+Contoh Request
+
+cURL
+Salin
+curl -X DELETE "https://temp-postservice.verifwebsitepro.workers.dev/api/message/delete?id=budi@ifqy.net-abc12345" \
+  -H "x-api-key: API_KEY_ANDA"
+Contoh Response
+
+JSON
+Salin
+{
+  "status": "ok",
+  "code": 200,
+  "msg": "Pesan berhasil dihapus"
+}
+Kode Status
+Kode	Arti
+200 / 201	Berhasil.
+400	Permintaan tidak valid (parameter kurang / domain tidak didukung).
+401	x-api-key salah atau tidak disertakan.
+404	Data tidak ditemukan.
+500	Kesalahan server.
+© 2026 TempMail-Pro — Dokumentasi API

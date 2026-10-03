@@ -122,6 +122,7 @@ Non-negotiables, each learned from a real failure:
 - `references/traps.md` — the failure catalogue: symptom → cause → fix. Read
   this first when something hangs.
 - `references/camoufox.md` — Camoufox architecture, anti-Turnstile bypass guide, and Playwright patterns.
+- `references/tempmail.md` — TempMail-Pro integration, polling, email activation, and link extraction.
 - `references/probes.md` — copy-paste probe recipes (network trace, click
   trace, bundle spelunking, header inspection).
 - `references/pacing.md` — making a run fast without making it robotic.

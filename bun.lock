@@ -33,6 +33,14 @@
         "puppeteer-core": "^23.0.0",
       },
     },
+    "apps/tokenharbor": {
+      "name": "@ifqy/tokenharbor-signup",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ifqy/google-oauth": "0.1.0",
+        "puppeteer-core": "^23.0.0",
+      },
+    },
     "apps/webshare": {
       "name": "@ifqy/webshare-signup",
       "version": "0.1.0",
@@ -59,6 +67,8 @@
     "@ifqy/fastrouter-signup": ["@ifqy/fastrouter-signup@workspace:apps/fastrouter"],
 
     "@ifqy/google-oauth": ["@ifqy/google-oauth@workspace:packages/google-oauth"],
+
+    "@ifqy/tokenharbor-signup": ["@ifqy/tokenharbor-signup@workspace:apps/tokenharbor"],
 
     "@ifqy/webshare-signup": ["@ifqy/webshare-signup@workspace:apps/webshare"],
 
