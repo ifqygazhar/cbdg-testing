@@ -2,10 +2,12 @@ import asyncio
 import atexit
 import os
 import random
+import re
 import signal
 import subprocess
 import sys
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
+from urllib.parse import urlparse
 from camoufox.async_api import AsyncCamoufox
 from playwright.async_api import Browser, Page
 from .loaders import Proxy
@@ -69,7 +71,7 @@ def setup_process_signals():
 async def launch_camoufox(
     headless: bool = True,
     proxy: Optional[Proxy] = None,
-    geoip: bool = True,
+    geoip: Union[bool, str] = True,
     **kwargs
 ) -> AsyncCamoufox:
     setup_process_signals()
@@ -86,7 +88,27 @@ async def launch_camoufox(
             proxy_dict["password"] = proxy.password
         launch_kwargs["proxy"] = proxy_dict
         if geoip:
-            launch_kwargs["geoip"] = True
+            if isinstance(geoip, str):
+                launch_kwargs["geoip"] = geoip
+            else:
+                # Do NOT pass geoip=True directly when using a proxy.
+                # Camoufox's default geoip=True sends synchronous requests via python `requests`
+                # to external IP check endpoints with verify=True, which crashes with
+                # SSLCertVerificationError on proxies with certificate mismatches (e.g. IP vs host),
+                # or hangs indefinitely on SOCKS5 proxies.
+                # Passing the proxy host IP directly allows Camoufox to use its bundled offline
+                # MaxMind database immediately in milliseconds without network calls.
+                host = None
+                try:
+                    parsed = urlparse(proxy.server)
+                    host = parsed.hostname
+                except Exception:
+                    pass
+
+                if host and re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$", host):
+                    launch_kwargs["geoip"] = host
+                else:
+                    launch_kwargs["geoip"] = False
 
     return AsyncCamoufox(**launch_kwargs)
 

@@ -85,7 +85,7 @@ async def run_single_account(
         )
 
         async with browser_ctx as browser:
-            page = await browser.new_page()
+            page = await browser.new_page(ignore_https_errors=True)
             page.set_default_timeout(30000)
 
             # ── 1. Navigate to Sign Up ──────────────────────────────────────
