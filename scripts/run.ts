@@ -5,7 +5,7 @@
 // Everything it can do is also reachable by typing the flags directly; the
 // command it is about to run is printed so you can copy it next time.
 
-import { select, confirm, askNumber, releaseStdin, ui, Cancelled } from "./prompt.js";
+import { select, confirm, askNumber, askText, releaseStdin, ui, Cancelled } from "./prompt.js";
 import {
   APP_ENTRY,
   IS_TOOL,
@@ -142,8 +142,18 @@ async function askPlan(): Promise<RunPlan> {
     { value: "careful", label: "careful", hint: "lebih pelan dari manusia, buat risk engine galak" },
   ]);
 
+  let domain: string | undefined;
   let limit: number | undefined;
   if (app === "tokenharbor") {
+    domain = await select<string>("Domain TempMail?", [
+      { value: "ifqy.net", label: "ifqy.net", hint: "domain utama TempMail-Pro (default)" },
+      { value: "meongtopup.my.id", label: "meongtopup.my.id", hint: "domain alternatif 1" },
+      { value: "huzt.my.id", label: "huzt.my.id", hint: "domain alternatif 2" },
+      { value: "custom", label: "Ketik domain kustom...", hint: "masukkan domain email lainnya" },
+    ]);
+    if (domain === "custom") {
+      domain = await askText("Masukkan domain email kustom", "ifqy.net");
+    }
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
   }
 
@@ -153,7 +163,7 @@ async function askPlan(): Promise<RunPlan> {
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, engine, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit };
+  return { app, mode, engine, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain };
 }
 
 function review(plan: RunPlan): void {
@@ -180,6 +190,7 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
           ],
         ] as Array<[string, string]>)
       : []),
+    ...(plan.domain ? ([["domain", `@${plan.domain}`]] as Array<[string, string]>) : []),
     ...(plan.mode ? ([["mode", plan.mode === "signup" ? "signup saja" : "full (VCC)"]] as Array<[string, string]>) : []),
 
     ...(plan.useProxy === undefined

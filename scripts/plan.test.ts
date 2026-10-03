@@ -76,6 +76,12 @@ describe("buildArgs", () => {
     expect(cbdg).not.toContain("--engine");
   });
 
+  it("tokenharbor gets domain flag when specified", () => {
+    const th = buildArgs({ ...base, app: "tokenharbor", domain: "meongtopup.my.id" });
+    expect(th).toContain("--domain");
+    expect(th).toContain("meongtopup.my.id");
+  });
+
   it("spells out google-direct only when it is turned off", () => {
     // The printed command has to reproduce the run. With GOOGLE_DIRECT=0 in
     // .env and no flag emitted, pasting it elsewhere would silently behave

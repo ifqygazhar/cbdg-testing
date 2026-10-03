@@ -44,6 +44,7 @@ export interface RunPlan {
   delaySec: number;
   workers: number;
   limit?: number;
+  domain?: string;
   proxyTarget?: string;
   proxyAppend?: boolean;
 }
@@ -108,6 +109,7 @@ export function buildArgs(plan: RunPlan): string[] {
   if (plan.workers > 1) args.push("-w", String(plan.workers));
   if (plan.delaySec > 0) args.push("--delay", String(plan.delaySec));
   if (plan.limit !== undefined && plan.limit > 0) args.push("--limit", String(plan.limit));
+  if (plan.domain) args.push("--domain", plan.domain);
   if (plan.retryFailed) args.push("--retry-failed");
   if (plan.dryRun) args.push("--dry-run");
   if (ENGINE_CAPABLE.includes(plan.app) && plan.engine === "python") {

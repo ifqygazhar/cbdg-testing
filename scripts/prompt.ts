@@ -192,3 +192,11 @@ export async function askNumber(title: string, def: number, unit = ""): Promise<
   const n = Number(line);
   return Number.isFinite(n) && n >= 0 ? n : def;
 }
+
+/** Free-form text input with a default; blank input keeps the default. */
+export async function askText(title: string, def = ""): Promise<string> {
+  const hint = def ? ` (${def}, Enter = default)` : "";
+  write(`\n${ui.bold(title)}${ui.dim(hint)}\n> `);
+  const line = (await readLine()).trim();
+  return line === "" ? def : line;
+}
