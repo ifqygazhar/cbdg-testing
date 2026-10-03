@@ -44,6 +44,7 @@ export interface RunPlan {
   delaySec: number;
   workers: number;
   limit?: number;
+  proxyTarget?: string;
 }
 
 
@@ -83,8 +84,11 @@ export function proxyReuseEnabled(env: NodeJS.ProcessEnv = process.env): boolean
 export function buildArgs(plan: RunPlan): string[] {
   const args: string[] = [];
   // The checker takes no run-shaping flags: it reads proxy.txt and writes
-  // proxy-live.txt with its own defaults.
-  if (IS_TOOL[plan.app]) return args;
+  // proxy-live.txt with its own defaults. Optional target flag can be passed.
+  if (IS_TOOL[plan.app]) {
+    if (plan.proxyTarget) return ["--target", plan.proxyTarget];
+    return args;
+  }
   args.push(plan.headless ? "--headless" : "--headed");
   args.push(`--pace`, plan.pace);
   if (plan.app === "cbdg") args.push(plan.mode === "signup" ? "--signup-only" : "--full");

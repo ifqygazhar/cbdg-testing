@@ -25,6 +25,7 @@ export interface CheckOptions {
   output: string;
   deadFile?: string;
   url: string;
+  target?: string;
   timeoutMs: number;
   concurrency: number;
   force: boolean;
@@ -35,6 +36,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
     input: path.resolve(cwd, "proxy.txt"),
     output: path.resolve(cwd, "proxy-live.txt"),
     url: process.env.PROXY_CHECK_URL || "https://ipv4.webshare.io/",
+    target: process.env.PROXY_CHECK_TARGET,
     timeoutMs: Number(process.env.PROXY_CHECK_TIMEOUT_SEC || 12) * 1000,
     concurrency: Number(process.env.PROXY_CHECK_CONCURRENCY || 10),
     force: false,
@@ -46,6 +48,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
     else if (a === "--out") o.output = path.resolve(cwd, next());
     else if (a === "--dead") o.deadFile = path.resolve(cwd, next());
     else if (a === "--url") o.url = next();
+    else if (a === "--target" || a === "-t") o.target = next();
     else if (a === "--timeout") o.timeoutMs = Number(next()) * 1000;
     else if (a === "--concurrency" || a === "-c") o.concurrency = Number(next());
     else if (a === "--force") o.force = true;
@@ -53,11 +56,12 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
       console.log(
         [
           "Usage: bun run proxy-check [--in FILE] [--out FILE] [--dead FILE]",
-          "                           [--timeout SEC] [-c N] [--url URL] [--force]",
+          "                           [--timeout SEC] [-c N] [--url URL] [--target URL] [--force]",
           "",
           "  Membaca proxy.txt, mengecek satu per satu, menulis yang hidup ke",
           "  proxy-live.txt (diurutkan dari yang tercepat).",
           "",
+          "  --target    verifikasi juga akses ke situs target (misal https://tokenharbor.ai)",
           "  --timeout   detik per proxy (default 12)",
           "  -c N        berapa proxy dicek bersamaan (default 10)",
           "  --dead F    simpan juga yang mati beserta alasannya",
@@ -82,25 +86,62 @@ async function directIp(url: string, timeoutMs: number): Promise<string | null> 
 
 async function checkOne(entry: ProxyEntry, opts: CheckOptions, ourIp: string | null): Promise<CheckResult> {
   const started = Date.now();
+  let baseResult: CheckResult;
+
   if (entry.protocol.startsWith("socks")) {
-    return checkSocks(entry, opts, ourIp);
+    baseResult = await checkSocks(entry, opts, ourIp);
+  } else {
+    try {
+      const res = await fetch(opts.url, {
+        proxy: entry.url,
+        signal: AbortSignal.timeout(opts.timeoutMs),
+        headers: { "user-agent": "curl/8.5.0" },
+        tls: { rejectUnauthorized: false },
+      });
+      const ms = Date.now() - started;
+      if (!res.ok) {
+        baseResult = { entry, alive: false, ms, reason: `HTTP ${res.status}` };
+      } else {
+        const exitIp = readExitIp(await res.text());
+        const verdict = judge(exitIp, ourIp);
+        baseResult = { entry, alive: verdict.alive, ms, exitIp: exitIp ?? undefined, reason: verdict.reason };
+      }
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      const reason = /timeout|timed out|aborted/i.test(msg) ? "timeout" : msg.slice(0, 60);
+      baseResult = { entry, alive: false, ms: Date.now() - started, reason };
+    }
   }
 
+  // If base check failed, or no secondary target requested, return immediately
+  if (!baseResult.alive || !opts.target) {
+    return baseResult;
+  }
+
+  // Also verify that the proxy can reach the actual target website (e.g. https://tokenharbor.ai)
+  const targetStarted = Date.now();
   try {
-    const res = await fetch(opts.url, {
-      proxy: entry.url,
-      signal: AbortSignal.timeout(opts.timeoutMs),
-      headers: { "user-agent": "curl/8.5.0" },
-      tls: { rejectUnauthorized: false },
-    });
-    const ms = Date.now() - started;
-    if (!res.ok) return { entry, alive: false, ms, reason: `HTTP ${res.status}` };
-    const exitIp = readExitIp(await res.text());
-    const verdict = judge(exitIp, ourIp);
-    return { entry, alive: verdict.alive, ms, exitIp: exitIp ?? undefined, reason: verdict.reason };
+    if (entry.protocol.startsWith("socks")) {
+      const targetRes = await checkSocks(entry, { url: opts.target, timeoutMs: opts.timeoutMs }, null);
+      if (!targetRes.alive) {
+        return { entry, alive: false, ms: Date.now() - started, reason: `target: ${targetRes.reason || "gagal"}` };
+      }
+    } else {
+      const res = await fetch(opts.target, {
+        proxy: entry.url,
+        signal: AbortSignal.timeout(opts.timeoutMs),
+        headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        tls: { rejectUnauthorized: false },
+      });
+      if (!res.ok && res.status >= 400 && res.status !== 401 && res.status !== 403) {
+        return { entry, alive: false, ms: Date.now() - started, reason: `target HTTP ${res.status}` };
+      }
+    }
+    const totalMs = (Date.now() - targetStarted) + baseResult.ms;
+    return { ...baseResult, ms: totalMs };
   } catch (e) {
     const msg = (e as Error).message || String(e);
-    const reason = /timeout|timed out|aborted/i.test(msg) ? "timeout" : msg.slice(0, 60);
+    const reason = /timeout|timed out|aborted/i.test(msg) ? "target timeout" : `target: ${msg.slice(0, 40)}`;
     return { entry, alive: false, ms: Date.now() - started, reason };
   }
 }
@@ -113,7 +154,7 @@ async function checkOne(entry: ProxyEntry, opts: CheckOptions, ourIp: string | n
 export function renderLiveFile(alive: CheckResult[], opts: CheckOptions, total: number): string {
   return [
     "# proxy hidup per " + new Date().toISOString(),
-    "# sumber: " + path.basename(opts.input) + " · " + alive.length + "/" + total + " lolos · urut dari tercepat",
+    "# sumber: " + path.basename(opts.input) + " · " + alive.length + "/" + total + " lolos · urut dari tercepat" + (opts.target ? ` · target: ${opts.target}` : ""),
     ...alive.map((r) => r.entry.raw),
     "",
   ].join(String.fromCharCode(10));
@@ -146,7 +187,9 @@ export async function main(argv: string[]): Promise<number> {
 
   console.log(
     `\n${ui.bold("cek proxy")} ${ui.dim(
-      `${entries.length} entri · ${opts.concurrency} paralel · timeout ${opts.timeoutMs / 1000}s · ip kita ${ourIp}`,
+      `${entries.length} entri · ${opts.concurrency} paralel · timeout ${opts.timeoutMs / 1000}s · ip kita ${ourIp}${
+        opts.target ? ` · target ${opts.target}` : ""
+      }`,
     )}\n`,
   );
 

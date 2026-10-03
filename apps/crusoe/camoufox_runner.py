@@ -266,8 +266,9 @@ async def main_async():
             success_count += 1
 
         if i < len(accounts) - 1 and args.delay > 0:
-            logger.info(f"Waiting {args.delay}s before next account...")
-            await asyncio.sleep(args.delay)
+            sleep_time = args.delay if ok else min(3.0, float(args.delay))
+            logger.info(f"Waiting {sleep_time}s before next account...")
+            await asyncio.sleep(sleep_time)
 
     logger.info(f"Crusoe Camoufox batch finished: {success_count}/{processed} succeeded.")
 

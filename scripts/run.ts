@@ -50,8 +50,14 @@ async function askPlan(): Promise<RunPlan> {
     { value: "tokenharbor", label: "tokenharbor", hint: "daftar TokenHarbor (TempMail) → API key ke apikey-tokenharbor.txt" },
   ]);
 
-  // The checker has nothing to configure: it reads one file and writes another.
   if (IS_TOOL[app]) {
+    const targetSite = await select<string>("Uji untuk target website apa?", [
+      { value: "", label: "Umum (semua situs)", hint: "uji liveness & IP echo via ipv4.webshare.io (default)" },
+      { value: "https://tokenharbor.ai", label: "TokenHarbor", hint: "uji liveness + akses langsung ke tokenharbor.ai" },
+      { value: "https://fastrouter.ai", label: "FastRouter", hint: "uji liveness + akses langsung ke fastrouter.ai" },
+      { value: "https://console.crusoecloud.com", label: "Crusoe", hint: "uji liveness + akses langsung ke crusoecloud.com" },
+      { value: "https://www.codebuddy.ca", label: "CodeBuddy", hint: "uji liveness + akses langsung ke codebuddy.ca" },
+    ]);
     return {
       app,
       pace: "human",
@@ -60,6 +66,7 @@ async function askPlan(): Promise<RunPlan> {
       dryRun: false,
       delaySec: 0,
       workers: 1,
+      proxyTarget: targetSite || undefined,
     };
   }
 
