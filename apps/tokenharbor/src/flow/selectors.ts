@@ -21,6 +21,8 @@ export const SELECTORS = {
   createKeySubmitButton: 'button:has-text("Create key"), button.btn-float-primary:has-text("Create key")',
   apiKeyDisplay: 'code.input-float, code',
   errorMessage: 'form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500',
+  somethingSnappedHeading: 'h2:has-text("Something snapped"), h2',
+  tryAgainButton: 'button:has-text("Try again"), button.bg-zinc-900',
 } as const;
 
 /** Regex matching TokenHarbor API key format (e.g. thk_live_tkotA3u0vklWQT1yg5sAhRJP8za-2lnWx9SrT37EO2b2wd2LQe5iAlf8z-25Jo4j) */

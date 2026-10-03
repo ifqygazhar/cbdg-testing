@@ -16,6 +16,73 @@ export interface AccountSession {
   verificationLink?: string;
 }
 
+/** Checks if Next.js 'Something snapped.' full-screen error is present. */
+export async function checkSomethingSnapped(page: Page): Promise<boolean> {
+  try {
+    return await page.evaluate(() => {
+      const h2 = document.querySelector("h2");
+      if (h2 && /something snapped/i.test(h2.textContent || "")) return true;
+      const p = document.querySelector("p");
+      if (p && /hit an error we didn['’]t expect/i.test(p.textContent || "")) return true;
+      return false;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** If 'Something snapped.' error screen is displayed, clicks 'Try again' or reloads targetUrl. */
+export async function recoverIfSomethingSnapped(
+  page: Page,
+  targetUrl?: string,
+  log?: ULog,
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const isSnapped = await checkSomethingSnapped(page);
+    if (!isSnapped) return true;
+
+    if (log) {
+      log("warn", `'Something snapped.' error screen detected! (recovery attempt ${attempt}/3)`);
+    }
+
+    // 1. Try clicking 'Try again' button
+    try {
+      const clicked = await dom.clickByText(page, ["Try again"], {}, { optional: true });
+      if (clicked) {
+        if (log) log("info", "clicked 'Try again' button to recover");
+        await utils.sleep(2500);
+        if (!(await checkSomethingSnapped(page))) {
+          if (log) log("info", "Successfully recovered from 'Something snapped' via 'Try again' button!");
+          return true;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 2. If still snapped, reload or navigate back to targetUrl
+    if (await checkSomethingSnapped(page)) {
+      if (log) log("info", `reloading page / navigating to ${targetUrl ?? "current URL"} to recover...`);
+      try {
+        if (targetUrl) {
+          await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+        } else {
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+        }
+        await utils.sleep(3000);
+        if (!(await checkSomethingSnapped(page))) {
+          if (log) log("info", "Successfully recovered from 'Something snapped' after reload!");
+          return true;
+        }
+      } catch (e) {
+        if (log) log("warn", `Reload failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  return !(await checkSomethingSnapped(page));
+}
+
 /** Dismisses cookie/analytics consent banner if present */
 export async function dismissCookieBanners(page: Page, log: ULog): Promise<void> {
   try {
@@ -42,6 +109,7 @@ export async function stepSignUp(
 
   await page.goto(DEFAULT_SIGNUP_URL, { waitUntil: "domcontentloaded", timeout: 35000 });
   await utils.sleep(Math.round(2500 * mult));
+  await recoverIfSomethingSnapped(page, DEFAULT_SIGNUP_URL, log);
 
   await dismissCookieBanners(page, log);
   await utils.sleep(Math.round(1000 * mult));
@@ -99,6 +167,22 @@ export async function stepSignUp(
   for (let i = 0; i < 30; i++) {
     if (page.url().includes("/dashboard")) break;
 
+    // Check if Next.js 'Something snapped.' error screen appeared
+    if (await checkSomethingSnapped(page)) {
+      log("warn", "'Something snapped.' full-screen error detected! Recovering and repeating submit step...");
+      const recovered = await recoverIfSomethingSnapped(page, DEFAULT_SIGNUP_URL, log);
+      if (recovered) {
+        if (page.url().includes("/dashboard")) break;
+        const retryBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 5000);
+        if (retryBtn) {
+          log("info", "re-submitting signup form after recovering from 'Something snapped'...");
+          await retryBtn.click();
+          await retryBtn.dispose().catch(() => {});
+          continue;
+        }
+      }
+    }
+
     const foundError = await page.evaluate((sel) => {
       const el = document.querySelector(sel);
       if (el && el.textContent) {
@@ -139,6 +223,10 @@ export async function stepSignUp(
   ]);
 
   if (!reachedDashboard && !page.url().includes("/dashboard")) {
+    if (await checkSomethingSnapped(page)) {
+      log("warn", "'Something snapped.' detected waiting for dashboard! Attempting recovery...");
+      await recoverIfSomethingSnapped(page, DEFAULT_SIGNUP_URL, log);
+    }
     const errorText = await page.evaluate((sel) => {
       const errEl = document.querySelector(sel);
       return errEl ? errEl.textContent?.trim() : null;
@@ -156,12 +244,14 @@ export async function stepSignUp(
 /** Step 2: Enables free models consent on dashboard if prompted */
 export async function stepEnableFreeModels(page: Page, log: ULog): Promise<void> {
   log("info", "checking free models consent banner");
+  await recoverIfSomethingSnapped(page, DASHBOARD_URL, log);
   try {
     const btn = await dom.waitForAnySelector(page, [SELECTORS.enableFreeModelsConsent], 4000);
     if (btn) {
       log("info", "clicking Enable free models button");
       await btn.click();
       await utils.sleep(1000);
+      await recoverIfSomethingSnapped(page, DASHBOARD_URL, log);
     }
   } catch {
     // If modal/banner not present, continue
@@ -171,11 +261,13 @@ export async function stepEnableFreeModels(page: Page, log: ULog): Promise<void>
 /** Step 3: Clicks 'Verify email' banner on dashboard to trigger verification link */
 export async function stepTriggerVerification(page: Page, log: ULog): Promise<void> {
   log("info", "checking verify email banner");
+  await recoverIfSomethingSnapped(page, DASHBOARD_URL, log);
   const verifyBtn = await dom.waitForAnySelector(page, [SELECTORS.verifyEmailBannerButton], 8000);
   if (verifyBtn) {
     log("info", "clicking Verify email button to send verification link");
     await verifyBtn.click();
     await utils.sleep(2000);
+    await recoverIfSomethingSnapped(page, DASHBOARD_URL, log);
   } else {
     log("info", "verify email button not visible, may already be sent or verified");
   }
@@ -199,6 +291,7 @@ export async function stepVerifyEmail(
   log("info", "verification link received", { verifyUrl });
   await page.goto(verifyUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
   await utils.sleep(2500);
+  await recoverIfSomethingSnapped(page, verifyUrl, log);
 
   log("info", "email verification completed", { url: page.url() });
   return verifyUrl;
@@ -215,54 +308,83 @@ export async function stepCreateApiKey(
   await page.goto(API_KEYS_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
   await utils.sleep(1500);
 
-  // Look for "+ New key" button
-  log("info", "clicking + New key button");
-  const newKeyBtn = await dom.waitForAnySelector(page, [SELECTORS.newKeyButton], 15000);
-  if (!newKeyBtn) {
-    throw new Error("+ New key button not found on API keys page");
-  }
-  await newKeyBtn.click();
-  await utils.sleep(1000);
-
-  // Label input dialog
-  const label = `App-${session.email.split("@")[0].slice(0, 8)}-${utils.randomInt(10, 99)}`;
-  log("info", "typing key label", { label });
-  const keyLabelInput = await dom.waitForAnySelector(page, [SELECTORS.keyLabelInput], 10000);
-  if (!keyLabelInput) {
-    throw new Error("Could not find key label input in create dialog");
-  }
-  await dom.fillInput(page, keyLabelInput, label);
-  await keyLabelInput.dispose().catch(() => {});
-  await utils.sleep(500);
-
-  // Click "Create key" submit button
-  log("info", "submitting key creation");
-  const createSubmitBtn = await dom.waitForAnySelector(page, [SELECTORS.createKeySubmitButton], 10000);
-  if (!createSubmitBtn) {
-    throw new Error("Create key submit button not found");
-  }
-  await createSubmitBtn.click();
-  await utils.sleep(2000);
-
-  // Extract created API key from modal
-  log("info", "extracting generated API key");
   let apiKey: string | null = null;
+  for (let keyAttempt = 1; keyAttempt <= 3; keyAttempt++) {
+    await recoverIfSomethingSnapped(page, API_KEYS_URL, log);
 
-  for (let i = 0; i < 20; i++) {
-    const rawText = await page.evaluate((sel) => {
-      const codeEl = document.querySelector(sel);
-      if (codeEl && codeEl.textContent) return codeEl.textContent.trim();
-      // Fallback search across modal text
-      const modal = document.querySelector('[role="dialog"], .card-float, div:has(> code)');
-      return modal ? modal.textContent ?? "" : document.body.innerText;
-    }, SELECTORS.apiKeyDisplay);
-
-    const match = rawText.match(API_KEY_RE);
-    if (match) {
-      apiKey = match[0];
-      break;
+    // Look for "+ New key" button
+    log("info", `clicking + New key button (attempt ${keyAttempt}/3)`);
+    const newKeyBtn = await dom.waitForAnySelector(page, [SELECTORS.newKeyButton], 15000);
+    if (!newKeyBtn) {
+      if (await checkSomethingSnapped(page)) {
+        log("warn", "'Something snapped.' detected on API keys page! Retrying...");
+        await recoverIfSomethingSnapped(page, API_KEYS_URL, log);
+        continue;
+      }
+      throw new Error("+ New key button not found on API keys page");
     }
+    await newKeyBtn.click();
+    await utils.sleep(1000);
+
+    // Label input dialog
+    const label = `App-${session.email.split("@")[0].slice(0, 8)}-${utils.randomInt(10, 99)}`;
+    log("info", "typing key label", { label });
+    const keyLabelInput = await dom.waitForAnySelector(page, [SELECTORS.keyLabelInput], 10000);
+    if (!keyLabelInput) {
+      if (await checkSomethingSnapped(page)) {
+        log("warn", "'Something snapped.' detected while opening key modal! Retrying...");
+        await recoverIfSomethingSnapped(page, API_KEYS_URL, log);
+        continue;
+      }
+      throw new Error("Could not find key label input in create dialog");
+    }
+    await dom.fillInput(page, keyLabelInput, label);
+    await keyLabelInput.dispose().catch(() => {});
     await utils.sleep(500);
+
+    // Click "Create key" submit button
+    log("info", "submitting key creation");
+    const createSubmitBtn = await dom.waitForAnySelector(page, [SELECTORS.createKeySubmitButton], 10000);
+    if (!createSubmitBtn) {
+      if (await checkSomethingSnapped(page)) {
+        log("warn", "'Something snapped.' detected before create submit! Retrying...");
+        await recoverIfSomethingSnapped(page, API_KEYS_URL, log);
+        continue;
+      }
+      throw new Error("Create key submit button not found");
+    }
+    await createSubmitBtn.click();
+    await utils.sleep(2000);
+
+    // Extract created API key from modal
+    log("info", "extracting generated API key");
+    for (let i = 0; i < 20; i++) {
+      if (await checkSomethingSnapped(page)) break;
+      const rawText = await page.evaluate((sel) => {
+        const codeEl = document.querySelector(sel);
+        if (codeEl && codeEl.textContent) return codeEl.textContent.trim();
+        // Fallback search across modal text
+        const modal = document.querySelector('[role="dialog"], .card-float, div:has(> code)');
+        return modal ? modal.textContent ?? "" : document.body.innerText;
+      }, SELECTORS.apiKeyDisplay);
+
+      const match = rawText.match(API_KEY_RE);
+      if (match) {
+        apiKey = match[0];
+        break;
+      }
+      await utils.sleep(500);
+    }
+
+    if (apiKey) break;
+
+    if (await checkSomethingSnapped(page)) {
+      log("warn", "'Something snapped.' detected after creating key! Retrying key creation step...");
+      await recoverIfSomethingSnapped(page, API_KEYS_URL, log);
+      continue;
+    }
+
+    break;
   }
 
   if (!apiKey) {

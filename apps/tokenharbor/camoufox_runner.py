@@ -96,6 +96,65 @@ class SmartProxyPool:
     def has_proxies(self) -> bool:
         return bool(self.fresh_proxies or self.good_proxies)
 
+async def check_something_snapped(page) -> bool:
+    """Checks if Next.js 'Something snapped.' full-screen error is present."""
+    try:
+        return await page.evaluate("""() => {
+            const h2 = document.querySelector('h2');
+            if (h2 && /something snapped/i.test(h2.textContent || '')) return true;
+            const p = document.querySelector('p');
+            if (p && /hit an error we didn['’]t expect/i.test(p.textContent || '')) return true;
+            return false;
+        }""")
+    except Exception:
+        return False
+
+async def recover_if_something_snapped(page, target_url: Optional[str] = None, logger=None) -> bool:
+    """If 'Something snapped.' error screen is displayed, clicks 'Try again' or reloads target_url.
+    Returns True if recovered or if no error was present, False if recovery failed after retries.
+    """
+    for attempt in range(1, 4):
+        if not await check_something_snapped(page):
+            return True
+
+        if logger:
+            logger.warn(f"'Something snapped.' error screen detected! (recovery attempt {attempt}/3)")
+
+        # 1. Try clicking the 'Try again' button
+        try:
+            try_again_btn = await page.query_selector('button:has-text("Try again"), button.bg-zinc-900')
+            if try_again_btn:
+                if logger:
+                    logger.info("clicking 'Try again' button to recover...")
+                await try_again_btn.click()
+                await human_delay(2000, 3500)
+                if not await check_something_snapped(page):
+                    if logger:
+                        logger.info("Successfully recovered from 'Something snapped' via 'Try again' button!")
+                    return True
+        except Exception:
+            pass
+
+        # 2. If still snapped, reload or navigate back to target_url
+        if await check_something_snapped(page):
+            if logger:
+                logger.info(f"reloading page / navigating to {target_url or 'current URL'} to recover...")
+            try:
+                if target_url:
+                    await page.goto(target_url, wait_until="domcontentloaded")
+                else:
+                    await page.reload(wait_until="domcontentloaded")
+                await human_delay(2500, 4000)
+                if not await check_something_snapped(page):
+                    if logger:
+                        logger.info("Successfully recovered from 'Something snapped' after reload!")
+                    return True
+            except Exception as e:
+                if logger:
+                    logger.warn(f"Reload failed: {e}")
+
+    return not await check_something_snapped(page)
+
 async def run_single_account(
     email: str,
     password: str,
@@ -131,6 +190,7 @@ async def run_single_account(
             logger.info(f"navigating to {DEFAULT_SIGNUP_URL}")
             await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded")
             await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
+            await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
 
             # Dismiss analytics/cookie banner if present
             try:
@@ -208,12 +268,28 @@ async def run_single_account(
             # Resolve Turnstile if challenged
             await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
 
-            # Check for immediate warning / error or dashboard redirect
+            # Check for immediate warning / error, 'Something snapped', or dashboard redirect
             logger.info("waiting for response or dashboard transition...")
             signup_error = None
             for _ in range(30):  # poll for up to ~15 seconds
                 if "/dashboard" in page.url:
                     break
+
+                # Check if Next.js 'Something snapped.' error screen appeared
+                if await check_something_snapped(page):
+                    logger.warn("'Something snapped.' full-screen error detected! Recovering and repeating submit step...")
+                    recovered = await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
+                    if recovered:
+                        if "/dashboard" in page.url:
+                            break
+                        retry_btn = await page.query_selector(
+                            'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]'
+                        )
+                        if retry_btn:
+                            logger.info("re-submitting signup form after recovering from 'Something snapped'...")
+                            await retry_btn.click()
+                            await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
+                            continue
 
                 error_msg = await page.evaluate("""() => {
                     // Check dedicated form error paragraph (Next.js server action result container)
@@ -252,6 +328,7 @@ async def run_single_account(
 
             # ── 3. Enable Free Models ───────────────────────────────────────
             logger.info("checking Enable free models consent...")
+            await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
             try:
                 free_btn = await page.wait_for_selector(
                     'button[data-analytics="freemodel-consent-enable"], button:has-text("Enable free models")',
@@ -261,12 +338,14 @@ async def run_single_account(
                     logger.info("clicking Enable free models button...")
                     await free_btn.click()
                     await human_delay(1000, 2000)
+                    await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
             except Exception:
                 pass
 
             # ── 4. Trigger Email Verification ───────────────────────────────
             store.upsert({"email": email, "status": FlowState.TRIGGER_VERIFY})
             logger.info("checking Verify email banner on dashboard...")
+            await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
             try:
                 verify_btn = await page.wait_for_selector(
                     'button:has-text("Verify email")',
@@ -276,6 +355,7 @@ async def run_single_account(
                     logger.info("clicking Verify email button...")
                     await verify_btn.click()
                     await human_delay(1500, 2500)
+                    await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
             except Exception:
                 logger.info("Verify email button not found, may have auto-triggered")
 
@@ -294,6 +374,7 @@ async def run_single_account(
             logger.info("navigating to verification URL...")
             await page.goto(verify_url, wait_until="domcontentloaded")
             await human_delay(2500, 4000)
+            await recover_if_something_snapped(page, target_url=verify_url, logger=logger)
 
             # ── 6. Create API Key ───────────────────────────────────────────
             store.upsert({"email": email, "status": FlowState.API_KEY})
@@ -301,50 +382,84 @@ async def run_single_account(
             await page.goto(API_KEYS_URL, wait_until="domcontentloaded")
             await human_delay(1500, 2500)
 
-            # Click "+ New key" button
-            new_key_btn = await page.wait_for_selector(
-                'button:has-text("+ New key"), button:has-text("New key")',
-                timeout=15000,
-            )
-            if not new_key_btn:
-                raise RuntimeError("+ New key button not found on API keys page")
-            await new_key_btn.click()
-            await human_delay(800, 1500)
-
-            # Type label
-            label = f"App-{email.split('@')[0][:8]}-{random.randint(10, 99)}"
-            logger.info(f"typing key label: {label}...")
-            await human_type(
-                page,
-                'input[placeholder*="Cursor, Production"], input.input-float[type="text"], input[type="text"]',
-                label,
-            )
-            await human_delay(500, 1000)
-
-            # Click "Create key" submit
-            create_btn = await page.wait_for_selector(
-                'button:has-text("Create key")',
-                timeout=10000,
-            )
-            if not create_btn:
-                raise RuntimeError("Create key submit button not found")
-            await create_btn.click()
-            await human_delay(2000, 3500)
-
-            # Extract generated API key
-            logger.info("extracting generated API key...")
+            # Create API key loop with retry if 'Something snapped' occurs
             api_key = None
-            for _ in range(20):
-                text = await page.evaluate("""() => {
-                    const el = document.querySelector('code.input-float, code');
-                    if (el && el.textContent) return el.textContent;
-                    return document.body.innerText;
-                }""")
-                match = API_KEY_RE.search(text)
-                if match:
-                    api_key = match.group(0)
+            for key_attempt in range(1, 4):
+                await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+
+                # Click "+ New key" button
+                new_key_btn = await page.wait_for_selector(
+                    'button:has-text("+ New key"), button:has-text("New key")',
+                    timeout=15000,
+                )
+                if not new_key_btn:
+                    if await check_something_snapped(page):
+                        logger.warn("'Something snapped.' detected on API keys page! Retrying...")
+                        await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+                        continue
+                    raise RuntimeError("+ New key button not found on API keys page")
+                await new_key_btn.click()
+                await human_delay(800, 1500)
+
+                # Type label
+                label = f"App-{email.split('@')[0][:8]}-{random.randint(10, 99)}"
+                logger.info(f"typing key label: {label}...")
+                label_input = await page.wait_for_selector(
+                    'input[placeholder*="Cursor, Production"], input.input-float[type="text"], input[type="text"]',
+                    timeout=8000,
+                )
+                if not label_input:
+                    if await check_something_snapped(page):
+                        logger.warn("'Something snapped.' detected while opening key modal! Retrying...")
+                        await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+                        continue
+                    raise RuntimeError("API key label input not found")
+                await human_type(
+                    page,
+                    'input[placeholder*="Cursor, Production"], input.input-float[type="text"], input[type="text"]',
+                    label,
+                )
+                await human_delay(500, 1000)
+
+                # Click "Create key" submit
+                create_btn = await page.wait_for_selector(
+                    'button:has-text("Create key")',
+                    timeout=10000,
+                )
+                if not create_btn:
+                    if await check_something_snapped(page):
+                        logger.warn("'Something snapped.' detected before create submit! Retrying...")
+                        await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+                        continue
+                    raise RuntimeError("Create key submit button not found")
+                await create_btn.click()
+                await human_delay(2000, 3500)
+
+                # Extract generated API key
+                logger.info("extracting generated API key...")
+                for _ in range(20):
+                    if await check_something_snapped(page):
+                        break
+                    text = await page.evaluate("""() => {
+                        const el = document.querySelector('code.input-float, code');
+                        if (el && el.textContent) return el.textContent;
+                        return document.body.innerText;
+                    }""")
+                    match = API_KEY_RE.search(text)
+                    if match:
+                        api_key = match.group(0)
+                        break
+                    await asyncio.sleep(0.5)
+
+                if api_key:
                     break
-                await asyncio.sleep(0.5)
+
+                if await check_something_snapped(page):
+                    logger.warn("'Something snapped.' detected after creating key! Retrying key creation step...")
+                    await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+                    continue
+
+                break
 
             if not api_key:
                 # Capture debug screenshot

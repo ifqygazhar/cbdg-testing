@@ -177,6 +177,34 @@ describe("tokenharbor selectors against dataset", () => {
     expect(match).not.toBeNull();
     expect(match![0]).toBe(sampleLink);
   });
+
+  it("detects Next.js 'Something snapped.' error screen in something.html", async () => {
+    if (!existsSync(join(datasetDir, "something.html"))) return;
+    const html = readFileSync(join(datasetDir, "something.html"), "utf8");
+
+    let h2Snapped = false;
+    let tryAgainBtn = false;
+
+    await new HTMLRewriter()
+      .on("h2", {
+        element(e) {
+          h2Snapped = true;
+        },
+      })
+      .on("button", {
+        element(e) {
+          tryAgainBtn = true;
+        },
+      })
+      .transform(new Response(html))
+      .text();
+
+    expect(h2Snapped).toBe(true);
+    expect(tryAgainBtn).toBe(true);
+    expect(html).toContain("Something snapped.");
+    expect(html).toContain("The page hit an error we didn't expect.");
+    expect(html).toContain("Try again");
+  });
 });
 
 describe("tokenharbor ResultWriter and JsonlStore", () => {
