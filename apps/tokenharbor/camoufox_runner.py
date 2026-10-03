@@ -34,6 +34,7 @@ from packages.camoufox_core import (
     setup_process_signals,
     kill_descendant_processes,
     TempMailClient,
+    resolve_turnstile_if_present,
 )
 
 API_KEY_RE = re.compile(r"thk_(?:live_)?[A-Za-z0-9_\-]{20,}")
@@ -105,6 +106,9 @@ async def run_single_account(
             if not submit_btn:
                 raise RuntimeError("Create account submit button not found")
             await submit_btn.click()
+
+            # Resolve Turnstile if challenged
+            await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
 
             # Wait for dashboard transition
             logger.info("waiting for dashboard redirection...")
@@ -227,13 +231,13 @@ async def run_single_account(
 
             logger.info(f"SUCCESS: API key extracted -> {api_key[:12]}...")
             store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
-            results.markSuccess(email, password, api_key)
+            results.mark_success(email, password, api_key)
             return True
 
     except Exception as e:
         logger.error(f"failed: {e}")
         store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e)})
-        results.markFailed(email, str(e))
+        results.mark_failed(email, password, str(e))
         return False
 
 async def main_async():
@@ -262,8 +266,6 @@ async def main_async():
 
     # Resolve output files
     key_files = ["apikey-tokenharbor.txt"]
-    if os.path.exists("tokenharbor-dataset"):
-        key_files.append("tokenharbor-dataset/apikey-tokenharbor.txt")
     if args.output_file and args.output_file not in key_files:
         key_files.append(args.output_file)
 

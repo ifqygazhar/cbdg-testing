@@ -5,6 +5,12 @@ from typing import Dict, Any, Optional, Set
 
 class FlowState:
     PENDING = "PENDING"
+    SIGNUP = "SIGNUP"
+    DASHBOARD = "DASHBOARD"
+    FREE_MODELS = "FREE_MODELS"
+    TRIGGER_VERIFY = "TRIGGER_VERIFY"
+    EMAIL_VERIFIED = "EMAIL_VERIFIED"
+    API_KEY = "API_KEY"
     DONE = "DONE"
     FAILED = "FAILED"
 
@@ -60,7 +66,7 @@ class ResultWriter:
         self.account_result_file = account_result_file
         self.account_failed_file = account_failed_file
 
-    def mark_success(self, email: str, password: str, api_key: str, extra: str = ""):
+    def mark_success(self, email: str, password: str = "", api_key: str = "", extra: str = ""):
         # Save API key to key files
         for kf in self.key_files:
             if not kf:
@@ -70,7 +76,7 @@ class ResultWriter:
                 f.write(f"{api_key}\n")
 
         # Save to account result file
-        line = f"{email}:{password}"
+        line = f"{email}:{password}" if password else email
         if api_key:
             line += f":{api_key}"
         if extra:
@@ -80,7 +86,21 @@ class ResultWriter:
         with open(self.account_result_file, "a", encoding="utf-8") as f:
             f.write(f"{line}\n")
 
-    def mark_failed(self, email: str, password: str, reason: str):
+    def mark_failed(self, email: str, password_or_reason: str = "", reason: str = ""):
+        if not reason:
+            pwd = ""
+            err = password_or_reason
+        else:
+            pwd = password_or_reason
+            err = reason
+
         os.makedirs(os.path.dirname(os.path.abspath(self.account_failed_file)), exist_ok=True)
         with open(self.account_failed_file, "a", encoding="utf-8") as f:
-            f.write(f"{email}:{password} # {reason}\n")
+            line = f"{email}:{pwd} # {err}" if pwd else f"{email} # {err}"
+            f.write(f"{line}\n")
+
+    def markSuccess(self, email: str, password: str = "", api_key: str = "", extra: str = ""):
+        return self.mark_success(email, password, api_key, extra)
+
+    def markFailed(self, email: str, password_or_reason: str = "", reason: str = ""):
+        return self.mark_failed(email, password_or_reason, reason)

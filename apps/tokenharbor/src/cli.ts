@@ -109,7 +109,7 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       delaySec: args.delaySec,
       retryFailed: args.retryFailed,
       stateFile: args.state ?? cfg.stateFile,
-      limit: cfg.limit,
+      limit: args.limit !== undefined ? args.limit : (cfg.limit > 0 ? cfg.limit : undefined),
       dryRun: args.dryRun,
     });
     return;
