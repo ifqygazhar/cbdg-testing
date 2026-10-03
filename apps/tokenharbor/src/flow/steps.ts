@@ -37,27 +37,49 @@ export async function stepSignUp(
   log: ULog,
 ): Promise<void> {
   log("info", "navigating to signup", { url: DEFAULT_SIGNUP_URL });
-  await page.goto(DEFAULT_SIGNUP_URL, { waitUntil: "domcontentloaded", timeout: 35000 });
-  await utils.sleep(1500);
+  const pace = cfg.pace ?? "human";
+  const mult = pace === "careful" ? 1.4 : pace === "fast" ? 0.85 : 1.0;
+
+  await utils.sleep(Math.round(2000 * mult));
 
   await dismissCookieBanners(page, log);
+  await utils.sleep(Math.round(800 * mult));
 
-  log("info", "filling signup form", { email: session.email });
+  log("info", "filling signup form with human cadence", { email: session.email, pace });
   const emailInput = await dom.waitForAnySelector(page, [SELECTORS.emailInput], 10000);
   if (!emailInput) {
     throw new Error("Could not find or fill email input on signup page");
   }
-  await dom.fillInput(page, emailInput, session.email);
+  await emailInput.click();
+  await utils.sleep(Math.round(400 * mult));
+  for (const char of session.email) {
+    if ("@._-".includes(char) || Math.random() < 0.08) {
+      await utils.sleep(utils.randomInt(100, 250));
+    }
+    await emailInput.type(char, { delay: utils.randomInt(50, 115) });
+  }
   await emailInput.dispose().catch(() => {});
-  await utils.sleep(300);
+
+  // Natural pause between email and password
+  await utils.sleep(Math.round(utils.randomInt(1500, 2600) * mult));
 
   const passInput = await dom.waitForAnySelector(page, [SELECTORS.passwordInput], 10000);
   if (!passInput) {
     throw new Error("Could not find or fill password input on signup page");
   }
-  await dom.fillInput(page, passInput, session.password);
+  await passInput.click();
+  await utils.sleep(Math.round(400 * mult));
+  for (const char of session.password) {
+    if ("1234567890!#_".includes(char) || Math.random() < 0.08) {
+      await utils.sleep(utils.randomInt(100, 250));
+    }
+    await passInput.type(char, { delay: utils.randomInt(55, 120) });
+  }
   await passInput.dispose().catch(() => {});
-  await utils.sleep(500);
+
+  // Natural human pause before submit: 3.5 - 5.5 seconds (prevents speed warning)
+  log("info", "pausing naturally before submit (human verification)");
+  await utils.sleep(Math.round(utils.randomInt(3500, 5500) * mult));
 
   // Click submit (Create account)
   log("info", "submitting signup form");
@@ -66,6 +88,29 @@ export async function stepSignUp(
     throw new Error("Create account button not found");
   }
   await submitBtn.click();
+
+  // Check if rate-limited by speed check ("take a breath and try again")
+  await utils.sleep(2000);
+  const checkSpeedWarning = async () => {
+    return page.evaluate(() => {
+      const el = document.querySelector('[role="alert"], .text-destructive, .text-red-500');
+      const text = el?.textContent?.trim() || "";
+      if (/fast|breath|slow down/i.test(text)) return text;
+      return null;
+    });
+  };
+
+  const speedWarning = await checkSpeedWarning();
+  if (speedWarning) {
+    log("warn", `Speed warning detected: "${speedWarning}". Taking a breath (waiting 7-9s) and retrying submit...`);
+    await utils.sleep(Math.round(utils.randomInt(7000, 9000)));
+    const retryBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 5000);
+    if (retryBtn) {
+      log("info", "retrying Create account submit after taking a breath");
+      await retryBtn.click();
+      await retryBtn.dispose().catch(() => {});
+    }
+  }
 
   // Wait for redirect to dashboard or navigation
   const reachedDashboard = await Promise.race([

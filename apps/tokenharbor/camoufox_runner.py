@@ -54,12 +54,14 @@ async def run_single_account(
     headed: bool,
     screenshot_dir: str,
     logger,
+    pace: str = "human",
 ) -> bool:
-    logger.info(f"starting TokenHarbor signup for {email} (proxy={proxy.server if proxy else 'direct'})")
+    logger.info(f"starting TokenHarbor signup for {email} (proxy={proxy.server if proxy else 'direct'}, pace={pace})")
     store.upsert({"email": email, "password": password, "status": FlowState.PENDING, "proxy": proxy.server if proxy else None})
 
     os.makedirs(screenshot_dir, exist_ok=True)
     sanitized_email = re.sub(r"[^a-zA-Z0-9]", "_", email)
+    delay_mult = 1.4 if pace == "careful" else (0.85 if pace == "fast" else 1.0)
 
     browser_ctx = None
     try:
@@ -76,39 +78,98 @@ async def run_single_account(
             # ── 1. Navigate to Sign Up ──────────────────────────────────────
             logger.info(f"navigating to {DEFAULT_SIGNUP_URL}")
             await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded")
-            await human_delay(1500, 2500)
+            await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
 
             # Dismiss analytics/cookie banner if present
             try:
                 cookie_btn = await page.query_selector('button:has-text("Accept analytics"), button:has-text("Essential only")')
                 if cookie_btn:
                     await cookie_btn.click()
-                    await human_delay(500, 1000)
+                    await human_delay(600, 1200)
             except Exception:
                 pass
 
-            # ── 2. Fill Signup Form ─────────────────────────────────────────
+            # Simulate natural human mouse movement on landing
+            try:
+                viewport = page.viewport_size or {"width": 1280, "height": 800}
+                await page.mouse.move(viewport["width"] // 2 + random.randint(-40, 40), random.randint(220, 380))
+            except Exception:
+                pass
+
+            # ── 2. Fill Signup Form (Human Pacing) ──────────────────────────
             store.upsert({"email": email, "password": password, "status": FlowState.SIGNUP})
-            logger.info("filling email and password...")
+            logger.info("filling email and password with human cadence...")
 
-            await human_type(page, 'input[name="email"], input[autocomplete="email"], input[type="email"]', email)
-            await human_delay(300, 600)
+            await human_delay(int(800 * delay_mult), int(1500 * delay_mult))
 
-            await human_type(page, 'input[name="password"], input[autocomplete="new-password"], input[type="password"]', password)
-            await human_delay(400, 800)
+            # Type email with realistic keystrokes
+            await human_type(
+                page,
+                'input[name="email"], input[autocomplete="email"], input[type="email"]',
+                email,
+                min_delay_ms=50,
+                max_delay_ms=115,
+            )
+
+            # Natural human pause between email and password (reading / moving focus)
+            await human_delay(int(1500 * delay_mult), int(2600 * delay_mult))
+
+            # Type password with realistic keystrokes
+            await human_type(
+                page,
+                'input[name="password"], input[autocomplete="new-password"], input[type="password"]',
+                password,
+                min_delay_ms=55,
+                max_delay_ms=120,
+            )
+
+            # Natural human hesitation/verification before clicking submit (3.5 - 5.5s)
+            # This prevents TokenHarbor's "You're doing that a bit fast — take a breath" anti-bot warning
+            logger.info("pausing naturally before submit (human verification)...")
+            await human_delay(int(3500 * delay_mult), int(5500 * delay_mult))
 
             # Submit signup
-            logger.info("clicking Create account submit button...")
             submit_btn = await page.wait_for_selector(
                 'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]',
                 timeout=12000,
             )
             if not submit_btn:
                 raise RuntimeError("Create account submit button not found")
+
+            # Move mouse smoothly over submit button
+            try:
+                box = await submit_btn.bounding_box()
+                if box:
+                    await page.mouse.move(
+                        box["x"] + box["width"] * random.uniform(0.3, 0.7),
+                        box["y"] + box["height"] * random.uniform(0.3, 0.7),
+                        steps=random.randint(6, 14),
+                    )
+                    await human_delay(400, 800)
+            except Exception:
+                pass
+
+            logger.info("clicking Create account submit button...")
             await submit_btn.click()
 
             # Resolve Turnstile if challenged
             await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
+
+            # Check if rate-limited by speed check ("take a breath and try again")
+            await human_delay(1500, 2500)
+            err_el = await page.query_selector('[role="alert"], .text-destructive, .text-red-500, p:has-text("fast"), div:has-text("breath")')
+            if err_el:
+                err_msg = (await err_el.text_content() or "").strip()
+                if any(w in err_msg.lower() for w in ["fast", "breath", "slow down", "try again"]):
+                    logger.warn(f"Speed warning detected: '{err_msg}'. Taking a breath (waiting 7-9s) and retrying submit...")
+                    await human_delay(7000, 9500)
+                    retry_btn = await page.query_selector(
+                        'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]'
+                    )
+                    if retry_btn:
+                        logger.info("Retrying Create account submit after taking a breath...")
+                        await retry_btn.click()
+                        await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
 
             # Wait for dashboard transition
             logger.info("waiting for dashboard redirection...")
@@ -252,6 +313,7 @@ async def main_async():
     parser.add_argument("--limit", type=int, default=1, help="Max accounts to process (default: 1)")
     parser.add_argument("--password", default=os.getenv("TOKENHARBOR_PASSWORD", "torabikA1###########"), help="Account password")
     parser.add_argument("--domain", default=os.getenv("TEMPMAIL_DOMAIN", "ifqy.net"), help="TempMail domain")
+    parser.add_argument("--pace", choices=["fast", "human", "careful"], default=os.getenv("PACE", "human"), help="Typing cadence and interaction pace")
     parser.add_argument("--dry-run", action="store_true", help="Validate config without launching browser")
     parser.add_argument("--screenshot-dir", default="screenshots-tokenharbor", help="Directory for failure screenshots")
     args = parser.parse_args()
@@ -280,7 +342,7 @@ async def main_async():
     )
 
     logger = create_logger()
-    logger.info(f"TokenHarbor Camoufox runner started. Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
+    logger.info(f"TokenHarbor Camoufox runner started (pace={args.pace}). Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
 
     if args.dry_run:
         logger.info("dry-run: config validated (no browser launched)")
@@ -314,6 +376,7 @@ async def main_async():
             headed=args.headed,
             screenshot_dir=args.screenshot_dir,
             logger=acc_logger,
+            pace=args.pace,
         )
 
         processed += 1

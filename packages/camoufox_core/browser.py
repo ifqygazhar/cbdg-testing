@@ -116,14 +116,18 @@ async def human_delay(min_ms: int = 400, max_ms: int = 1200):
     delay = random.uniform(min_ms / 1000.0, max_ms / 1000.0)
     await asyncio.sleep(delay)
 
-async def human_type(page: Page, selector: str, text: str, min_delay_ms: int = 25, max_delay_ms: int = 70):
+async def human_type(page: Page, selector: str, text: str, min_delay_ms: int = 50, max_delay_ms: int = 120):
     element = await page.wait_for_selector(selector, timeout=15000)
     if not element:
         raise RuntimeError(f"Element not found for typing: {selector}")
     await element.click()
-    await human_delay(150, 350)
+    await human_delay(250, 500)
     # Clear existing text if any
     await element.fill("")
+    await human_delay(150, 300)
     for char in text:
+        # Subtle human cadence: slight pause on symbols and numbers, plus occasional micro-pauses
+        if char in "@._-1234567890!#" or random.random() < 0.08:
+            await human_delay(100, 250)
         await element.type(char, delay=random.randint(min_delay_ms, max_delay_ms))
-    await human_delay(200, 500)
+    await human_delay(300, 600)

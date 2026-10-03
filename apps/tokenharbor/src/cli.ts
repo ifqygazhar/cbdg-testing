@@ -111,6 +111,7 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       stateFile: args.state ?? cfg.stateFile,
       limit: args.limit !== undefined ? args.limit : (cfg.limit > 0 ? cfg.limit : undefined),
       domain: args.domain ?? cfg.tempMailDomain,
+      pace: args.pace ?? cfg.pace,
       dryRun: args.dryRun,
     });
     return;
