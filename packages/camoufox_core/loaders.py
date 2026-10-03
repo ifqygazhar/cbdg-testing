@@ -37,20 +37,35 @@ def parse_proxy(line: str) -> Optional[Proxy]:
 
     # Format: host:port:user:pass
     parts = line.split(":")
-    if len(parts) == 4 and not line.startswith("http"):
+    if len(parts) == 4 and "://" not in line:
         host, port, user, pwd = parts
         return Proxy(server=f"http://{host}:{port}", username=user, password=pwd)
 
     # Format: user:pass@host:port
-    if "@" in line and not line.startswith("http"):
+    if "@" in line and "://" not in line:
         line = f"http://{line}"
 
-    if line.startswith("http://") or line.startswith("https://") or line.startswith("socks5://"):
+    valid_schemes = ("http://", "https://", "socks://", "socks4://", "socks4a://", "socks5://", "socks5h://")
+    if any(line.startswith(scheme) for scheme in valid_schemes):
         parsed = urlparse(line)
-        server = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}" if parsed.port else f"{parsed.scheme}://{parsed.hostname}"
+        port = parsed.port
+        if not port:
+            netloc = parsed.netloc.split("@")[-1]
+            if ":" in netloc:
+                port_str = netloc.split(":")[-1]
+                if port_str.isdigit():
+                    port = int(port_str)
+            if not port:
+                if parsed.scheme == "https":
+                    port = 443
+                elif parsed.scheme.startswith("socks"):
+                    port = 1080
+                else:
+                    port = 80
+        server = f"{parsed.scheme}://{parsed.hostname}:{port}"
         return Proxy(server=server, username=parsed.username, password=parsed.password)
 
-    if len(parts) == 2:
+    if len(parts) == 2 and "://" not in line:
         return Proxy(server=f"http://{parts[0]}:{parts[1]}")
 
     return None

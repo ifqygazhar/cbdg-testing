@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  checkSocks,
   judge,
   mask,
   parseProxyFile,
@@ -72,7 +73,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
 /** Our own address, so a proxy that does not actually proxy can be caught. */
 async function directIp(url: string, timeoutMs: number): Promise<string | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), tls: { rejectUnauthorized: false } });
     return readExitIp(await res.text());
   } catch {
     return null;
@@ -81,11 +82,16 @@ async function directIp(url: string, timeoutMs: number): Promise<string | null> 
 
 async function checkOne(entry: ProxyEntry, opts: CheckOptions, ourIp: string | null): Promise<CheckResult> {
   const started = Date.now();
+  if (entry.protocol.startsWith("socks")) {
+    return checkSocks(entry, opts, ourIp);
+  }
+
   try {
     const res = await fetch(opts.url, {
       proxy: entry.url,
       signal: AbortSignal.timeout(opts.timeoutMs),
       headers: { "user-agent": "curl/8.5.0" },
+      tls: { rejectUnauthorized: false },
     });
     const ms = Date.now() - started;
     if (!res.ok) return { entry, alive: false, ms, reason: `HTTP ${res.status}` };

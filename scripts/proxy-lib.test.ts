@@ -4,6 +4,8 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  checkSocks,
+  decodeChunked,
   judge,
   mask,
   parseProxyFile,
@@ -21,6 +23,11 @@ const entry = (hostPort: string) => ({
   raw: `http://u:p@${hostPort}`,
   url: `http://u:p@${hostPort}`,
   hostPort,
+  protocol: "http:",
+  hostname: hostPort.split(":")[0],
+  port: hostPort.split(":")[1],
+  username: "u",
+  password: "p",
 });
 const result = (hostPort: string, ms: number, alive = true): CheckResult => ({
   entry: entry(hostPort),
@@ -33,6 +40,31 @@ describe("parsing", () => {
   it("accepts both shapes the harvest can produce", () => {
     expect(parseProxyLine("http://u:p@1.2.3.4:8080")?.hostPort).toBe("1.2.3.4:8080");
     expect(parseProxyLine("5.6.7.8:3128")?.url).toBe("http://5.6.7.8:3128");
+  });
+  it("accepts credential-less HTTPS and custom/default ports", () => {
+    const p1 = parseProxyLine("https://37.203.35.19:443");
+    expect(p1?.hostPort).toBe("37.203.35.19:443");
+    expect(p1?.protocol).toBe("https:");
+    expect(p1?.username).toBeUndefined();
+
+    const p2 = parseProxyLine("https://37.203.35.25:443");
+    expect(p2?.hostPort).toBe("37.203.35.25:443");
+    expect(p2?.url).toBe("https://37.203.35.25:443");
+  });
+  it("accepts socks4, socks5, and host:port:user:pass formats", () => {
+    const s4 = parseProxyLine("socks4://1.2.3.4:1080");
+    expect(s4?.protocol).toBe("socks4:");
+    expect(s4?.hostPort).toBe("1.2.3.4:1080");
+
+    const s5 = parseProxyLine("socks5://usr:pwd@5.6.7.8:1080");
+    expect(s5?.protocol).toBe("socks5:");
+    expect(s5?.username).toBe("usr");
+    expect(s5?.password).toBe("pwd");
+
+    const hpup = parseProxyLine("10.0.0.1:8080:alice:bob");
+    expect(hpup?.url).toBe("http://alice:bob@10.0.0.1:8080");
+    expect(hpup?.username).toBe("alice");
+    expect(hpup?.password).toBe("bob");
   });
   it("rejects what cannot be dialled", () => {
     expect(parseProxyLine("bukan-proxy")).toBeNull();
@@ -49,6 +81,9 @@ describe("parsing", () => {
   });
   it("mask hides the password but keeps the endpoint readable", () => {
     expect(mask("http://user:s3cret@1.2.3.4:8080")).toBe("http://user:***@1.2.3.4:8080");
+    expect(mask("socks5://admin:pass123@1.2.3.4:1080")).toBe("socks5://admin:***@1.2.3.4:1080");
+    expect(mask("1.2.3.4:8080:admin:pass123")).toBe("1.2.3.4:8080:admin:***");
+    expect(mask("https://37.203.35.19:443")).toBe("https://37.203.35.19:443");
     expect(mask("1.2.3.4:8080")).toBe("1.2.3.4:8080");
   });
 });
@@ -135,5 +170,21 @@ describe("options", () => {
     expect(o.timeoutMs).toBe(3000);
     expect(o.concurrency).toBe(4);
     expect(o.force).toBe(true);
+  });
+});
+
+describe("chunked decoding", () => {
+  it("decodes valid chunked responses", () => {
+    const chunked = "d\r\nHello, world!\r\n0\r\n\r\n";
+    expect(decodeChunked(chunked)).toBe("Hello, world!");
+  });
+});
+
+describe("socks checking", () => {
+  it("marks invalid or unreachable socks proxy as dead with a reason", async () => {
+    const entry = parseProxyLine("socks5://127.0.0.1:59998")!;
+    const res = await checkSocks(entry, { url: "http://ipv4.webshare.io/", timeoutMs: 500 }, null);
+    expect(res.alive).toBe(false);
+    expect(res.reason).toBeDefined();
   });
 });

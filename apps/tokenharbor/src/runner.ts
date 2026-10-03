@@ -10,9 +10,25 @@ import type { AccountSession } from "./flow/steps.js";
 function parseProxyString(proxyStr: string | null | undefined) {
   if (!proxyStr) return null;
   try {
-    const u = new URL(proxyStr.includes("://") ? proxyStr : `http://${proxyStr}`);
+    let norm = proxyStr.trim();
+    if (!norm.includes("://")) {
+      const parts = norm.split(":");
+      if (parts.length === 4) {
+        norm = `http://${encodeURIComponent(parts[2])}:${encodeURIComponent(parts[3])}@${parts[0]}:${parts[1]}`;
+      } else {
+        norm = `http://${norm}`;
+      }
+    }
+    const u = new URL(norm);
+    let port = u.port;
+    if (!port) {
+      const authority = norm.split("://")[1]?.split("/")[0] || "";
+      const hostPart = authority.includes("@") ? authority.split("@")[1] : authority;
+      const m = hostPart.match(/:(\d+)$/);
+      if (m) port = m[1];
+    }
     return {
-      server: `${u.protocol}//${u.host}`,
+      server: port ? `${u.protocol}//${u.hostname}:${port}` : `${u.protocol}//${u.host}`,
       username: u.username ? decodeURIComponent(u.username) : undefined,
       password: u.password ? decodeURIComponent(u.password) : undefined,
     };

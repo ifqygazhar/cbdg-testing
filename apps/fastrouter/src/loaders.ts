@@ -51,12 +51,28 @@ export function loadProxies(file: string): ProxySeed[] {
   const out: ProxySeed[] = [];
   for (const line of readLines(file)) {
     try {
-      const u = new URL(line.includes("://") ? line : `http://${line}`);
+      let norm = line.trim();
+      if (!norm.includes("://")) {
+        const parts = norm.split(":");
+        if (parts.length === 4) {
+          norm = `http://${encodeURIComponent(parts[2])}:${encodeURIComponent(parts[3])}@${parts[0]}:${parts[1]}`;
+        } else {
+          norm = `http://${norm}`;
+        }
+      }
+      const u = new URL(norm);
+      let port = u.port;
+      if (!port) {
+        const authority = norm.split("://")[1]?.split("/")[0] || "";
+        const hostPart = authority.includes("@") ? authority.split("@")[1] : authority;
+        const m = hostPart.match(/:(\d+)$/);
+        if (m) port = m[1];
+      }
       // require a port (or embedded credentials) — hammers down entries like
       // "http://junk" that URL parses into a valid-looking bare host.
-      if (!u.port && !u.username) throw new Error("no port");
+      if (!port && !u.username) throw new Error("no port");
       out.push({
-        server: `${u.protocol}//${u.host}`,
+        server: port ? `${u.protocol}//${u.hostname}:${port}` : `${u.protocol}//${u.host}`,
         // URL-encodes them on the way in, so decode.
         username: u.username ? decodeURIComponent(u.username) : undefined,
         password: u.password ? decodeURIComponent(u.password) : undefined,
