@@ -40,10 +40,11 @@ export async function stepSignUp(
   const pace = cfg.pace ?? "human";
   const mult = pace === "careful" ? 1.4 : pace === "fast" ? 0.85 : 1.0;
 
-  await utils.sleep(Math.round(2000 * mult));
+  await page.goto(DEFAULT_SIGNUP_URL, { waitUntil: "domcontentloaded", timeout: 35000 });
+  await utils.sleep(Math.round(2500 * mult));
 
   await dismissCookieBanners(page, log);
-  await utils.sleep(Math.round(800 * mult));
+  await utils.sleep(Math.round(1000 * mult));
 
   log("info", "filling signup form with human cadence", { email: session.email, pace });
   const emailInput = await dom.waitForAnySelector(page, [SELECTORS.emailInput], 10000);
@@ -77,46 +78,70 @@ export async function stepSignUp(
   }
   await passInput.dispose().catch(() => {});
 
-  // Natural human pause before submit: 3.5 - 5.5 seconds (prevents speed warning)
+  // Natural human pause before submit: 4.0 - 6.0 seconds (prevents speed warning)
   log("info", "pausing naturally before submit (human verification)");
-  await utils.sleep(Math.round(utils.randomInt(3500, 5500) * mult));
+  await utils.sleep(Math.round(utils.randomInt(4000, 6000) * mult));
 
-  // Click submit (Create account)
-  log("info", "submitting signup form");
-  const submitBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 10000);
-  if (!submitBtn) {
-    throw new Error("Create account button not found");
-  }
-  await submitBtn.click();
-
-  // Check if rate-limited by speed check ("take a breath and try again")
-  await utils.sleep(2000);
-  const checkSpeedWarning = async () => {
-    return page.evaluate(() => {
-      const el = document.querySelector('[role="alert"], .text-destructive, .text-red-500');
-      const text = el?.textContent?.trim() || "";
-      if (/fast|breath|slow down/i.test(text)) return text;
-      return null;
-    });
-  };
-
-  const speedWarning = await checkSpeedWarning();
-  if (speedWarning) {
-    log("warn", `Speed warning detected: "${speedWarning}". Taking a breath (waiting 7-9s) and retrying submit...`);
-    await utils.sleep(Math.round(utils.randomInt(7000, 9000)));
-    const retryBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 5000);
-    if (retryBtn) {
-      log("info", "retrying Create account submit after taking a breath");
-      await retryBtn.click();
-      await retryBtn.dispose().catch(() => {});
+  // Submit loop with retry on speed limit ("take a breath")
+  const maxSubmitAttempts = 3;
+  for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
+    log("info", `submitting signup form (attempt ${attempt}/${maxSubmitAttempts})`);
+    const submitBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 10000);
+    if (!submitBtn) {
+      if (page.url().includes("/dashboard")) break;
+      throw new Error("Create account button not found");
     }
+    await submitBtn.click();
+    await submitBtn.dispose().catch(() => {});
+
+    // Poll for dashboard redirect or speed warning / error box
+    let speedWarning: string | null = null;
+    let otherError: string | null = null;
+
+    for (let i = 0; i < 14; i++) {
+      if (page.url().includes("/dashboard")) break;
+      const foundError = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return el ? el.textContent?.trim() || null : null;
+      }, SELECTORS.errorMessage);
+
+      if (foundError) {
+        if (/fast|breath|slow down|too many attempts/i.test(foundError)) {
+          speedWarning = foundError;
+          break;
+        } else if (!/sending|checking|one moment/i.test(foundError)) {
+          otherError = foundError;
+          break;
+        }
+      }
+      await utils.sleep(500);
+    }
+
+    if (page.url().includes("/dashboard")) break;
+
+    if (speedWarning) {
+      if (attempt < maxSubmitAttempts) {
+        const waitSec = 12 + attempt * 3;
+        log("warn", `Speed warning detected: "${speedWarning}". Taking a breath (waiting ${waitSec}s) and retrying submit...`);
+        await utils.sleep(waitSec * 1000);
+        continue;
+      } else {
+        throw new Error(`Rate limited by TokenHarbor (speed check): ${speedWarning}. IP may need cooldown or rotation.`);
+      }
+    }
+
+    if (otherError) {
+      throw new Error(`Signup rejected: ${otherError}`);
+    }
+
+    break;
   }
 
   // Wait for redirect to dashboard or navigation
   const reachedDashboard = await Promise.race([
-    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).then(() => true).catch(() => false),
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 25000 }).then(() => true).catch(() => false),
     (async () => {
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 25; i++) {
         if (page.url().includes("/dashboard")) return true;
         await utils.sleep(500);
       }
@@ -125,11 +150,10 @@ export async function stepSignUp(
   ]);
 
   if (!reachedDashboard && !page.url().includes("/dashboard")) {
-    // If still on login page, check for errors
-    const errorText = await page.evaluate(() => {
-      const errEl = document.querySelector('[role="alert"], .text-destructive, .text-red-500');
+    const errorText = await page.evaluate((sel) => {
+      const errEl = document.querySelector(sel);
       return errEl ? errEl.textContent?.trim() : null;
-    });
+    }, SELECTORS.errorMessage);
     if (errorText) {
       throw new Error(`Signup rejected: ${errorText}`);
     }

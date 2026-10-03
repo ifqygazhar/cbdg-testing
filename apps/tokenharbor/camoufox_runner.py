@@ -123,63 +123,104 @@ async def run_single_account(
                 max_delay_ms=120,
             )
 
-            # Natural human hesitation/verification before clicking submit (3.5 - 5.5s)
+            # Natural human hesitation/verification before clicking submit (4.0 - 6.0s)
             # This prevents TokenHarbor's "You're doing that a bit fast — take a breath" anti-bot warning
             logger.info("pausing naturally before submit (human verification)...")
-            await human_delay(int(3500 * delay_mult), int(5500 * delay_mult))
+            await human_delay(int(4000 * delay_mult), int(6000 * delay_mult))
 
-            # Submit signup
-            submit_btn = await page.wait_for_selector(
-                'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]',
-                timeout=12000,
-            )
-            if not submit_btn:
-                raise RuntimeError("Create account submit button not found")
+            # Submit signup with retry handling for speed warnings ("take a breath")
+            max_submit_retries = 3
+            submitted_successfully = False
 
-            # Move mouse smoothly over submit button
-            try:
-                box = await submit_btn.bounding_box()
-                if box:
-                    await page.mouse.move(
-                        box["x"] + box["width"] * random.uniform(0.3, 0.7),
-                        box["y"] + box["height"] * random.uniform(0.3, 0.7),
-                        steps=random.randint(6, 14),
+            for submit_attempt in range(1, max_submit_retries + 1):
+                submit_btn = await page.wait_for_selector(
+                    'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]',
+                    timeout=12000,
+                )
+                if not submit_btn:
+                    if "/dashboard" in page.url:
+                        submitted_successfully = True
+                        break
+                    raise RuntimeError("Create account submit button not found")
+
+                # Move mouse smoothly over submit button
+                try:
+                    box = await submit_btn.bounding_box()
+                    if box:
+                        await page.mouse.move(
+                            box["x"] + box["width"] * random.uniform(0.3, 0.7),
+                            box["y"] + box["height"] * random.uniform(0.3, 0.7),
+                            steps=random.randint(6, 14),
+                        )
+                        await human_delay(300, 700)
+                except Exception:
+                    pass
+
+                logger.info(f"clicking Create account submit button (attempt {submit_attempt}/{max_submit_retries})...")
+                await submit_btn.click()
+
+                # Resolve Turnstile if challenged
+                await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
+
+                # Check for dashboard redirect or speed warning / error box
+                speed_rate_limited = False
+                error_found = None
+
+                for _ in range(14):  # poll for up to ~7 seconds
+                    if "/dashboard" in page.url:
+                        submitted_successfully = True
+                        break
+
+                    err_el = await page.query_selector(
+                        'form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500, p:has-text("fast"), div:has-text("breath")'
                     )
-                    await human_delay(400, 800)
-            except Exception:
-                pass
+                    if err_el:
+                        raw_msg = (await err_el.text_content() or "").strip()
+                        if any(w in raw_msg.lower() for w in ["fast", "breath", "slow down", "try again in a minute", "too many attempts"]):
+                            speed_rate_limited = True
+                            error_found = raw_msg
+                            break
+                        elif raw_msg and not any(w in raw_msg.lower() for w in ["sending", "checking", "one moment"]):
+                            error_found = raw_msg
+                            break
 
-            logger.info("clicking Create account submit button...")
-            await submit_btn.click()
+                    await asyncio.sleep(0.5)
 
-            # Resolve Turnstile if challenged
-            await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
-
-            # Check if rate-limited by speed check ("take a breath and try again")
-            await human_delay(1500, 2500)
-            err_el = await page.query_selector('[role="alert"], .text-destructive, .text-red-500, p:has-text("fast"), div:has-text("breath")')
-            if err_el:
-                err_msg = (await err_el.text_content() or "").strip()
-                if any(w in err_msg.lower() for w in ["fast", "breath", "slow down", "try again"]):
-                    logger.warn(f"Speed warning detected: '{err_msg}'. Taking a breath (waiting 7-9s) and retrying submit...")
-                    await human_delay(7000, 9500)
-                    retry_btn = await page.query_selector(
-                        'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]'
-                    )
-                    if retry_btn:
-                        logger.info("Retrying Create account submit after taking a breath...")
-                        await retry_btn.click()
-                        await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
-
-            # Wait for dashboard transition
-            logger.info("waiting for dashboard redirection...")
-            for _ in range(30):
                 if "/dashboard" in page.url:
+                    submitted_successfully = True
+                    break
+
+                if speed_rate_limited:
+                    if submit_attempt < max_submit_retries:
+                        cooldown_secs = 12 + submit_attempt * 3
+                        logger.warn(f"Speed warning detected: '{error_found}'. Taking a breath (waiting {cooldown_secs}s) before retrying...")
+                        try:
+                            viewport = page.viewport_size or {"width": 1280, "height": 800}
+                            await page.mouse.move(random.randint(100, viewport["width"] - 100), random.randint(100, viewport["height"] - 100))
+                        except Exception:
+                            pass
+                        await human_delay(cooldown_secs * 1000, (cooldown_secs + 2) * 1000)
+                        continue
+                    else:
+                        raise RuntimeError(f"Rate limited by TokenHarbor (speed check): {error_found}. IP may need cooldown or rotation.")
+
+                if error_found:
+                    raise RuntimeError(f"Signup error: {error_found}")
+
+                break
+
+            # Wait for dashboard transition if not already confirmed
+            logger.info("waiting for dashboard redirection...")
+            for _ in range(25):
+                if "/dashboard" in page.url:
+                    submitted_successfully = True
                     break
                 await asyncio.sleep(0.5)
 
             if "/dashboard" not in page.url:
-                err_el = await page.query_selector('[role="alert"], .text-destructive, .text-red-500')
+                err_el = await page.query_selector(
+                    'form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500'
+                )
                 if err_el:
                     err_msg = (await err_el.text_content() or "").strip()
                     raise RuntimeError(f"Signup error: {err_msg}")
