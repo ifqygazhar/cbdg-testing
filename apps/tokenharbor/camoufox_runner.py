@@ -23,6 +23,7 @@ if REPO_ROOT not in sys.path:
 
 from packages.camoufox_core import (
     launch_camoufox,
+    get_browser_fingerprint_info,
     human_delay,
     human_type,
     load_accounts,
@@ -185,6 +186,11 @@ async def run_single_account(
         async with browser_ctx as browser:
             page = await browser.new_page(ignore_https_errors=True)
             page.set_default_timeout(35000)
+
+            # Log active anonymous fingerprint for this process/worker
+            fp = await get_browser_fingerprint_info(page)
+            if fp:
+                logger.info(f"🛡️ Camoufox Fingerprint: OS={fp.get('platform')} | Screen={fp.get('screen')} | Viewport={fp.get('viewport')} | Cores={fp.get('cores')} | UA={fp.get('ua')}")
 
             # ── 1. Navigate to Sign Up ──────────────────────────────────────
             logger.info(f"navigating to {DEFAULT_SIGNUP_URL}")

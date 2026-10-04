@@ -68,15 +68,70 @@ def setup_process_signals():
         except (ValueError, OSError):
             pass
 
+POPULAR_RESOLUTIONS = [
+    (1920, 1080),
+    (1366, 768),
+    (1536, 864),
+    (1440, 900),
+    (1600, 900),
+    (2560, 1440),
+    (1680, 1050),
+    (1280, 800),
+    (1920, 1200),
+]
+
+def generate_random_fingerprint_options() -> Dict[str, Any]:
+    """
+    Generates randomized OS, screen window, humanize, and locale parameters
+    to ensure every worker process and account gets a unique, anonymous fingerprint.
+    """
+    # Weighted OS selection: Windows (60%), macOS (30%), Linux (10%)
+    os_choice = random.choices(["windows", "macos", "linux"], weights=[0.60, 0.30, 0.10], k=1)[0]
+
+    # Randomize realistic window dimensions
+    base_w, base_h = random.choice(POPULAR_RESOLUTIONS)
+    jitter_w = max(1024, base_w - random.randint(0, 100))
+    jitter_h = max(700, base_h - random.randint(40, 120))
+
+    # Randomize humanize cursor speed between 0.8s and 1.8s
+    humanize_speed = round(random.uniform(0.8, 1.8), 2)
+
+    return {
+        "os": os_choice,
+        "window": (jitter_w, jitter_h),
+        "humanize": humanize_speed,
+    }
+
+async def get_browser_fingerprint_info(page: Page) -> Dict[str, Any]:
+    """
+    Retrieves the active fingerprint information (UA, Platform, Screen, Viewport, Cores)
+    rendered inside the Camoufox page session.
+    """
+    try:
+        return await page.evaluate("""() => ({
+            ua: navigator.userAgent || 'unknown',
+            platform: navigator.platform || 'unknown',
+            cores: navigator.hardwareConcurrency || 0,
+            screen: (screen.width || 0) + 'x' + (screen.height || 0),
+            viewport: (window.innerWidth || 0) + 'x' + (window.innerHeight || 0),
+        })""")
+    except Exception:
+        return {}
+
 async def launch_camoufox(
     headless: bool = True,
     proxy: Optional[Proxy] = None,
     geoip: Union[bool, str] = True,
+    randomize_fingerprint: bool = True,
     **kwargs
 ) -> AsyncCamoufox:
     setup_process_signals()
+
+    fp_opts = generate_random_fingerprint_options() if randomize_fingerprint else {}
+
     launch_kwargs: Dict[str, Any] = {
         "headless": headless,
+        **fp_opts,
         **kwargs
     }
 

@@ -1,5 +1,7 @@
 from .browser import (
     launch_camoufox,
+    generate_random_fingerprint_options,
+    get_browser_fingerprint_info,
     human_delay,
     human_type,
     setup_process_signals,
@@ -15,6 +17,8 @@ from .tempmail import TempMailClient
 
 __all__ = [
     "launch_camoufox",
+    "generate_random_fingerprint_options",
+    "get_browser_fingerprint_info",
     "human_delay",
     "human_type",
     "setup_process_signals",
