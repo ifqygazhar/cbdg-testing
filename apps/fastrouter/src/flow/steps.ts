@@ -16,6 +16,7 @@ import {
   dom,
   utils,
   resolvePace,
+  TempMailClient,
 } from "@ifqy/google-oauth";
 import { FlowState } from "../store.js";
 import { FlowError, type FlowCtx } from "./engine.js";
@@ -269,10 +270,196 @@ async function resolveTurnstileIfPresent(
   return solved;
 }
 
+const FIRST_NAMES = [
+  "James", "Sarah", "Alex", "David", "Emily", "Michael", "Emma", "Daniel",
+  "Sophia", "Matthew", "Olivia", "Andrew", "Grace", "Ethan", "Chloe", "Ryan",
+  "Liam", "Lucas", "Noah", "Ava", "Mia", "Oliver", "Benjamin", "Charlotte",
+] as const;
+const LAST_NAMES = [
+  "Miller", "Smith", "Johnson", "Davis", "Wilson", "Taylor", "Anderson", "Thomas",
+  "Jackson", "White", "Harris", "Martin", "Thompson", "Garcia", "Martinez", "Robinson",
+  "Clark", "Rodriguez", "Lewis", "Lee", "Walker", "Hall", "Allen", "Young",
+] as const;
+
+// ── s01-tempmail: Sign up via TempMail (Clerk email/password form) ─
+export async function s01SignupTempMail(ctx: FlowCtx): Promise<FlowState> {
+  const { browser, account, googleOAuth, cfg, log } = ctx;
+  const pace = resolvePace(cfg.pace);
+
+  log("info", `opening ${Selectors.signupUrl} for TempMail signup`);
+  await browser.page.goto(Selectors.signupUrl, { waitUntil: "domcontentloaded" });
+  await dismissCookieBanners(browser.page, googleOAuth);
+  await sleep(randomInt(pace.stepPauseMin, pace.stepPauseMax));
+
+  // 1. Resolve Cloudflare Turnstile if present on landing
+  await resolveTurnstileIfPresent(browser.page, log);
+
+  // 2. Wait for first name input
+  const firstNameInput = await waitForSelectorRecover(
+    browser.page,
+    Selectors.emailFirstName,
+    Math.min(cfg.signupFormTimeoutSec * 1000, 25_000),
+    { log, label: "first name input", pollMs: pace.pollMs },
+  );
+
+  if (!firstNameInput) {
+    const hasTurnstile = browser.page.frames().some((f) => f.url().includes("challenges.cloudflare.com"));
+    if (hasTurnstile) {
+      await resolveTurnstileIfPresent(browser.page, log, 15_000);
+    }
+  }
+
+  const fnEl = await firstVisible(browser.page, Selectors.emailFirstName);
+  if (!fnEl) {
+    throw new FlowError("SIGNUP_INPUT_MISSING", "FastRouter first name input not found");
+  }
+
+  const firstName = pick(FIRST_NAMES);
+  const lastName = pick(LAST_NAMES);
+  log("info", `filling signup details: ${firstName} ${lastName} <${account.email}>`);
+
+  await fillInput(browser.page, fnEl, firstName);
+  await fnEl.dispose().catch(() => {});
+  await sleep(randomInt(pace.pauseMin, pace.pauseMax));
+
+  const lnEl = await firstVisible(browser.page, Selectors.emailLastName);
+  if (lnEl) {
+    await fillInput(browser.page, lnEl, lastName);
+    await lnEl.dispose().catch(() => {});
+    await sleep(randomInt(pace.pauseMin, pace.pauseMax));
+  }
+
+  const emailEl = await firstVisible(browser.page, Selectors.emailAddressInput);
+  if (!emailEl) throw new FlowError("EMAIL_INPUT_MISSING", "email input not found");
+  await fillInput(browser.page, emailEl, account.email);
+  await emailEl.dispose().catch(() => {});
+  await sleep(randomInt(pace.pauseMin, pace.pauseMax));
+
+  const pwEl = await firstVisible(browser.page, Selectors.emailPasswordInput);
+  if (!pwEl) throw new FlowError("PASSWORD_INPUT_MISSING", "password input not found");
+  await fillInput(browser.page, pwEl, account.password);
+  await pwEl.dispose().catch(() => {});
+  await sleep(randomInt(pace.pauseMin, pace.pauseMax));
+
+  // Terms checkbox: button#acceptTerms[role="checkbox"]
+  const termsBtn = await firstVisible(browser.page, Selectors.emailTermsCheckbox);
+  if (termsBtn) {
+    const isChecked = await termsBtn
+      .evaluate((el) => {
+        const state = el.getAttribute("data-state") || el.getAttribute("aria-checked");
+        return state === "checked" || state === "true" || (el as HTMLInputElement).checked === true;
+      })
+      .catch(() => false);
+    if (!isChecked) {
+      await safeClick(browser.page, termsBtn);
+      await sleep(randomInt(pace.pauseMin, pace.pauseMax));
+    }
+    await termsBtn.dispose().catch(() => {});
+  }
+
+  // Hesitate naturally before submit
+  await sleep(randomInt(pace.pauseMin * 1.5, pace.pauseMax * 1.5));
+
+  // Click submit button: "Sign up"
+  const submitBtn = await firstVisible(browser.page, Selectors.emailSignupSubmit);
+  if (!submitBtn) throw new FlowError("SUBMIT_BUTTON_MISSING", "Sign up submit button not found");
+  log("info", "submitting signup form...");
+  await safeClick(browser.page, submitBtn);
+  await submitBtn.dispose().catch(() => {});
+  await sleep(randomInt(2000, 3500));
+
+  // Resolve Cloudflare Turnstile if Clerk presents a challenge on submit (div#clerk-captcha)
+  await resolveTurnstileIfPresent(browser.page, log, 25_000);
+
+  return FlowState.VERIFY_OTP;
+}
+
+// ── s01b: Verify 6-digit OTP code received from TempMail ──────────
+export async function s01bVerifyOtp(ctx: FlowCtx): Promise<FlowState> {
+  const { account, cfg, log } = ctx;
+  const pace = resolvePace(cfg.pace);
+  const app = await resolveAppPage(ctx);
+  await app.bringToFront().catch(() => {});
+
+  // Check if already redirected past verification (welcome or keys)
+  if (app.url().includes("/welcome") || (await app.$(Selectors.welcomeOrgName))) {
+    log("info", "already on welcome page — skipping OTP verification");
+    return FlowState.WELCOME;
+  }
+  if (app.url().includes("/keys") || (await app.$(Selectors.apiKeyName))) {
+    log("info", "already on keys dashboard — skipping OTP verification");
+    return FlowState.API_KEY;
+  }
+
+  log("info", `waiting for OTP verification screen on ${app.url()}...`);
+  const otpInput = await waitForSelectorRecover(
+    app,
+    Selectors.verifyOtpInput,
+    Math.min(cfg.signupFormTimeoutSec * 1000, 30_000),
+    { log, label: "OTP code input", pollMs: pace.pollMs },
+  );
+
+  if (!otpInput) {
+    const hasTurnstile = app.frames().some((f) => f.url().includes("challenges.cloudflare.com"));
+    if (hasTurnstile) {
+      await resolveTurnstileIfPresent(app, log, 15_000);
+    }
+    if (app.url().includes("/welcome") || (await app.$(Selectors.welcomeOrgName))) return FlowState.WELCOME;
+    if (app.url().includes("/keys") || (await app.$(Selectors.apiKeyName))) return FlowState.API_KEY;
+
+    await app.screenshot({ path: `${cfg.screenshotDir}/no-otp-${account.email.replace(/[^a-z0-9]/gi, "_")}.png` }).catch(() => {});
+    throw new FlowError("OTP_SCREEN_TIMEOUT", "verification code screen did not appear");
+  }
+
+  // Poll TempMail inbox for 6-digit OTP code
+  log("info", `polling TempMail inbox for verification code (${account.email})...`);
+  const tempMail = new TempMailClient({ defaultDomain: cfg.tempMailDomain });
+  const otpCode = await tempMail.waitForVerificationOtp(account.email, {
+    timeoutMs: 75_000,
+    intervalMs: 2500,
+  });
+  log("info", `received verification code from email: ${otpCode}`);
+
+  await fillInput(app, otpInput, otpCode);
+  await otpInput.dispose().catch(() => {});
+  await sleep(randomInt(pace.pauseMin, pace.pauseMax));
+
+  // Click "Verify & Continue"
+  const verifySubmit = await firstVisible(app, Selectors.verifyOtpSubmit);
+  if (verifySubmit) {
+    log("info", "clicking 'Verify & Continue' button...");
+    await safeClick(app, verifySubmit);
+    await verifySubmit.dispose().catch(() => {});
+    await sleep(2500);
+  }
+
+  // Resolve Turnstile if Clerk presents post-verification challenge
+  await resolveTurnstileIfPresent(app, log, 15_000);
+
+  // Wait for landing surface (welcome or keys)
+  const landingSurface = await waitForSelectorRecover(
+    app,
+    [Selectors.welcomeOrgName, Selectors.apiKeyName, 'a[href*="/keys"]'],
+    cfg.welcomeTimeoutSec * 1000,
+    { log, label: "post-otp landing surface", pollMs: pace.pollMs },
+  );
+
+  if (landingSurface) await landingSurface.dispose().catch(() => {});
+
+  if (app.url().includes("/welcome") || (await app.$(Selectors.welcomeOrgName))) {
+    return FlowState.WELCOME;
+  }
+  return FlowState.API_KEY;
+}
+
 // ── s01: sign-up → Sign up with Google → Google OAuth ───────────────
 export async function s01Signup(ctx: FlowCtx): Promise<FlowState> {
   const { browser, account, googleOAuth, cfg, log } = ctx;
   const pace = resolvePace(cfg.pace);
+
+  if (cfg.authMethod === "tempmail") {
+    return s01SignupTempMail(ctx);
+  }
 
   log("info", `opening ${Selectors.signupUrl}`);
   await browser.page.goto(Selectors.signupUrl, { waitUntil: "domcontentloaded" });
@@ -661,32 +848,43 @@ export async function s04CreateApiKey(ctx: FlowCtx): Promise<FlowState> {
     log("warn", `credit $1.00 not verified within timeout for ${account.email} (proceeding with key creation)`);
   }
 
-  // 2. Click "Create User Key" button
-  let createBtn = await firstVisible(page, [
-    'button:has-text("Create User Key")',
-    'button:has-text("Create Key")',
-  ]);
-  if (!createBtn) {
-    // Fall back to dom.clickByText
-    const clicked = await clickByText(page, Selectors.createKeyButton, googleOAuth);
-    if (!clicked) {
-      // Try searching any button containing "Create"
-      const btnHandle = await page.evaluateHandle(() => {
-        return Array.from(document.querySelectorAll("button")).find((b) =>
-          /create (user )?key/i.test((b.textContent || "").trim()),
-        );
-      });
-      const el = btnHandle.asElement();
-      if (el) {
-        createBtn = el as ElementHandle<Element>;
+  // 2. Click "Create User Key" button (if modal is not already open)
+  const isModalOpen = await page.evaluate(() => {
+    const codes = Array.from(document.querySelectorAll("code")).map((c) => (c.textContent || "").trim());
+    const hasKey = codes.some((k) => k.startsWith("sk-v1-") && !k.includes("...") && k.length >= 30);
+    const hasModal = !!document.querySelector('input#api_key_name, button[data-slot="button"]:has-text("Copy API Key"), div[class*="backdrop-blur"]');
+    return hasKey || hasModal;
+  }).catch(() => false);
+
+  if (!isModalOpen) {
+    let createBtn = await firstVisible(page, [
+      'button:has-text("Create User Key")',
+      'button:has-text("Create Key")',
+    ]);
+    if (!createBtn) {
+      // Fall back to dom.clickByText
+      const clicked = await clickByText(page, Selectors.createKeyButton, googleOAuth);
+      if (!clicked) {
+        // Try searching any button containing "Create"
+        const btnHandle = await page.evaluateHandle(() => {
+          return Array.from(document.querySelectorAll("button")).find((b) =>
+            /create (user )?key/i.test((b.textContent || "").trim()),
+          );
+        });
+        const el = btnHandle.asElement();
+        if (el) {
+          createBtn = el as ElementHandle<Element>;
+        }
       }
     }
-  }
 
-  if (createBtn) {
-    await safeClick(page, createBtn);
-    await createBtn.dispose().catch(() => {});
-    log("info", `clicked Create User Key for ${account.email}`);
+    if (createBtn) {
+      await safeClick(page, createBtn);
+      await createBtn.dispose().catch(() => {});
+      log("info", `clicked Create User Key for ${account.email}`);
+    }
+  } else {
+    log("info", `API key modal is already open for ${account.email}`);
   }
 
   // 3. Modal opens with Key Information and pre-generated key
@@ -778,6 +976,7 @@ export async function s04CreateApiKey(ctx: FlowCtx): Promise<FlowState> {
 
 export const STEPS: Record<string, (ctx: FlowCtx) => Promise<FlowState>> = {
   [FlowState.SIGNUP]: s01Signup,
+  [FlowState.VERIFY_OTP]: s01bVerifyOtp,
   [FlowState.COMPLETE_SIGNUP]: s02CompleteSignup,
   [FlowState.WELCOME]: s03Welcome,
   [FlowState.API_KEY]: s04CreateApiKey,

@@ -23,6 +23,10 @@ export function resolveProxySeed(cwd: string, explicit?: string): string {
 }
 
 export interface AppConfig {
+  authMethod: "tempmail" | "google";
+  tempMailDomain: string;
+  tempMailPassword?: string;
+  limit: number;
   workers: number;
   headless: boolean;
   pace: PaceName;
@@ -47,7 +51,18 @@ export interface AppConfig {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const cwd = process.cwd();
+  const gsuitePath = resolve(env.SEED_GSUITE || path.join(cwd, "gsuite.txt"));
+  const defaultAuth = env.FASTROUTER_AUTH === "google"
+    ? "google"
+    : (env.FASTROUTER_AUTH === "tempmail" || parseBool(env.FASTROUTER_TEMPMAIL, false) || !fs.existsSync(gsuitePath))
+      ? "tempmail"
+      : "google";
+
   return {
+    authMethod: defaultAuth,
+    tempMailDomain: env.TEMPMAIL_DOMAIN || "ifqy.net",
+    tempMailPassword: env.FASTROUTER_PASSWORD || "FastRouter@2026!",
+    limit: int(env.LIMIT, 0),
     workers: int(env.WORKERS, 1),
     headless: parseBool(env.HEADLESS, false),
     pace: isPaceName(env.PACE) ? env.PACE : "human",
@@ -64,7 +79,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     welcomeTimeoutSec: int(env.FASTROUTER_WELCOME_TIMEOUT_SEC, 60),
     apiKeyTimeoutSec: int(env.FASTROUTER_API_KEY_TIMEOUT_SEC, 180),
     creditsTimeoutSec: int(env.FASTROUTER_CREDITS_TIMEOUT_SEC, 30),
-    seedGsuite: resolve(env.SEED_GSUITE || path.join(cwd, "gsuite.txt")),
+    seedGsuite: gsuitePath,
     seedProxy: resolveProxySeed(cwd, env.SEED_PROXY),
     stateFile: resolve(env.FASTROUTER_STATE_FILE || path.join(cwd, "state-fastrouter.jsonl")),
     resultSuccessFile: resolve(env.FASTROUTER_RESULT_SUCCESS_FILE || path.join(cwd, "akun-result-fastrouter.txt")),

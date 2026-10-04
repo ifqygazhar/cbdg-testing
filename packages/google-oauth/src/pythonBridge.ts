@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn, execSync } from "node:child_process";
 
 /**
@@ -9,7 +11,9 @@ export function findCamoufoxPython(): string {
   if (process.env.CAMOUFOX_PYTHON && fs.existsSync(process.env.CAMOUFOX_PYTHON)) {
     return process.env.CAMOUFOX_PYTHON;
   }
+  const home = os.homedir();
   const knownPaths = [
+    path.join(home, ".venvs", "camoufox", "bin", "python"),
     "/home/azhar/.venvs/camoufox/bin/python",
     process.env.VIRTUAL_ENV ? `${process.env.VIRTUAL_ENV}/bin/python` : "",
     "/usr/bin/python3",
@@ -45,6 +49,8 @@ export interface PythonRunnerOptions {
   pace?: string;
   dryRun?: boolean;
   workers?: number;
+  auth?: string;
+  password?: string;
 }
 
 /**
@@ -108,6 +114,8 @@ export function spawnPythonRunner(runnerPath: string, opts: PythonRunnerOptions)
   if (opts.limit !== undefined) args.push("--limit", String(opts.limit));
   if (opts.domain) args.push("--domain", opts.domain);
   if (opts.pace) args.push("--pace", opts.pace);
+  if (opts.auth) args.push("--auth", opts.auth);
+  if (opts.password) args.push("--password", opts.password);
   if (opts.workers && opts.workers > 1) args.push("--workers", String(opts.workers));
 
   console.log(`[engine] Delegating to Python Camoufox (${pythonBin})...`);

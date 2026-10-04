@@ -12,6 +12,53 @@ export const Selectors = {
     'button[aria-label*="Google" i]',
   ] as string[],
 
+  // signup.html — Email / Password signup form
+  emailFirstName: [
+    'input[placeholder="John"]',
+    'input[placeholder*="John" i]',
+    'input[name="firstName"]',
+  ] as string[],
+  emailLastName: [
+    'input[placeholder="Doe"]',
+    'input[placeholder*="Doe" i]',
+    'input[name="lastName"]',
+  ] as string[],
+  emailAddressInput: [
+    'input[type="email"]',
+    'input[placeholder="Enter your email address"]',
+    'input[placeholder*="email" i]',
+    'input[name="email"]',
+  ] as string[],
+  emailPasswordInput: [
+    'input[type="password"]',
+    'input[placeholder="At least 8 characters"]',
+    'input[placeholder*="characters" i]',
+    'input[name="password"]',
+  ] as string[],
+  emailTermsCheckbox: [
+    'button#acceptTerms[role="checkbox"]',
+    'button#acceptTerms',
+    '#acceptTerms',
+    'input#acceptTerms',
+  ] as string[],
+  emailSignupSubmit: [
+    'form button[type="submit"]',
+    'button[type="submit"]',
+  ] as string[],
+
+  // verif-email-tempmail.html — "Check your email" verification screen
+  verifyEmailHeading: /check your email/i,
+  verifyOtpInput: [
+    'input[placeholder="000000"]',
+    'input[maxlength="6"]',
+    'input[class*="tracking-widest"]',
+  ] as string[],
+  verifyOtpSubmit: [
+    'button[type="submit"]:has-text("Verify & Continue")',
+    'button[type="submit"]',
+  ] as string[],
+  verifyOtpResend: 'button:has-text("Resend code")',
+
   // complete-signup.html — https://fastrouter.ai/sign-up/continue
   completeSignupUrl: "https://fastrouter.ai/sign-up/continue",
   completeSignupCheckbox: "input#legal_accepted",
@@ -58,3 +105,7 @@ export const API_KEY_RE = /^sk-v1-[A-Za-z0-9_-]{20,}$/;
 
 /** Minimum length before a <code> blob is treated as a valid FastRouter key. */
 export const API_KEY_MIN_LEN = 25;
+
+/** FastRouter 6-digit OTP verification code pattern */
+export const OTP_CODE_RE = /^\d{6}$/;
+

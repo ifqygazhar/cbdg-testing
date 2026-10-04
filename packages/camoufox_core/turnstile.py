@@ -15,7 +15,51 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
     4. input[name='cf-turnstile-response'] container
     5. page.frames matching challenges.cloudflare.com
     """
-    # ── Source 1: Standard iframe locator ────────────────────────────
+    # ── Source 1: Check page.frames (Most reliable, pierces closed shadow DOM) ──
+    try:
+        for f in page.frames:
+            url = f.url or ""
+            if "challenges.cloudflare.com" in url or "turnstile" in url:
+                # 1a. Try to locate specific checkbox or label element inside frame
+                for sel in [
+                    "input[type='checkbox']",
+                    "span.mark",
+                    ".ctp-checkbox-label",
+                    "#challenge-stage",
+                    ".cb-lb",
+                ]:
+                    try:
+                        loc = f.locator(sel).first
+                        if await loc.count() > 0:
+                            b = await loc.bounding_box()
+                            if b and b["width"] > 0 and b["height"] > 0:
+                                if b["width"] > 60:
+                                    # Large container or label: checkbox is on the left (~32px in)
+                                    click_x = b["x"] + 32
+                                    click_y = b["y"] + (b["height"] / 2)
+                                else:
+                                    click_x = b["x"] + (b["width"] / 2)
+                                    click_y = b["y"] + (b["height"] / 2)
+                                return {"x": click_x, "y": click_y, "source": f"frame_locator({sel})", "box": b}
+                    except Exception:
+                        pass
+
+                # 1b. Use frame_element bounding box
+                try:
+                    el = await f.frame_element()
+                    box = await el.bounding_box()
+                    if box and box["width"] >= 80 and box["height"] >= 20:
+                        # In standard Turnstile widget (300px to 380px wide, ~65-80px high):
+                        # The checkbox square is centered at ~34px from the left edge of the iframe
+                        click_x = box["x"] + 34
+                        click_y = box["y"] + (box["height"] / 2)
+                        return {"x": click_x, "y": click_y, "source": "frame_element", "box": box}
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # ── Source 2: Direct iframe locator on page ──────────────────────
     try:
         turnstile_loc = page.locator(
             "iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile'], iframe[title*='Cloudflare' i], iframe[title*='Turnstile' i]"
@@ -24,36 +68,64 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
         for i in range(count):
             ifr = turnstile_loc.nth(i)
             box = await ifr.bounding_box()
-            if box and box["width"] >= 100 and box["height"] >= 25:
-                click_x = box["x"] + min(32, int(box["width"] * 0.12))
+            if box and box["width"] >= 80 and box["height"] >= 20:
+                click_x = box["x"] + 34
                 click_y = box["y"] + (box["height"] / 2)
                 return {"x": click_x, "y": click_y, "source": "iframe_locator", "box": box}
     except Exception:
         pass
 
-    # ── Source 2: Clerk captcha container (#clerk-captcha) ───────────
+    # ── Source 3: Clerk shadow DOM evaluation ────────────────────────
+    try:
+        box = await page.evaluate("""() => {
+            const container = document.querySelector('#clerk-captcha, [data-cl-interactive="true"]');
+            if (!container) return null;
+            let ifr = container.querySelector('iframe');
+            if (!ifr && container.shadowRoot) {
+                ifr = container.shadowRoot.querySelector('iframe');
+            }
+            if (!ifr) {
+                for (const child of container.querySelectorAll('*')) {
+                    if (child.shadowRoot) {
+                        ifr = child.shadowRoot.querySelector('iframe');
+                        if (ifr) break;
+                    }
+                }
+            }
+            if (ifr) {
+                const r = ifr.getBoundingClientRect();
+                if (r.width >= 80 && r.height >= 20) {
+                    return { x: r.left, y: r.top, width: r.width, height: r.height };
+                }
+            }
+            return null;
+        }""")
+        if box:
+            click_x = box["x"] + 34
+            click_y = box["y"] + (box["height"] / 2)
+            return {"x": click_x, "y": click_y, "source": "clerk_shadow_iframe", "box": box}
+    except Exception:
+        pass
+
+    # ── Source 4: Clerk captcha container (#clerk-captcha) ───────────
     try:
         clerk_loc = page.locator("#clerk-captcha, [data-cl-interactive='true']")
         if await clerk_loc.count() > 0:
             el = clerk_loc.first
             box = await el.bounding_box()
-            # If the clerk-captcha container is visible (height >= 30)
             if box and box["height"] >= 30 and box["width"] >= 80:
-                # The Turnstile widget is centered horizontally inside #clerk-captcha
-                # Standard widget width is ~300px to 370px
                 widget_w = min(360, box["width"])
                 widget_left = box["x"] + (box["width"] - widget_w) / 2
-                click_x = widget_left + 28
+                click_x = widget_left + 42
                 click_y = box["y"] + (box["height"] / 2)
                 return {"x": click_x, "y": click_y, "source": "clerk_captcha", "box": box}
     except Exception:
         pass
 
-    # ── Source 3: "Security check" card or verification text ─────────
+    # ── Source 5: "Security check" card or verification text ─────────
     try:
         sec_loc = page.locator("text=/Security check/i, text=/Complete this verification/i")
         if await sec_loc.count() > 0:
-            # Find the parent card containing the security check
             card = sec_loc.first.locator("xpath=ancestor::div[contains(@class, 'bg-white') or contains(@class, 'rounded') or contains(@class, 'border')][1]")
             if await card.count() == 0:
                 card = sec_loc.first.locator("xpath=..")
@@ -61,13 +133,13 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
             if box and box["height"] >= 60 and box["width"] >= 150:
                 widget_w = min(360, box["width"] - 40)
                 widget_left = box["x"] + (box["width"] - widget_w) / 2
-                click_x = widget_left + 28
-                click_y = box["y"] + box["height"] - 35
+                click_x = widget_left + 48
+                click_y = box["y"] + box["height"] - 38
                 return {"x": click_x, "y": click_y, "source": "security_card", "box": box}
     except Exception:
         pass
 
-    # ── Source 4: Hidden response input parent container ─────────────
+    # ── Source 6: Hidden response input parent container ─────────────
     try:
         resp_input = page.locator("input[name='cf-turnstile-response']")
         if await resp_input.count() > 0:
@@ -78,26 +150,9 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
             if box and box["height"] >= 30 and box["width"] >= 80:
                 widget_w = min(360, box["width"])
                 widget_left = box["x"] + (box["width"] - widget_w) / 2
-                click_x = widget_left + 28
+                click_x = widget_left + 42
                 click_y = box["y"] + (box["height"] / 2)
                 return {"x": click_x, "y": click_y, "source": "response_input_parent", "box": box}
-    except Exception:
-        pass
-
-    # ── Source 5: Check page.frames ──────────────────────────────────
-    try:
-        for f in page.frames:
-            url = f.url or ""
-            if "challenges.cloudflare.com" in url or "turnstile" in url:
-                try:
-                    el = await f.frame_element()
-                    box = await el.bounding_box()
-                    if box and box["width"] >= 100 and box["height"] >= 25:
-                        click_x = box["x"] + min(32, int(box["width"] * 0.12))
-                        click_y = box["y"] + (box["height"] / 2)
-                        return {"x": click_x, "y": click_y, "source": "frame_element", "box": box}
-                except Exception:
-                    pass
     except Exception:
         pass
 
@@ -171,12 +226,16 @@ async def resolve_turnstile_if_present(
                 if logger:
                     logger.warn(f"[turnstile] Mouse click gagal: {e}")
 
-            # ── 2. Click with slight horizontal offset if needed ──────────
-            try:
-                await asyncio.sleep(0.3)
-                await page.mouse.click(click_x + 8, click_y)
-            except Exception:
-                pass
+            # ── 2. Click with horizontal offsets into the active label area ─
+            # In Cloudflare Turnstile, the entire label (.ctp-checkbox-label)
+            # spanning both the checkbox square and the verification text is
+            # interactive. Offsets ensure hitting the active target even with styling variations.
+            for offset_x in [16, 32]:
+                try:
+                    await asyncio.sleep(0.18)
+                    await page.mouse.click(click_x + offset_x, click_y)
+                except Exception:
+                    pass
 
             # ── 3. Internal frame evaluate click fallback ─────────────────
             try:

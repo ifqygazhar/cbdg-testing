@@ -8,7 +8,7 @@ import { applyArgsToEnv, parseArgs } from "./cli.js";
 import { PACES } from "@ifqy/google-oauth";
 import { loadAccounts, loadProxies } from "./loaders.js";
 import { ResultWriter } from "./store.js";
-import { Selectors, API_KEY_RE } from "./flow/selectors.js";
+import { Selectors, API_KEY_RE, OTP_CODE_RE } from "./flow/selectors.js";
 
 describe("fastrouter app config", () => {
   it("defaults", () => {
@@ -180,6 +180,58 @@ describe("fastrouter selectors against dataset", () => {
     expect(API_KEY_RE.test("sk-v1-short")).toBe(false);
     expect(API_KEY_RE.test("<FASTROUTER_API_KEY>")).toBe(false);
   });
+
+  it("email signup inputs and terms checkbox match signup.html", async () => {
+    const html = readFileSync(join(datasetDir, "signup.html"), "utf8");
+    let firstName = 0;
+    let lastName = 0;
+    let email = 0;
+    let password = 0;
+    let terms = 0;
+    let submit = 0;
+
+    await new HTMLRewriter()
+      .on(Selectors.emailFirstName[0], { element() { firstName++; } })
+      .on(Selectors.emailLastName[0], { element() { lastName++; } })
+      .on(Selectors.emailAddressInput[0], { element() { email++; } })
+      .on(Selectors.emailPasswordInput[0], { element() { password++; } })
+      .on(Selectors.emailTermsCheckbox[0], { element() { terms++; } })
+      .on(Selectors.emailSignupSubmit[0], { element() { submit++; } })
+      .transform(new Response(html))
+      .text();
+
+    expect(firstName).toBe(1);
+    expect(lastName).toBe(1);
+    expect(email).toBe(1);
+    expect(password).toBe(1);
+    expect(terms).toBe(1);
+    expect(submit).toBe(1);
+  });
+
+  it("email verification OTP input and submit match verif-email-tempmail.html", async () => {
+    const html = readFileSync(join(datasetDir, "verif-email-tempmail.html"), "utf8");
+    let otpInput = 0;
+    let submitBtn = 0;
+
+    await new HTMLRewriter()
+      .on(Selectors.verifyOtpInput[0], { element() { otpInput++; } })
+      .on('button[type="submit"]', { element() { submitBtn++; } })
+      .transform(new Response(html))
+      .text();
+
+    expect(otpInput).toBe(1);
+    expect(submitBtn).toBe(1);
+    expect(html).toContain("Check your email");
+    expect(html).toContain("Verify &amp; Continue");
+  });
+
+  it("OTP_CODE_RE matches 6-digit code and rejects non-6-digit strings", () => {
+    expect(OTP_CODE_RE.test("797875")).toBe(true);
+    expect(OTP_CODE_RE.test("000000")).toBe(true);
+    expect(OTP_CODE_RE.test("12345")).toBe(false);
+    expect(OTP_CODE_RE.test("1234567")).toBe(false);
+    expect(OTP_CODE_RE.test("abcdef")).toBe(false);
+  });
 });
 
 describe("fastrouter ResultWriter", () => {
@@ -233,4 +285,15 @@ describe("fastrouter pace profiles & CLI", () => {
     expect(PACES.fast.mouseMoves).toBeGreaterThan(0);
     expect(PACES.careful.pauseMin).toBeGreaterThan(PACES.human.pauseMin);
   });
+  it("--auth / --tempmail / --domain / --limit map onto the env", () => {
+    const env1 = applyArgsToEnv(parseArgs(["--tempmail", "--domain", "meongtopup.my.id", "--limit", "10"]), {});
+    expect(env1.FASTROUTER_AUTH).toBe("tempmail");
+    expect(env1.FASTROUTER_TEMPMAIL).toBe("1");
+    expect(env1.TEMPMAIL_DOMAIN).toBe("meongtopup.my.id");
+    expect(env1.LIMIT).toBe("10");
+
+    const env2 = applyArgsToEnv(parseArgs(["--auth", "google"]), {});
+    expect(env2.FASTROUTER_AUTH).toBe("google");
+  });
 });
+

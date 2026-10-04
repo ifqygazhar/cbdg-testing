@@ -142,9 +142,25 @@ async function askPlan(): Promise<RunPlan> {
     { value: "careful", label: "careful", hint: "lebih pelan dari manusia, buat risk engine galak" },
   ]);
 
+  let authMethod: "google" | "tempmail" | undefined;
+  if (app === "fastrouter") {
+    authMethod = await select<"tempmail" | "google">("Metode pendaftaran FastRouter?", [
+      {
+        value: "tempmail",
+        label: "TempMail (TempMail-Pro)",
+        hint: "otomatis buat email & verif kode OTP (disarankan)",
+      },
+      {
+        value: "google",
+        label: "Google OAuth",
+        hint: `daftar via akun Google (butuh gsuite.txt: ${seeds.accounts} akun)`,
+      },
+    ]);
+  }
+
   let domain: string | undefined;
   let limit: number | undefined;
-  if (app === "tokenharbor") {
+  if (app === "tokenharbor" || (app === "fastrouter" && authMethod === "tempmail")) {
     domain = await select<string>("Domain TempMail?", [
       { value: "ifqy.net", label: "ifqy.net", hint: "domain utama TempMail-Pro (default)" },
       { value: "meongtopup.my.id", label: "meongtopup.my.id", hint: "domain alternatif 1" },
@@ -163,7 +179,7 @@ async function askPlan(): Promise<RunPlan> {
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, engine, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain };
+  return { app, mode, engine, authMethod, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain };
 }
 
 function review(plan: RunPlan): void {
@@ -191,6 +207,7 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
         ] as Array<[string, string]>)
       : []),
     ...(plan.domain ? ([["domain", `@${plan.domain}`]] as Array<[string, string]>) : []),
+    ...(plan.authMethod ? ([["auth", plan.authMethod === "tempmail" ? "TempMail (verif OTP)" : "Google OAuth"]] as Array<[string, string]>) : []),
     ...(plan.mode ? ([["mode", plan.mode === "signup" ? "signup saja" : "full (VCC)"]] as Array<[string, string]>) : []),
 
     ...(plan.useProxy === undefined

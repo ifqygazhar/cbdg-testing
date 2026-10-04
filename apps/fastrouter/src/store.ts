@@ -5,6 +5,7 @@ import path from "node:path";
 export enum FlowState {
   PENDING = "PENDING",
   SIGNUP = "SIGNUP",
+  VERIFY_OTP = "VERIFY_OTP",
   COMPLETE_SIGNUP = "COMPLETE_SIGNUP",
   WELCOME = "WELCOME",
   API_KEY = "API_KEY",

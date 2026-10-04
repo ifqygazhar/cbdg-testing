@@ -43,6 +43,7 @@ export interface RunPlan {
   dryRun: boolean;
   delaySec: number;
   workers: number;
+  authMethod?: "google" | "tempmail";
   limit?: number;
   domain?: string;
   proxyTarget?: string;
@@ -108,6 +109,7 @@ export function buildArgs(plan: RunPlan): string[] {
   }
   if (plan.workers > 1) args.push("-w", String(plan.workers));
   if (plan.delaySec > 0) args.push("--delay", String(plan.delaySec));
+  if (plan.authMethod) args.push("--auth", plan.authMethod);
   if (plan.limit !== undefined && plan.limit > 0) args.push("--limit", String(plan.limit));
   if (plan.domain) args.push("--domain", plan.domain);
   if (plan.retryFailed) args.push("--retry-failed");
@@ -193,7 +195,8 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
     if (seeds.proxies === 0) out.push("proxy.txt kosong — jalankan webshare dulu.");
     return out;
   }
-  if (plan.app !== "tokenharbor" && seeds.accounts === 0) {
+  const isTempMail = plan.app === "tokenharbor" || (plan.app === "fastrouter" && plan.authMethod !== "google");
+  if (!isTempMail && seeds.accounts === 0) {
     out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
   }
   if (plan.app === "cbdg" && plan.mode === "full" && seeds.cards === 0) {

@@ -82,6 +82,22 @@ describe("buildArgs", () => {
     expect(th).toContain("meongtopup.my.id");
   });
 
+  it("fastrouter gets auth and domain flags when tempmail chosen", () => {
+    const fr = buildArgs({
+      ...base,
+      app: "fastrouter",
+      authMethod: "tempmail",
+      domain: "ifqy.net",
+      limit: 10,
+    });
+    expect(fr).toContain("--auth");
+    expect(fr).toContain("tempmail");
+    expect(fr).toContain("--domain");
+    expect(fr).toContain("ifqy.net");
+    expect(fr).toContain("--limit");
+    expect(fr).toContain("10");
+  });
+
   it("spells out google-direct only when it is turned off", () => {
     // The printed command has to reproduce the run. With GOOGLE_DIRECT=0 in
     // .env and no flag emitted, pasting it elsewhere would silently behave

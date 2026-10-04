@@ -10,6 +10,11 @@ import { shouldUsePythonEngine, spawnPythonRunner } from "@ifqy/google-oauth";
 
 interface Args {
   engine?: string;
+  auth?: string;
+  tempmail?: boolean;
+  domain?: string;
+  limit?: number;
+  password?: string;
   headless?: boolean;
   pace?: string;
   workers?: number;
@@ -27,6 +32,11 @@ interface Args {
 export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...base };
   if (args.engine !== undefined) env.BROWSER_ENGINE = args.engine;
+  if (args.auth !== undefined) env.FASTROUTER_AUTH = args.auth;
+  if (args.tempmail !== undefined) env.FASTROUTER_TEMPMAIL = args.tempmail ? "1" : "0";
+  if (args.domain !== undefined) env.TEMPMAIL_DOMAIN = args.domain;
+  if (args.limit !== undefined) env.LIMIT = String(args.limit);
+  if (args.password !== undefined) env.FASTROUTER_PASSWORD = args.password;
   if (args.workers !== undefined) env.WORKERS = String(args.workers);
   if (args.headless !== undefined) env.HEADLESS = args.headless ? "1" : "0";
   if (args.retryFailed !== undefined) env.RETRY_FAILED = args.retryFailed ? "1" : "0";
@@ -66,14 +76,27 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--engine" || a === "-e") args.engine = next();
     else if (a === "--camoufox") args.engine = "python";
     else if (a === "--bun") args.engine = "bun";
+    else if (a === "--auth") args.auth = next();
+    else if (a === "--tempmail") {
+      args.auth = "tempmail";
+      args.tempmail = true;
+    }
+    else if (a === "--domain") args.domain = next();
+    else if (a === "--limit" || a === "-l" || a === "-n") args.limit = Number(next());
+    else if (a === "--password") args.password = next();
     else if (a === "--reuse-proxy" || a === "--rotate-proxy" || a === "--loop-proxy") args.reuseProxy = true;
     else if (a === "--unique-proxy") args.reuseProxy = false;
     else if (a === "--help" || a === "-h") {
       console.log(
-        `Usage: bun run fastrouter -- [--engine bun|python] [--headless] [--headed] [-w N] [--dry-run]\n` +
+        `Usage: bun run fastrouter -- [--engine bun|python] [--auth tempmail|google] [--tempmail] [--limit N]\n` +
+          `                          [--domain D] [--headless] [--headed] [-w N] [--dry-run]\n` +
           `                          [--delay SEC] [--fast | --careful | --pace fast|human|careful]\n\n` +
           `  --engine E  pilih engine browser: 'bun' (Chromium/Puppeteer) atau 'python' (Camoufox/Firefox)\n` +
           `  --camoufox  alias untuk --engine python (bypass Cloudflare Turnstile otomatis)\n` +
+          `  --auth A    metode registrasi: 'tempmail' (default) atau 'google'\n` +
+          `  --tempmail  daftar dengan TempMail-Pro (verifikasi kode OTP otomatis)\n` +
+          `  --domain D  domain tempmail: 'ifqy.net' (default), 'meongtopup.my.id', 'huzt.my.id'\n` +
+          `  --limit N   jumlah akun yang dibuat/diproses (default: 5 untuk tempmail)\n` +
           `  --fast      human-shaped but no dead waiting (~1 min/account instead of ~2)\n` +
           `  --careful   slower than a real user; for hostile risk engines\n` +
           `  --delay     seconds between accounts — risk control spacing\n` +
@@ -111,6 +134,12 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       retryFailed: args.retryFailed,
       stateFile: args.state ?? cfg.stateFile,
       dryRun: args.dryRun,
+      auth: args.auth ?? cfg.authMethod,
+      domain: args.domain ?? cfg.tempMailDomain,
+      limit: args.limit !== undefined ? args.limit : (cfg.limit > 0 ? cfg.limit : undefined),
+      password: args.password ?? cfg.tempMailPassword,
+      pace: args.pace ?? (typeof cfg.pace === "object" ? (cfg.pace as any).name : cfg.pace),
+      workers: args.workers ?? cfg.workers,
     });
     return;
   }

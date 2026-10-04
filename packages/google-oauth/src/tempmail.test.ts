@@ -40,4 +40,28 @@ describe("TempMailClient", () => {
       "Timed out waiting for verification email",
     );
   });
+
+  it("extracts 6-digit OTP code from FastRouter email template", async () => {
+    const client = new TempMailClient({ apiKey: "test-key" });
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const html = readFileSync(
+      join(import.meta.dir, "..", "..", "..", "fastrouter_ai_dataset", "element-template-html-verif-dari-email.html"),
+      "utf8",
+    );
+
+    client.getInbox = async () => [
+      {
+        id: "msg-clerk-1",
+        sender: "support@clerk.fastrouter.ai",
+        subject: "Verification code",
+        "content-plain": "Enter the following verification code when prompted: 797875",
+        "content-html": html,
+      },
+    ];
+
+    const otp = await client.waitForVerificationOtp("user@ifqy.net", { timeoutMs: 1000 });
+    expect(otp).toBe("797875");
+  });
 });
+

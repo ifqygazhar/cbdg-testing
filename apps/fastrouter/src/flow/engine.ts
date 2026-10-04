@@ -34,6 +34,7 @@ export class FlowError extends Error {
 // Fixed intended order (informational / scheduling); each step returns its real next state.
 const ORDER: FlowState[] = [
   FlowState.SIGNUP,
+  FlowState.VERIFY_OTP,
   FlowState.COMPLETE_SIGNUP,
   FlowState.WELCOME,
   FlowState.API_KEY,
