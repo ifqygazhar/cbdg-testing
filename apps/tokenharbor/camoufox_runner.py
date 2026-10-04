@@ -487,6 +487,7 @@ async def main_async():
     parser.add_argument("--retry-failed", action="store_true", help="Retry accounts previously marked failed")
     parser.add_argument("--state-file", default="state-tokenharbor.jsonl", help="State file")
     parser.add_argument("--output-file", default="apikey-tokenharbor.txt", help="API key output file")
+    parser.add_argument("--workers", "-w", type=int, default=1, help="Number of parallel workers")
     parser.add_argument("--limit", type=int, default=1, help="Max accounts to process (default: 1)")
     parser.add_argument("--password", default=os.getenv("TOKENHARBOR_PASSWORD", "torabikA1###########"), help="Account password")
     parser.add_argument("--domain", default=os.getenv("TEMPMAIL_DOMAIN", "ifqy.net"), help="TempMail domain")
@@ -519,7 +520,7 @@ async def main_async():
     )
 
     logger = create_logger()
-    logger.info(f"TokenHarbor Camoufox runner started (pace={args.pace}). Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
+    logger.info(f"TokenHarbor Camoufox runner started (pace={args.pace}, workers={args.workers}). Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
 
     if args.dry_run:
         logger.info("dry-run: config validated (no browser launched)")
@@ -527,63 +528,85 @@ async def main_async():
 
     proxy_pool = SmartProxyPool(proxies) if proxies else None
     count = args.limit if args.limit > 0 else (len(proxies) if proxies else 1)
-    logger.info(f"Planning to process target {count} account(s) using domain @{args.domain}")
+    worker_count = max(1, min(args.workers, count))
+    logger.info(f"Planning to process target {count} account(s) using domain @{args.domain} with {worker_count} parallel worker(s)")
 
     processed = 0
     success_count = 0
     max_total_attempts = max(count * 4, len(proxies) * 2, 10) if proxies else count
+    lock = asyncio.Lock()
 
-    while success_count < count and processed < max_total_attempts:
-        if not args.no_proxy and proxies:
-            proxy = proxy_pool.get_next_proxy()
-            if proxy is None:
-                logger.warn(f"All proxies ({len(proxies)}) have been exhausted or blacklisted. No usable proxies left.")
-                break
-            proxy_addr = proxy_pool.address_of(proxy)
-            reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
-            logger.info(f"Selected proxy: {proxy.server} ({proxy_addr}){reuse_tag}. (Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})")
-        else:
+    async def worker(worker_id: int):
+        nonlocal processed, success_count
+        while True:
             proxy = None
+            async with lock:
+                if success_count >= count or processed >= max_total_attempts:
+                    break
 
-        # Generate fresh TempMail account
-        acc_data = temp_mail.create_email(domain=args.domain)
-        email = acc_data["email"]
-        password = args.password
-        acc_logger = create_logger(email)
+                if not args.no_proxy and proxies:
+                    proxy = proxy_pool.get_next_proxy()
+                    if proxy is None:
+                        logger.warn(f"Worker #{worker_id}: All proxies ({len(proxies)}) have been exhausted or blacklisted. No usable proxies left.")
+                        break
+                    proxy_addr = proxy_pool.address_of(proxy)
+                    reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
+                    logger.info(f"Worker #{worker_id} selected proxy: {proxy.server} ({proxy_addr}){reuse_tag}. (Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})")
+                else:
+                    proxy = None
 
-        ok = await run_single_account(
-            email=email,
-            password=password,
-            proxy=proxy,
-            store=store,
-            results=results,
-            temp_mail=temp_mail,
-            headed=args.headed,
-            screenshot_dir=args.screenshot_dir,
-            logger=acc_logger,
-            pace=args.pace,
-        )
+                processed += 1
 
-        processed += 1
-        if proxy_pool and proxy:
-            if ok:
-                proxy_pool.mark_result(proxy, success=True)
-                logger.info(f"Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
-            else:
-                proxy_pool.mark_result(proxy, success=False)
-                logger.warn(f"Proxy {proxy.server} failed/rejected. Discarded and will not be reused.")
+            # Generate fresh TempMail account outside lock
+            try:
+                acc_data = temp_mail.create_email(domain=args.domain)
+                email = acc_data["email"]
+            except Exception as e:
+                logger.error(f"Worker #{worker_id} failed to generate TempMail: {e}")
+                await asyncio.sleep(2)
+                continue
 
-        if ok:
-            success_count += 1
-            logger.info(f"Progress: {success_count}/{count} accounts completed successfully.")
+            password = args.password
+            acc_logger = create_logger(f"w{worker_id}:{email}")
 
-        if success_count < count:
-            if ok and args.delay > 0:
-                logger.info(f"Waiting {args.delay}s before next account...")
-                await asyncio.sleep(args.delay)
-            elif not ok:
-                logger.info("Switching immediately to next account with a fresh/different IP...")
-                await asyncio.sleep(1.5)
+            ok = await run_single_account(
+                email=email,
+                password=password,
+                proxy=proxy,
+                store=store,
+                results=results,
+                temp_mail=temp_mail,
+                headed=args.headed,
+                screenshot_dir=args.screenshot_dir,
+                logger=acc_logger,
+                pace=args.pace,
+            )
+
+            async with lock:
+                if proxy_pool and proxy:
+                    if ok:
+                        proxy_pool.mark_result(proxy, success=True)
+                        logger.info(f"Worker #{worker_id}: Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
+                    else:
+                        proxy_pool.mark_result(proxy, success=False)
+                        logger.warn(f"Worker #{worker_id}: Proxy {proxy.server} failed/rejected. Discarded and will not be reused.")
+
+                if ok:
+                    success_count += 1
+                    logger.info(f"Progress: {success_count}/{count} accounts completed successfully.")
+
+            if success_count < count:
+                if ok and args.delay > 0:
+                    logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
+                    await asyncio.sleep(args.delay)
+                elif not ok:
+                    logger.info(f"Worker #{worker_id} switching immediately to next account with a fresh/different IP...")
+                    await asyncio.sleep(1.5)
+
+    if worker_count > 1:
+        await asyncio.gather(*(worker(i + 1) for i in range(worker_count)))
+    else:
+        await worker(1)
 
     logger.info(f"TokenHarbor Camoufox batch finished: {success_count}/{count} target achieved ({processed} total attempts).")
 

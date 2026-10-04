@@ -44,6 +44,7 @@ export interface PythonRunnerOptions {
   domain?: string;
   pace?: string;
   dryRun?: boolean;
+  workers?: number;
 }
 
 /**
@@ -107,6 +108,7 @@ export function spawnPythonRunner(runnerPath: string, opts: PythonRunnerOptions)
   if (opts.limit !== undefined) args.push("--limit", String(opts.limit));
   if (opts.domain) args.push("--domain", opts.domain);
   if (opts.pace) args.push("--pace", opts.pace);
+  if (opts.workers && opts.workers > 1) args.push("--workers", String(opts.workers));
 
   console.log(`[engine] Delegating to Python Camoufox (${pythonBin})...`);
   console.log(`[engine] Command: ${pythonBin} ${args.join(" ")}\n`);
