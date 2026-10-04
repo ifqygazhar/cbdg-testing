@@ -3,6 +3,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@ifqy/google-oauth": ["./packages/google-oauth/src/index.ts"],
+      "@ifqy/google-oauth/*": ["./packages/google-oauth/src/*"]
+    },
     "lib": [
       "ES2022",
       "DOM"

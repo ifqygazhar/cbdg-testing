@@ -5,6 +5,7 @@
     "": {
       "name": "cbdg-credit-automation",
       "dependencies": {
+        "@ifqy/google-oauth": "workspace:*",
         "socks": "^2.8.10",
       },
       "devDependencies": {

@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@ifqy/google-oauth": "0.1.0",
+    "@ifqy/google-oauth": "workspace:*",
     "puppeteer-core": "^23.0.0"
   }
 }
