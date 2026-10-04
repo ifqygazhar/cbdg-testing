@@ -116,22 +116,38 @@ fi
 # 4. Instal Bun Runtime
 info "3/5. Memeriksa runtime Bun..."
 BUN_DIR="$HOME/.bun"
-if ! command -v bun >/dev/null 2>&1; then
+if [ ! -f "$BUN_DIR/bin/bun" ]; then
     info "Menginstal Bun..."
-    curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1
+    curl -fsSL https://bun.sh/install | bash
 fi
 
 export BUN_INSTALL="$BUN_DIR"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
-# Simpan ke .bashrc jika belum ada
-if ! grep -q 'BUN_INSTALL' "$HOME/.bashrc" 2>/dev/null; then
-    cat >> "$HOME/.bashrc" <<'EOF'
+# Buat symlink ke /usr/local/bin agar langsung aktif di SEMUA shell tanpa perlu relogin/source bashrc
+if [ -f "$BUN_DIR/bin/bun" ]; then
+    $SUDO ln -sf "$BUN_DIR/bin/bun" /usr/local/bin/bun
+    ok "Bun berhasil di-link ke /usr/local/bin/bun"
+fi
+
+# Simpan ke .bashrc, .profile, dan /etc/profile.d/bun.sh
+for RC_FILE in "$HOME/.bashrc" "$HOME/.profile"; do
+    if [ -f "$RC_FILE" ] && ! grep -q 'BUN_INSTALL' "$RC_FILE" 2>/dev/null; then
+        cat >> "$RC_FILE" <<'EOF'
 
 # Bun runtime
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 EOF
+    fi
+done
+
+if [ -d "/etc/profile.d" ]; then
+    cat <<'EOF' | $SUDO tee /etc/profile.d/bun.sh >/dev/null
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+EOF
+    $SUDO chmod +x /etc/profile.d/bun.sh 2>/dev/null || true
 fi
 
 if command -v bun >/dev/null 2>&1; then
@@ -165,15 +181,27 @@ info "Menginstal paket Python (camoufox, playwright, PySocks, aiohttp, dll)..."
 info "Mengunduh binary browser Camoufox..."
 "$VENV_DIR/bin/camoufox" fetch >/dev/null 2>&1 || warn "camoufox fetch mengeluarkan peringatan, browser akan diunduh saat run pertama."
 
-# Simpan environment CAMOUFOX_PYTHON ke .bashrc
-if ! grep -q 'CAMOUFOX_PYTHON' "$HOME/.bashrc" 2>/dev/null; then
-    cat >> "$HOME/.bashrc" <<EOF
+# Symlink camoufox ke /usr/local/bin
+if [ -f "$VENV_DIR/bin/camoufox" ]; then
+    $SUDO ln -sf "$VENV_DIR/bin/camoufox" /usr/local/bin/camoufox 2>/dev/null || true
+fi
+
+# Simpan environment CAMOUFOX_PYTHON ke .bashrc dan .profile
+for RC_FILE in "$HOME/.bashrc" "$HOME/.profile"; do
+    if [ -f "$RC_FILE" ] && ! grep -q 'CAMOUFOX_PYTHON' "$RC_FILE" 2>/dev/null; then
+        cat >> "$RC_FILE" <<EOF
 
 # Camoufox Python
 export CAMOUFOX_PYTHON="$VENV_DIR/bin/python"
 export PATH="$VENV_DIR/bin:\$PATH"
 EOF
+    fi
+done
+
+if [ -f "/etc/environment" ] && ! grep -q 'CAMOUFOX_PYTHON' /etc/environment 2>/dev/null; then
+    echo "CAMOUFOX_PYTHON=\"$VENV_DIR/bin/python\"" | $SUDO tee -a /etc/environment >/dev/null 2>&1 || true
 fi
+
 export CAMOUFOX_PYTHON="$VENV_DIR/bin/python"
 export PATH="$VENV_DIR/bin:$PATH"
 
@@ -247,6 +275,7 @@ echo -e " 2. Clone repository private Anda:"
 echo -e "    ${GREEN}git clone git@github.com:USERNAME/REPO_NAME.git${NC}\n"
 echo -e " 3. Masuk ke folder repo & pasang dependencies:"
 echo -e "    ${GREEN}cd REPO_NAME${NC}"
+echo -e "    ${YELLOW}(Jika sesi terminal ini dibuka sebelum setup, jalankan: source ~/.bashrc)${NC}"
 echo -e "    ${GREEN}bun install${NC}\n"
 echo -e " 4. Menjalankan runner:"
 echo -e "    ${GREEN}bun run start${NC}"
