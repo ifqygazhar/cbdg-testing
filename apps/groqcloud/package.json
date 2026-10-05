@@ -1,0 +1,11 @@
+{
+  "name": "@ifqy/groqcloud-signup",
+  "version": "0.1.0",
+  "description": "GroqCloud signup automation (TempMail + magic link + Cloudflare Turnstile + API key generation) on Bun + Puppeteer & Python + Camoufox",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ifqy/google-oauth": "workspace:*",
+    "puppeteer-core": "^23.0.0"
+  }
+}

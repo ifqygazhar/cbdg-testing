@@ -48,11 +48,13 @@ async function askPlan(): Promise<RunPlan> {
     { value: "fastrouter", label: "fastrouter", hint: "daftar FastRouter → kredit $1 + API key ke apikey-fastrouter" },
     { value: "cbdg", label: "cbdg", hint: "daftar CodeBuddy → kredit new-user (+ VCC opsional)" },
     { value: "tokenharbor", label: "tokenharbor", hint: "daftar TokenHarbor (TempMail) → API key ke apikey-tokenharbor.txt" },
+    { value: "groqcloud", label: "groqcloud", hint: "daftar GroqCloud (TempMail + Turnstile) → API key ke apikey-groqcloud.txt" },
   ]);
 
   if (IS_TOOL[app]) {
     const targetSite = await select<string>("Uji untuk target website apa?", [
       { value: "", label: "Umum (semua situs)", hint: "uji liveness & IP echo via ipv4.webshare.io (default)" },
+      { value: "https://console.groq.com", label: "GroqCloud", hint: "uji liveness + akses langsung ke console.groq.com" },
       { value: "https://tokenharbor.ai", label: "TokenHarbor", hint: "uji liveness + akses langsung ke tokenharbor.ai" },
       { value: "https://fastrouter.ai", label: "FastRouter", hint: "uji liveness + akses langsung ke fastrouter.ai" },
       { value: "https://console.crusoecloud.com", label: "Crusoe", hint: "uji liveness + akses langsung ke crusoecloud.com" },
@@ -96,7 +98,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" || app === "tokenharbor" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;
@@ -160,7 +162,7 @@ async function askPlan(): Promise<RunPlan> {
 
   let domain: string | undefined;
   let limit: number | undefined;
-  if (app === "tokenharbor" || (app === "fastrouter" && authMethod === "tempmail")) {
+  if (app === "tokenharbor" || app === "groqcloud" || (app === "fastrouter" && authMethod === "tempmail")) {
     domain = await select<string>("Domain TempMail?", [
       { value: "ifqy.net", label: "ifqy.net", hint: "domain utama TempMail-Pro (default)" },
       { value: "meongtopup.my.id", label: "meongtopup.my.id", hint: "domain alternatif 1" },

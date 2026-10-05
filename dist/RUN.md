@@ -8,6 +8,7 @@ bun runner.js proxy-check
 bun runner.js crusoe --headless --fast --delay 60
 bun runner.js fastrouter --headless --fast --delay 60
 bun runner.js tokenharbor --headless --fast --delay 60
+bun runner.js groqcloud --headless --fast --delay 60
 bun runner.js cbdg --headless --signup-only --with-proxy --delay 60
 ```
 

@@ -34,7 +34,6 @@ type Pending =
 const ESC = String.fromCharCode(27);
 const NL = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
-const BRACKET = String.fromCharCode(92) + "[";
 
 let buffer = "";
 const pending: Pending[] = [];
@@ -54,7 +53,9 @@ export function nextToken(
 ): { token: string; rest: string } | null {
   if (!buf) return null;
   if (kind === "key") {
-    const esc = buf.match(new RegExp("^" + ESC + "(" + BRACKET + "[0-9;]*[A-Za-z])?"));
+    // Incomplete escape sequence — wait for trailing character
+    if (buf === ESC + "[" || buf === ESC + "O") return null;
+    const esc = buf.match(new RegExp("^" + ESC + "(?:\\[[0-9;]*[A-Za-z~]|O[A-Za-z])"));
     const token = esc ? esc[0] : buf.slice(0, 1);
     return { token, rest: buf.slice(token.length) };
   }
@@ -95,12 +96,15 @@ function request(kind: "key" | "line"): Promise<string> {
   });
 }
 
-/** One keypress. Raw mode when the terminal allows it. */
-async function readKey(): Promise<string> {
-  process.stdin.setRawMode?.(true);
-  const key = await request("key");
-  process.stdin.setRawMode?.(false);
-  return key;
+/** One keypress. Preserves outer raw mode if already active. */
+export async function readKey(): Promise<string> {
+  const wasRaw = Boolean(process.stdin.isRaw);
+  if (!wasRaw) process.stdin.setRawMode?.(true);
+  try {
+    return await request("key");
+  } finally {
+    if (!wasRaw) process.stdin.setRawMode?.(false);
+  }
 }
 
 /** One line of input (works with or without a TTY). */
@@ -120,16 +124,30 @@ export class Cancelled extends Error {
   }
 }
 
-function renderChoices<T>(title: string, choices: Choice<T>[], active: number): void {
-  write(`\n${ui.bold(title)}\n`);
+function formatChoices<T>(title: string, choices: Choice<T>[], active: number): string {
+  const cols = Math.max(40, (process.stdout.columns || 80) - 1);
+  const lines: string[] = [];
+  lines.push("");
+  lines.push(ui.bold(title));
   choices.forEach((ch, i) => {
     const on = i === active;
     const bullet = on ? ui.cyan("❯") : " ";
+    const num = ui.dim(`${i + 1}.`);
     const label = on ? ui.cyan(ch.label) : ch.label;
-    const hint = ch.hint ? ui.dim(`  ${ch.hint}`) : "";
-    write(`${bullet} ${ui.dim(`${i + 1}.`)} ${label}${hint}\n`);
+    const prefix = `${bullet} ${num} ${label}`;
+    const plainPrefixLength = `${on ? "❯" : " "} ${i + 1}. ${ch.label}`.length;
+    let line = prefix;
+    if (ch.hint) {
+      const spaceLeft = cols - plainPrefixLength - 2;
+      if (spaceLeft > 8) {
+        const hintText = ch.hint.length > spaceLeft ? ch.hint.slice(0, spaceLeft - 3) + "..." : ch.hint;
+        line += ui.dim(`  ${hintText}`);
+      }
+    }
+    lines.push(line);
   });
-  write(ui.dim("  ↑/↓ pilih · angka langsung · Enter oke · Ctrl-C batal\n"));
+  lines.push(ui.dim("  ↑/↓ pilih · angka langsung · Enter oke · Ctrl-C batal"));
+  return lines.join("\n") + "\n";
 }
 
 /** Single choice. Returns the chosen value, throws Cancelled on Ctrl-C. */
@@ -139,7 +157,7 @@ export async function select<T>(
   defaultIndex = 0,
 ): Promise<T> {
   if (!isRaw()) {
-    renderChoices(title, choices, defaultIndex);
+    write(formatChoices(title, choices, defaultIndex));
     write(`${ui.dim(`pilih [1-${choices.length}] (${defaultIndex + 1}): `)}`);
     const line = (await readLine()).trim();
     const n = line === "" ? defaultIndex + 1 : Number(line);
@@ -147,28 +165,48 @@ export async function select<T>(
     return choices[idx].value;
   }
 
-  let active = defaultIndex;
-  let drawn = 0;
-  const draw = () => {
-    if (drawn) write(`\x1b[${drawn}A\x1b[0J`);
-    renderChoices(title, choices, active);
-    drawn = choices.length + 3;
-  };
-  draw();
+  process.stdin.setRawMode?.(true);
+  write("\x1b[?25l"); // Hide cursor during interactive selection
 
-  for (;;) {
-    const key = await readKey();
-    if (key === "\x03" || key === "\x1b") throw new Cancelled();
-    if (key === "\x1b[A" || key === "k") active = (active - 1 + choices.length) % choices.length;
-    else if (key === "\x1b[B" || key === "j") active = (active + 1) % choices.length;
-    else if (/^[1-9]$/.test(key) && Number(key) <= choices.length) {
-      active = Number(key) - 1;
-      draw();
-      return choices[active].value;
-    } else if (key === "\r" || key === "\n") {
-      return choices[active].value;
+  let active = defaultIndex;
+  const lineCount = choices.length + 3;
+  let drawn = false;
+
+  const draw = () => {
+    if (drawn) {
+      write(`\r\x1b[${lineCount}A\x1b[0J`);
     }
+    write(formatChoices(title, choices, active));
+    drawn = true;
+  };
+
+  try {
     draw();
+    for (;;) {
+      const key = await request("key");
+      if (key === "\x03" || key === "\x1b") throw new Cancelled();
+      if (key === "\x1b[A" || key === "\x1bOA" || key === "k") {
+        active = (active - 1 + choices.length) % choices.length;
+        draw();
+      } else if (key === "\x1b[B" || key === "\x1bOB" || key === "j") {
+        active = (active + 1) % choices.length;
+        draw();
+      } else if (/^[1-9]$/.test(key) && Number(key) <= choices.length) {
+        active = Number(key) - 1;
+        draw();
+        break;
+      } else if (key === "\r" || key === "\n") {
+        break;
+      }
+    }
+
+    // Clean up menu on submit: clear options and print chosen answer cleanly
+    write(`\r\x1b[${lineCount}A\x1b[0J`);
+    write(`\n${ui.bold(title)} ${ui.cyan(choices[active].label)}\n`);
+    return choices[active].value;
+  } finally {
+    write("\x1b[?25h"); // Show cursor
+    process.stdin.setRawMode?.(false);
   }
 }
 

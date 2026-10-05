@@ -39,4 +39,11 @@ apikey-tokenharbor-usage.txt
 apikey-fastrouter
 fastrouter_ai_dataset/apikey-fastrouter
 fastrouter_ai_dataset/apikey-fastrouter.txt
+state-groqcloud.jsonl
+akun-result-groqcloud.txt
+akun-failed-groqcloud.txt
+screenshots-groqcloud/
+apikey-groqcloud.txt
+vps/
+
 

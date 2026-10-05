@@ -1,0 +1,4 @@
+sign up link : https://console.groq.com/home
+contoh magic link dari temp-email : https://stytch.com/v1/magic_links/redirect?public_token=public-token-live-58df57a9-a1f5-4066-bc0c-2ff942db684f&stytch_token_type=discovery&token=wVk91WspsLP9eQyI49hghH5IxUpG9xmqZPV9DuKr34mH
+
+setelah login berhasil dari magic link, buka halaman apikey : https://console.groq.com/keys terus klik tombol create key, pas pertama kali kebuka modal pop up halaman nya akan ada cloudflare dulu beberapa saat, setelah verifikasi berhasil tombol submit nya muncul, untuk display name nya isi bebas dan pilih no expiration, lalu setelah itu klik submit dan akan loading beberapa saat dan setelah itu apikey muncul, pas udah muncul apikey simpan apikey nya ke file apikey-groqcloud.txt
