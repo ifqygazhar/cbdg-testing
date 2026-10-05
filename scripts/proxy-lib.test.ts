@@ -73,11 +73,28 @@ describe("parsing", () => {
     expect(parseProxyLine("")).toBeNull();
   });
   it("skips comments and blanks, and keeps one entry per endpoint", () => {
-    const { entries, skipped } = parseProxyFile(
+    const { entries, skipped, duplicates } = parseProxyFile(
       ["# header", "", "http://u:p@1.2.3.4:80", "http://other:x@1.2.3.4:80", "5.6.7.8:1", "rusak"].join("\n"),
     );
     expect(entries.map((e) => e.hostPort)).toEqual(["1.2.3.4:80", "5.6.7.8:1"]);
     expect(skipped).toEqual(["rusak"]);
+    expect(duplicates).toBe(1);
+  });
+  it("ignores duplicate IP and port across different protocols or auth shapes", () => {
+    const lines = [
+      "1.2.3.4:8080",
+      "http://1.2.3.4:8080",
+      "http://user:pass@1.2.3.4:8080",
+      "socks5://other:pass@1.2.3.4:8080",
+      "1.2.3.4:8080:alice:secret",
+      "bob:pass:1.2.3.4:8080",
+    ].join("\n");
+    const { entries, duplicates } = parseProxyFile(lines);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].hostPort).toBe("1.2.3.4:8080");
+    expect(duplicates).toBe(5);
+    // Verified that authenticated duplicate upgraded the bare first line
+    expect(entries[0].username).toBeDefined();
   });
   it("mask hides the password but keeps the endpoint readable", () => {
     expect(mask("http://user:s3cret@1.2.3.4:8080")).toBe("http://user:***@1.2.3.4:8080");
@@ -176,6 +193,10 @@ describe("options", () => {
   it("-a flag enables append mode", () => {
     const o = parseArgs(["-a"], "/tmp/x");
     expect(o.append).toBe(true);
+  });
+  it("-s and --skip-existing flags enable skipExisting mode", () => {
+    expect(parseArgs(["-s"], "/tmp/x").skipExisting).toBe(true);
+    expect(parseArgs(["--skip-existing"], "/tmp/x").skipExisting).toBe(true);
   });
 });
 

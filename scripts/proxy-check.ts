@@ -30,6 +30,7 @@ export interface CheckOptions {
   concurrency: number;
   force: boolean;
   append: boolean;
+  skipExisting: boolean;
 }
 
 export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
@@ -42,6 +43,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
     concurrency: Number(process.env.PROXY_CHECK_CONCURRENCY || 10),
     force: false,
     append: false,
+    skipExisting: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -55,21 +57,23 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
     else if (a === "--concurrency" || a === "-c") o.concurrency = Number(next());
     else if (a === "--force") o.force = true;
     else if (a === "--append" || a === "-a") o.append = true;
+    else if (a === "--skip-existing" || a === "-s") o.skipExisting = true;
     else if (a === "--help" || a === "-h") {
       console.log(
         [
           "Usage: bun run proxy-check [--in FILE] [--out FILE] [--dead FILE]",
-          "                           [--timeout SEC] [-c N] [--url URL] [--target URL] [--append] [--force]",
+          "                           [--timeout SEC] [-c N] [--url URL] [--target URL] [--append] [--skip-existing] [--force]",
           "",
           "  Membaca proxy.txt, mengecek satu per satu, dan langsung menulis yang",
           "  hidup ke proxy-live.txt secara real-time (tanpa perlu menunggu scan beres).",
           "",
-          "  --target        verifikasi juga akses ke situs target (misal https://tokenharbor.ai)",
-          "  --append, -a    tambahkan ke proxy-live.txt yang sudah ada (tidak menimpa)",
-          "  --timeout       detik per proxy (default 12)",
-          "  -c N            berapa proxy dicek bersamaan (default 10)",
-          "  --dead F        simpan juga yang mati beserta alasannya",
-          "  --force         tetap tulis file walau tidak ada yang hidup",
+          "  --target            verifikasi juga akses ke situs target (misal https://tokenharbor.ai)",
+          "  --append, -a        tambahkan ke proxy-live.txt yang sudah ada (tidak menimpa)",
+          "  --skip-existing, -s abaikan proxy yang sudah ada di file output (jangan dicek ulang)",
+          "  --timeout           detik per proxy (default 12)",
+          "  -c N                berapa proxy dicek bersamaan (default 10)",
+          "  --dead F            simpan juga yang mati beserta alasannya",
+          "  --force             tetap tulis file walau tidak ada yang hidup",
         ].join("\n"),
       );
       process.exit(0);
@@ -171,10 +175,38 @@ export async function main(argv: string[]): Promise<number> {
     console.error(ui.red(`[proxy-check] ${path.basename(opts.input)} tidak ada — jalankan webshare dulu.`));
     return 1;
   }
-  const { entries, skipped } = parseProxyFile(fs.readFileSync(opts.input, "utf8"));
+  const { entries: parsedEntries, skipped, duplicates } = parseProxyFile(fs.readFileSync(opts.input, "utf8"));
   for (const bad of skipped) console.log(ui.yellow(`  lewati baris tidak valid: ${mask(bad)}`));
+  if (duplicates > 0) {
+    console.log(ui.yellow(`  lewati ${duplicates} proxy duplikat di ${path.basename(opts.input)} (IP & port sama, diabaikan)`));
+  }
+
+  const existingParsed = fs.existsSync(opts.output)
+    ? parseProxyFile(fs.readFileSync(opts.output, "utf8"))
+    : { entries: [], skipped: [], duplicates: 0 };
+  const existingCount = existingParsed.entries.length;
+  const seenEndpoints = new Set(existingParsed.entries.map((e) => e.hostPort));
+
+  let entries = parsedEntries;
+  if (opts.append || opts.skipExisting) {
+    const beforeCount = entries.length;
+    entries = entries.filter((e) => !seenEndpoints.has(e.hostPort));
+    const alreadyLiveCount = beforeCount - entries.length;
+    if (alreadyLiveCount > 0) {
+      console.log(
+        ui.dim(`  lewati ${alreadyLiveCount} proxy yang sudah ada di ${path.basename(opts.output)} (IP & port sama, tidak dicek ulang)`),
+      );
+    }
+  }
+
   if (entries.length === 0) {
-    console.error(ui.red(`[proxy-check] tidak ada proxy di ${path.basename(opts.input)}.`));
+    if ((opts.append || opts.skipExisting) && existingCount > 0) {
+      console.log(
+        ui.green(`\n[proxy-check] Semua proxy unik (${parsedEntries.length}) sudah ada di ${path.basename(opts.output)}. Tidak ada proxy baru yang perlu dicek.`),
+      );
+      return 0;
+    }
+    console.error(ui.red(`[proxy-check] tidak ada proxy yang bisa dicek di ${path.basename(opts.input)}.`));
     return 1;
   }
 
@@ -191,17 +223,11 @@ export async function main(argv: string[]): Promise<number> {
 
   console.log(
     `\n${ui.bold("cek proxy")} ${ui.dim(
-      `${entries.length} entri · ${opts.concurrency} paralel · timeout ${opts.timeoutMs / 1000}s · ip kita ${ourIp}${
+      `${entries.length} entri${duplicates > 0 || parsedEntries.length > entries.length ? ` (dari ${parsedEntries.length + duplicates} baris)` : ""} · ${opts.concurrency} paralel · timeout ${opts.timeoutMs / 1000}s · ip kita ${ourIp}${
         opts.target ? ` · target ${opts.target}` : ""
       }${opts.append ? " · mode append" : " · stream real-time"}`,
     )}\n`,
   );
-
-  const existingParsed = fs.existsSync(opts.output)
-    ? parseProxyFile(fs.readFileSync(opts.output, "utf8"))
-    : { entries: [] };
-  const existingCount = existingParsed.entries.length;
-  const seenEndpoints = new Set(existingParsed.entries.map((e) => e.hostPort));
 
   let done = 0;
   let newLiveCount = 0;
@@ -234,24 +260,27 @@ export async function main(argv: string[]): Promise<number> {
           liveCount++;
         }
       } else {
-        if (newLiveCount === 0) {
-          // Inisialisasi file saat proxy hidup pertama kali ditemukan
-          fs.writeFileSync(
-            opts.output,
-            [
-              "# proxy hidup per " + new Date().toISOString(),
-              "# sumber: " + path.basename(opts.input) + (opts.target ? ` · target: ${opts.target}` : "") + " (streaming)",
-              entry.raw,
-              "",
-            ].join("\n"),
-            "utf8",
-          );
-        } else {
-          // Stream/append langsung ke file
-          fs.appendFileSync(opts.output, entry.raw + "\n", "utf8");
+        if (!seenEndpoints.has(entry.hostPort)) {
+          seenEndpoints.add(entry.hostPort);
+          if (newLiveCount === 0) {
+            // Inisialisasi file saat proxy hidup pertama kali ditemukan
+            fs.writeFileSync(
+              opts.output,
+              [
+                "# proxy hidup per " + new Date().toISOString(),
+                "# sumber: " + path.basename(opts.input) + (opts.target ? ` · target: ${opts.target}` : "") + " (streaming)",
+                entry.raw,
+                "",
+              ].join("\n"),
+              "utf8",
+            );
+          } else {
+            // Stream/append langsung ke file
+            fs.appendFileSync(opts.output, entry.raw + "\n", "utf8");
+          }
+          newLiveCount++;
+          liveCount++;
         }
-        newLiveCount++;
-        liveCount++;
       }
     } else if (opts.deadFile) {
       if (deadCount === 0 && !fs.existsSync(opts.deadFile)) {
@@ -298,8 +327,16 @@ export async function main(argv: string[]): Promise<number> {
 
   // Final rewrite: sort by latency (fastest first) and write complete header
   if (alive.length > 0 && !opts.append) {
-    fs.writeFileSync(opts.output, renderLiveFile(alive, opts, results.length), "utf8");
-    console.log(`  ${ui.green("→")} ${alive.length} proxy ditulis ke ${ui.bold(path.basename(opts.output))} (diurutkan dari tercepat)`);
+    const seenLive = new Set<string>();
+    const uniqueAlive: CheckResult[] = [];
+    for (const res of alive) {
+      if (!seenLive.has(res.entry.hostPort)) {
+        seenLive.add(res.entry.hostPort);
+        uniqueAlive.push(res);
+      }
+    }
+    fs.writeFileSync(opts.output, renderLiveFile(uniqueAlive, opts, results.length), "utf8");
+    console.log(`  ${ui.green("→")} ${uniqueAlive.length} proxy ditulis ke ${ui.bold(path.basename(opts.output))} (diurutkan dari tercepat)`);
   } else if (opts.append && newLiveCount > 0) {
     console.log(`  ${ui.green("→")} ${newLiveCount} proxy baru ditambahkan ke ${ui.bold(path.basename(opts.output))} (total ${liveCount})`);
   }

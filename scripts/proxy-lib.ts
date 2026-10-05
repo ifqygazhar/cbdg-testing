@@ -52,12 +52,21 @@ export function parseProxyLine(line: string): ProxyEntry | null {
   if (!raw || raw.startsWith("#")) return null;
 
   let norm = raw;
-  // Handle host:port:user:pass format if no scheme is present
+  // Handle host:port:user:pass or user:pass:host:port format if no scheme is present
   if (!norm.includes("://")) {
     const parts = norm.split(":");
     if (parts.length === 4) {
-      const [h, p, u, pwd] = parts;
-      norm = `http://${encodeURIComponent(u)}:${encodeURIComponent(pwd)}@${h}:${p}`;
+      if (/^\d+$/.test(parts[1])) {
+        // host:port:user:pass
+        const [h, p, u, pwd] = parts;
+        norm = `http://${encodeURIComponent(u)}:${encodeURIComponent(pwd)}@${h}:${p}`;
+      } else if (/^\d+$/.test(parts[3])) {
+        // user:pass:host:port
+        const [u, pwd, h, p] = parts;
+        norm = `http://${encodeURIComponent(u)}:${encodeURIComponent(pwd)}@${h}:${p}`;
+      } else {
+        norm = `http://${norm}`;
+      }
     } else {
       norm = `http://${norm}`;
     }
@@ -80,6 +89,10 @@ export function parseProxyLine(line: string): ProxyEntry | null {
 
     // Require an explicit port to avoid dialling invalid hosts (e.g. "http://host-tanpa-port")
     if (!port) return null;
+
+    const portNum = parseInt(port, 10);
+    if (isNaN(portNum) || portNum < 1 || portNum > 65535) return null;
+    const cleanPort = String(portNum);
 
     const protocol = u.protocol.toLowerCase();
     const allowed = [
@@ -106,15 +119,16 @@ export function parseProxyLine(line: string): ProxyEntry | null {
     const authPart = username
       ? `${encodeURIComponent(username)}${password ? `:${encodeURIComponent(password)}` : ""}@`
       : "";
-    const url = `${normProtocol}//${authPart}${u.hostname}:${port}`;
+    const cleanHost = u.hostname.toLowerCase();
+    const url = `${normProtocol}//${authPart}${cleanHost}:${cleanPort}`;
 
     return {
       raw,
       url,
-      hostPort: `${u.hostname}:${port}`,
+      hostPort: `${cleanHost}:${cleanPort}`,
       protocol: normProtocol,
-      hostname: u.hostname,
-      port,
+      hostname: cleanHost,
+      port: cleanPort,
       username,
       password,
     };
@@ -123,10 +137,18 @@ export function parseProxyLine(line: string): ProxyEntry | null {
   }
 }
 
-export function parseProxyFile(text: string): { entries: ProxyEntry[]; skipped: string[] } {
+export interface ParseProxyFileResult {
+  entries: ProxyEntry[];
+  skipped: string[];
+  duplicates: number;
+}
+
+export function parseProxyFile(text: string): ParseProxyFileResult {
   const entries: ProxyEntry[] = [];
   const skipped: string[] = [];
-  const seen = new Set<string>();
+  const seenIndex = new Map<string, number>();
+  let duplicates = 0;
+
   for (const line of text.split(/\r?\n/)) {
     const t = line.trim();
     if (!t || t.startsWith("#")) continue;
@@ -135,11 +157,20 @@ export function parseProxyFile(text: string): { entries: ProxyEntry[]; skipped: 
       skipped.push(t);
       continue;
     }
-    if (seen.has(entry.hostPort)) continue; // same endpoint twice is one proxy
-    seen.add(entry.hostPort);
+    const existingIdx = seenIndex.get(entry.hostPort);
+    if (existingIdx !== undefined) {
+      duplicates++;
+      // If the earlier entry had no credentials and this one does, prefer the authenticated one
+      const existing = entries[existingIdx];
+      if (!existing.username && entry.username) {
+        entries[existingIdx] = entry;
+      }
+      continue; // same endpoint (IP:port) is duplicate, ignore so it's not checked 2x
+    }
+    seenIndex.set(entry.hostPort, entries.length);
     entries.push(entry);
   }
-  return { entries, skipped };
+  return { entries, skipped, duplicates };
 }
 
 const IP_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
