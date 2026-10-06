@@ -49,6 +49,18 @@ class JsonlStore:
         err = (record.get("error") or "").lower()
         return "restricted" in err or "disabled" in err or "banned" in err
 
+    def get_all_done_emails(self) -> Set[str]:
+        return {
+            email.lower() for email, rec in self._records.items()
+            if rec.get("status") == FlowState.DONE
+        }
+
+    def get_all_failed_emails(self) -> Set[str]:
+        return {
+            email.lower() for email, rec in self._records.items()
+            if rec.get("status") == FlowState.FAILED
+        }
+
     def upsert(self, record: Dict[str, Any]):
         email = record.get("email")
         if not email:
@@ -59,6 +71,25 @@ class JsonlStore:
         os.makedirs(os.path.dirname(os.path.abspath(self.filepath)), exist_ok=True)
         with open(self.filepath, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
+
+def read_emails_from_result_file(filepath: str) -> Set[str]:
+    emails: Set[str] = set()
+    if not filepath or not os.path.exists(filepath):
+        return emails
+    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Strip comment after #
+            main_part = line.split("#")[0].strip()
+            # Delimited by : or |
+            parts = [p.strip() for p in main_part.replace("|", ":").split(":") if p.strip()]
+            if parts:
+                first = parts[0].lower()
+                if "@" in first:
+                    emails.add(first)
+    return emails
 
 class ResultWriter:
     def __init__(self, key_files: list[str], account_result_file: str, account_failed_file: str):
@@ -104,3 +135,15 @@ class ResultWriter:
 
     def markFailed(self, email: str, password_or_reason: str = "", reason: str = ""):
         return self.mark_failed(email, password_or_reason, reason)
+
+    def get_successful_emails(self) -> Set[str]:
+        return read_emails_from_result_file(self.account_result_file)
+
+    def get_failed_emails(self) -> Set[str]:
+        return read_emails_from_result_file(self.account_failed_file)
+
+    def getSuccessfulEmails(self) -> Set[str]:
+        return self.get_successful_emails()
+
+    def getFailedEmails(self) -> Set[str]:
+        return self.get_failed_emails()

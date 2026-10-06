@@ -403,6 +403,12 @@ async def run_single_google_account(
 ) -> bool:
     email = account.email
     password = account.password
+
+    # Absolute safeguard: if account already completed or has api key, NEVER rerun!
+    if email.lower() in results.get_successful_emails() or store.is_done(email):
+        logger.info(f"Safeguard: {email} is already completed / successful (API key exists). Skipping execution.")
+        return True
+
     logger.info(f"starting TokenHarbor Google OAuth signup for {email} (proxy={proxy.server if proxy else 'direct'}, pace={pace})")
     store.upsert({"email": email, "password": password, "status": FlowState.PENDING, "proxy": proxy.server if proxy else None})
 
@@ -618,6 +624,11 @@ async def run_single_account(
     logger,
     pace: str = "human",
 ) -> bool:
+    # Absolute safeguard: if account already completed or has api key, NEVER rerun!
+    if email.lower() in results.get_successful_emails() or store.is_done(email):
+        logger.info(f"Safeguard: {email} is already completed / successful (API key exists). Skipping execution.")
+        return True
+
     logger.info(f"starting TokenHarbor signup for {email} (proxy={proxy.server if proxy else 'direct'}, pace={pace})")
     store.upsert({"email": email, "password": password, "status": FlowState.PENDING, "proxy": proxy.server if proxy else None})
 
@@ -850,6 +861,43 @@ async def run_single_account(
         results.mark_failed(email, password, str(e))
         return False
 
+def get_completed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str) -> Set[str]:
+    """
+    Returns the unified set of all email addresses that have successfully completed TokenHarbor registration
+    and obtained an API key, checked across all sources:
+    1. akun-result-tokenharbor.txt (and any result files configured on results)
+    2. Primary JsonlStore (status == FlowState.DONE)
+    3. Fallback state files (state.jsonl, state-tokenharbor.jsonl)
+    """
+    completed: Set[str] = set()
+    completed.update(results.get_successful_emails())
+    completed.update(store.get_all_done_emails())
+
+    for sf in ["state.jsonl", "state-tokenharbor.jsonl"]:
+        if os.path.exists(sf) and os.path.abspath(sf) != os.path.abspath(current_state_file):
+            try:
+                alt = JsonlStore(sf)
+                completed.update(alt.get_all_done_emails())
+            except Exception:
+                pass
+
+    return completed
+
+def get_failed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str) -> Set[str]:
+    failed: Set[str] = set()
+    failed.update(results.get_failed_emails())
+    failed.update(store.get_all_failed_emails())
+
+    for sf in ["state.jsonl", "state-tokenharbor.jsonl"]:
+        if os.path.exists(sf) and os.path.abspath(sf) != os.path.abspath(current_state_file):
+            try:
+                alt = JsonlStore(sf)
+                failed.update(alt.get_all_failed_emails())
+            except Exception:
+                pass
+
+    return failed
+
 async def main_async():
     parser = argparse.ArgumentParser(description="TokenHarbor Camoufox runner (Google OAuth / TempMail + Camoufox)")
     parser.add_argument("--auth", choices=["tempmail", "google"], default=os.getenv("TOKENHARBOR_AUTH", "tempmail"), help="Auth method: tempmail or google (default: tempmail)")
@@ -859,7 +907,7 @@ async def main_async():
     parser.add_argument("--proxy-file", default=None, help="Path to proxy list file")
     parser.add_argument("--delay", type=float, default=2.0, help="Delay between accounts in seconds")
     parser.add_argument("--retry-failed", action="store_true", help="Retry accounts previously marked failed")
-    parser.add_argument("--state-file", default="state-tokenharbor.jsonl", help="State file")
+    parser.add_argument("--state-file", default=os.getenv("TOKENHARBOR_STATE_FILE") or os.getenv("STATE_FILE") or ("state.jsonl" if os.path.exists("state.jsonl") else "state-tokenharbor.jsonl"), help="State file")
     parser.add_argument("--output-file", default="apikey-tokenharbor.txt", help="API key output file")
     parser.add_argument("--workers", "-w", type=int, default=1, help="Number of parallel workers")
     parser.add_argument("--limit", type=int, default=0, help="Max accounts to process")
@@ -896,10 +944,6 @@ async def main_async():
     logger = create_logger()
     logger.info(f"TokenHarbor Camoufox runner started (auth={args.auth}, pace={args.pace}, workers={args.workers}). Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
 
-    if args.dry_run:
-        logger.info("dry-run: config validated (no browser launched)")
-        return
-
     # ── GOOGLE OAUTH FLOW ───────────────────────────────────────────────────
     if args.auth == "google":
         accounts_file = args.accounts_file
@@ -915,9 +959,41 @@ async def main_async():
         accounts = load_accounts(accounts_file)
         logger.info(f"Loaded {len(accounts)} Google accounts from {accounts_file}")
 
-        target_count = args.limit if args.limit > 0 else len(accounts)
-        worker_count = max(1, min(args.workers, target_count, len(accounts)))
-        logger.info(f"Planning to process up to {target_count} Google account(s) with {worker_count} parallel worker(s)")
+        completed_emails = get_completed_emails(store, results, args.state_file)
+        failed_emails = get_failed_emails(store, results, args.state_file)
+
+        # Strictly exclude ANY account that has already completed successfully!
+        eligible_accounts = [
+            acc for acc in accounts
+            if acc.email.lower() not in completed_emails
+        ]
+
+        if not args.retry_failed:
+            eligible_accounts = [
+                acc for acc in eligible_accounts
+                if acc.email.lower() not in failed_emails
+                and not store.is_restricted_or_banned(acc.email)
+            ]
+        else:
+            logger.info("Retry mode active: prioritizing previously failed accounts at the front of the queue.")
+            def sort_key(acc):
+                return 0 if acc.email.lower() in failed_emails else 1
+            eligible_accounts.sort(key=sort_key)
+
+        if not eligible_accounts:
+            logger.info("All accounts have already been completed successfully! Nothing to do.")
+            return
+
+        target_count = min(args.limit, len(eligible_accounts)) if args.limit > 0 else len(eligible_accounts)
+        worker_count = max(1, min(args.workers, target_count, len(eligible_accounts)))
+        logger.info(
+            f"Account queue stats: total={len(accounts)}, completed={len(accounts) - len(eligible_accounts)}, "
+            f"todo={len(eligible_accounts)}, target={target_count}, workers={worker_count}, retry_failed={args.retry_failed}"
+        )
+
+        if args.dry_run:
+            logger.info(f"dry-run: next account(s) to process: {[a.email for a in eligible_accounts[:target_count]]}")
+            return
 
         processed = 0
         success_count = 0
@@ -930,26 +1006,11 @@ async def main_async():
                 account = None
                 proxy = None
                 async with lock:
-                    if (args.limit > 0 and processed >= args.limit) or account_idx >= len(accounts):
+                    if success_count >= target_count or (args.limit > 0 and processed >= args.limit) or account_idx >= len(eligible_accounts):
                         break
 
-                    while account_idx < len(accounts):
-                        cand = accounts[account_idx]
-                        account_idx += 1
-                        if store.is_done(cand.email):
-                            logger.info(f"Skipping already DONE account: {cand.email}")
-                            continue
-                        if store.is_restricted_or_banned(cand.email) and not args.retry_failed:
-                            logger.warn(f"Skipping permanently restricted account: {cand.email}")
-                            continue
-                        if not args.retry_failed and store.get(cand.email) and store.get(cand.email).get("status") == FlowState.FAILED:
-                            logger.info(f"Skipping previously failed account: {cand.email}")
-                            continue
-                        account = cand
-                        break
-
-                    if not account:
-                        break
+                    account = eligible_accounts[account_idx]
+                    account_idx += 1
 
                     if not args.no_proxy and proxies:
                         proxy = proxy_pool.get_next_proxy() if proxy_pool else None
@@ -993,6 +1054,10 @@ async def main_async():
     count = args.limit if args.limit > 0 else (len(proxies) if proxies else 1)
     worker_count = max(1, min(args.workers, count))
     logger.info(f"Planning to process target {count} account(s) using domain @{args.domain} with {worker_count} parallel worker(s)")
+
+    if args.dry_run:
+        logger.info("dry-run: TempMail config validated (no browser launched)")
+        return
 
     processed = 0
     success_count = 0

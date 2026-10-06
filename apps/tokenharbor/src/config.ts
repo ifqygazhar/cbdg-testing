@@ -62,11 +62,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): TokenHarborCon
     else if (fs.existsSync("accounts-tokenharbor.txt")) seedAccounts = "accounts-tokenharbor.txt";
   }
 
-  const stateFile = env.STATE_FILE || "state-tokenharbor.jsonl";
-  const resultSuccessFile = env.RESULT_SUCCESS_FILE || "akun-result-tokenharbor.txt";
-  const resultFailedFile = env.RESULT_FAILED_FILE || "akun-failed-tokenharbor.txt";
-  const apiKeyFile = env.API_KEY_FILE || "apikey-tokenharbor.txt";
-  const screenshotDir = env.SCREENSHOT_DIR || "screenshots-tokenharbor";
+  const stateFile = env.TOKENHARBOR_STATE_FILE || env.STATE_FILE || (fs.existsSync("state.jsonl") ? "state.jsonl" : "state-tokenharbor.jsonl");
+  const resultSuccessFile = env.TOKENHARBOR_RESULT_SUCCESS_FILE || "akun-result-tokenharbor.txt";
+  const resultFailedFile = env.TOKENHARBOR_RESULT_FAILED_FILE || "akun-failed-tokenharbor.txt";
+  const apiKeyFile = env.TOKENHARBOR_API_KEY_FILE || env.API_KEY_FILE || "apikey-tokenharbor.txt";
+  const screenshotDir = env.TOKENHARBOR_SCREENSHOT_DIR || env.SCREENSHOT_DIR || "screenshots-tokenharbor";
 
   return {
     workers,

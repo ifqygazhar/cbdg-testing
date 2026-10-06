@@ -76,11 +76,14 @@ export class JsonlStore {
 // ── Result writer: akun-result-tokenharbor.txt / apikey-tokenharbor.txt ──
 function readEmails(file: string): Set<string> {
   const out = new Set<string>();
-  if (!fs.existsSync(file)) return out;
+  if (!file || !fs.existsSync(file)) return out;
   for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     const t = line.trim();
     if (!t || t.startsWith("#")) continue;
-    out.add(t.split(/[:|]/)[0].trim());
+    const email = t.split("#")[0].split(/[:|]/)[0].trim().toLowerCase();
+    if (email && email.includes("@")) {
+      out.add(email);
+    }
   }
   return out;
 }

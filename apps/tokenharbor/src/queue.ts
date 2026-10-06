@@ -92,14 +92,24 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
     const previouslyFailed = results.getFailedEmails();
 
     todoAccounts = rawAccounts.filter((acc) => {
-      if (succeeded.has(acc.email)) return false;
-      const rec = store.get(acc.email);
+      const email = acc.email.toLowerCase();
+      if (succeeded.has(email)) return false;
+      const rec = store.get(acc.email) ?? store.get(email);
       if (rec?.status === FlowState.DONE) return false;
-      if (!cfg.retryFailed && (previouslyFailed.has(acc.email) || rec?.status === FlowState.FAILED)) {
+      if (!cfg.retryFailed && (previouslyFailed.has(email) || rec?.status === FlowState.FAILED)) {
         return false;
       }
       return true;
     });
+
+    if (cfg.retryFailed) {
+      // Prioritize previously failed accounts at the head of the queue
+      todoAccounts.sort((a, b) => {
+        const aFailed = previouslyFailed.has(a.email.toLowerCase()) || store.get(a.email)?.status === FlowState.FAILED ? 0 : 1;
+        const bFailed = previouslyFailed.has(b.email.toLowerCase()) || store.get(b.email)?.status === FlowState.FAILED ? 0 : 1;
+        return aFailed - bFailed;
+      });
+    }
 
     log("info", "accounts to process", {
       total: rawAccounts.length,
