@@ -76,6 +76,7 @@ interface CliConfig {
   proxyList: string[];
   outputValid: string;
   outputBad: string;
+  outputRateLimit: string;
   outputCsv: string;
   limit?: number;
 }
@@ -162,6 +163,8 @@ function getCandidateKeysFiles(provider?: string): CandidateFile[] {
 
   if (provider === "tokenharbor") {
     checkAndAdd("apikey-unli.txt", "apikey-unli.txt", "1.300+ plain keys (otomatis cari email di database)");
+    checkAndAdd("apikey-ratelimit.txt", "apikey-ratelimit.txt", "Key terkena Rate Limit (siap dites ulang)");
+    checkAndAdd("akun-ratelimit-tokenharbor.txt", "akun-ratelimit-tokenharbor.txt", "Akun terkena Rate Limit (email:password:key)");
     checkAndAdd("akun-result-tokenharbor.txt", "akun-result-tokenharbor.txt", "Hasil pendaftaran TokenHarbor lengkap (email:password:key)");
     checkAndAdd("akun-bad-tokenharbor.txt", "akun-bad-tokenharbor.txt", "Akun terindikasi gagal / Free Models disabled");
     checkAndAdd("akun-good-tokenharbor.txt", "akun-good-tokenharbor.txt", "Akun TokenHarbor yang sudah terverifikasi aktif");
@@ -181,6 +184,7 @@ function getCandidateKeysFiles(provider?: string): CandidateFile[] {
 
   // File umum
   checkAndAdd("apikey-unli.txt", "apikey-unli.txt", "Daftar API key unli");
+  checkAndAdd("apikey-ratelimit.txt", "apikey-ratelimit.txt", "File key terkena Rate Limit");
   checkAndAdd("apikey.txt", "apikey.txt", "File apikey.txt umum");
 
   return candidates;
@@ -206,6 +210,8 @@ function buildAccountLookupMap(): Map<string, AccountInfo> {
     "akun-good-tokenharbor.txt",
     "akun-bad-tokenharbor.txt",
     "akun-failed-tokenharbor.txt",
+    "akun-ratelimit-tokenharbor.txt",
+    "akun-ratelimit.txt",
     "tokenharbor-dataset/link.txt",
     "akun-result.txt",
     "akun-failed.txt",
@@ -513,6 +519,9 @@ function parseArguments(): Partial<CliConfig> {
     } else if (arg === "--output-bad" || arg === "--bad" || arg === "-b") {
       config.outputBad = next;
       i++;
+    } else if (arg === "--ratelimit" || arg === "--output-ratelimit") {
+      config.outputRateLimit = next;
+      i++;
     } else if (arg === "--csv") {
       config.outputCsv = next;
       i++;
@@ -547,6 +556,7 @@ ${c.bold("OPSI:")}
   -l, --limit <num>        Batasi jumlah key yang diuji
   -o, --output <file>      File hasil simpan key/akun valid (Default: akun-good-tokenharbor.txt / valid_keys.txt)
   -b, --output-bad <file>  File hasil simpan akun/key bad (email:password:apikey) (Default: akun-bad-tokenharbor.txt / bad_keys.txt)
+  --ratelimit <file>       File hasil simpan key terkena rate limit (Default: apikey-ratelimit.txt)
   --csv <file>             File hasil ekspor CSV (Default: check_results.csv)
   -h, --help               Tampilkan panduan ini
 
@@ -715,13 +725,18 @@ async function verifyKey(
         }
 
         if (modelsResp.status === 429) {
+          const errJson = (await modelsResp.json().catch(() => null)) as any;
+          const msg =
+            errJson?.error?.message ||
+            (Array.isArray(errJson?.errors) ? errJson.errors[0] : null) ||
+            "Rate Limit / Quota Habis (HTTP 429)";
           return {
             key,
             entry,
             status: "QUOTA",
             httpStatus: 429,
             latencyMs,
-            message: "Rate Limit / Quota Habis (HTTP 429)",
+            message: msg,
             proxyUsed: proxyUrl,
           };
         }
@@ -744,6 +759,17 @@ async function verifyKey(
             errJson?.error?.message ||
             (Array.isArray(errJson?.errors) ? errJson.errors[0] : null) ||
             "Unauthorized / Invalid API Key";
+          if (msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("too many requests")) {
+            return {
+              key,
+              entry,
+              status: "QUOTA",
+              httpStatus: modelsResp.status,
+              latencyMs,
+              message: msg,
+              proxyUsed: proxyUrl,
+            };
+          }
           return {
             key,
             entry,
@@ -834,6 +860,17 @@ async function verifyKey(
         errJson?.error?.message ||
         (Array.isArray(errJson?.errors) ? errJson.errors[0] : null) ||
         "Unauthorized / Invalid API Key";
+      if (msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("too many requests")) {
+        return {
+          key,
+          entry,
+          status: "QUOTA",
+          httpStatus: response.status,
+          latencyMs,
+          message: msg,
+          proxyUsed: proxyUrl,
+        };
+      }
       return {
         key,
         entry,
@@ -1025,13 +1062,24 @@ async function runConcurrentChecker(
   return results;
 }
 
+function isRateLimitResult(r: KeyCheckResult): boolean {
+  if (r.status === "QUOTA") return true;
+  if (r.httpStatus === 429) return true;
+  const msg = (r.message || "").toLowerCase();
+  return (
+    msg.includes("rate limit") ||
+    msg.includes("too many requests") ||
+    msg.includes("quota")
+  );
+}
+
 function printSummary(results: KeyCheckResult[], totalDurationMs: number, config: CliConfig) {
   const total = results.length;
   const valid = results.filter((r) => r.status === "VALID");
-  const quota = results.filter((r) => r.status === "QUOTA");
+  const quota = results.filter(isRateLimitResult);
   const invalid = results.filter((r) => r.status === "INVALID");
   const error = results.filter((r) => r.status === "ERROR");
-  const bad = results.filter((r) => r.status !== "VALID");
+  const bad = results.filter((r) => r.status !== "VALID" && !isRateLimitResult(r));
 
   const validPct = total > 0 ? ((valid.length / total) * 100).toFixed(1) : "0.0";
   const durationSec = (totalDurationMs / 1000).toFixed(2);
@@ -1056,7 +1104,7 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number, config
     `║  ${c.green("● Aktif (Good/Valid)")} : ${c.bold(c.green(valid.length.toString().padEnd(6)))}  ║  Rata-rata Latensi: ${c.white(`${avgLatency}ms`.padEnd(10))} ║`
   );
   console.log(
-    `║  ${c.yellow("▲ Limit / Habis Kuota")} : ${c.bold(c.yellow(quota.length.toString().padEnd(6)))}  ║  Rasio Keberhasilan: ${c.bold(c.green(`${validPct}%`.padEnd(9)))} ║`
+    `║  ${c.yellow("▲ Rate Limit / Quota")} : ${c.bold(c.yellow(quota.length.toString().padEnd(6)))}  ║  Rasio Keberhasilan: ${c.bold(c.green(`${validPct}%`.padEnd(9)))} ║`
   );
   console.log(
     `║  ${c.red("✕ Mati (Invalid 401)")}: ${c.bold(c.red(invalid.length.toString().padEnd(6)))}  ║  Gagal Koneksi    : ${c.gray(error.length.toString().padEnd(10))} ║`
@@ -1079,15 +1127,36 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number, config
     console.log(c.dim("─".repeat(70)));
   }
 
-  // Daftar Key / Akun Gagal (BAD)
+  // Daftar Key / Akun Terkena Rate Limit (QUOTA)
+  if (quota.length > 0) {
+    console.log(`\n${c.bold(c.yellow("⏳ DAFTAR KEY / AKUN TERKENA RATE LIMIT (QUOTA):"))}`);
+    console.log(c.dim("─".repeat(70)));
+    quota.slice(0, 10).forEach((item, i) => {
+      const emailHint = item.entry.email ? c.dim(` (${item.entry.email})`) : "";
+      console.log(`  ${c.yellow((i + 1).toString().padStart(2, "0") + ".")} ${c.yellow(item.key)}${emailHint} ── ${c.dim(item.message)}`);
+    });
+    if (quota.length > 10) {
+      console.log(`  ${c.dim(`... dan ${quota.length - 10} key rate limit lainnya (lihat ${config.outputRateLimit || "apikey-ratelimit.txt"})`)}`);
+    }
+    console.log(c.dim("─".repeat(70)));
+
+    console.log(
+      `\n${c.bold(c.cyan("💡 TIP RATE LIMIT:"))} Terdeteksi ${c.bold(c.yellow(quota.length.toString()))} key terkena limit jaringan/kuota (sementara).`
+    );
+    console.log(
+      `   Rotasikan IP menggunakan proxy live agar tidak terblokir:\n   ${c.bold(c.green(`bun run entrim_crusoe_key_checker_cli.ts --tokenharbor -k ${config.outputRateLimit || "apikey-ratelimit.txt"} -p proxy-live.txt -c 10`))}`
+    );
+  }
+
+  // Daftar Key / Akun Gagal (BAD / INVALID)
   if (bad.length > 0) {
-    console.log(`\n${c.bold(c.yellow("⚠ DAFTAR AKUN / KEY GAGAL (BAD):"))}`);
+    console.log(`\n${c.bold(c.red("✕ DAFTAR AKUN / KEY MATI (BAD / INVALID):"))}`);
     console.log(c.dim("─".repeat(70)));
     bad.slice(0, 10).forEach((item, i) => {
-      console.log(`  ${c.yellow((i + 1).toString().padStart(2, "0") + ".")} ${c.red(item.entry.rawLine)} ── ${c.dim(item.message)}`);
+      console.log(`  ${c.red((i + 1).toString().padStart(2, "0") + ".")} ${c.red(item.entry.rawLine)} ── ${c.dim(item.message)}`);
     });
     if (bad.length > 10) {
-      console.log(`  ${c.dim(`... dan ${bad.length - 10} akun/key gagal lainnya (lihat ${config.outputBad})`)}`);
+      console.log(`  ${c.dim(`... dan ${bad.length - 10} akun/key mati lainnya (lihat ${config.outputBad})`)}`);
     }
     console.log(c.dim("─".repeat(70)));
 
@@ -1108,7 +1177,13 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number, config
 
 function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
   const valid = results.filter((r) => r.status === "VALID");
-  const bad = results.filter((r) => r.status !== "VALID");
+  const rateLimited = results.filter(isRateLimitResult);
+  const bad = results.filter((r) => r.status !== "VALID" && !isRateLimitResult(r));
+
+  const isTokenHarbor =
+    config.baseUrl.includes("tokenharbor") ||
+    config.outputValid.includes("tokenharbor") ||
+    config.keysFile.includes("tokenharbor");
 
   // 1. Simpan Good / Valid results
   if (valid.length > 0) {
@@ -1120,10 +1195,6 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
 
     // Simpan juga file plain keys murni jika target adalah TokenHarbor atau ada format akun
     const hasAccountInfo = valid.some((r) => !!r.entry.email);
-    const isTokenHarbor =
-      config.baseUrl.includes("tokenharbor") ||
-      config.outputValid.includes("tokenharbor") ||
-      config.keysFile.includes("tokenharbor");
 
     if (hasAccountInfo && config.outputValid !== "valid_keys.txt") {
       const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
@@ -1143,12 +1214,34 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
     }
   }
 
-  // 2. Simpan Bad / Invalid results (format email:password:apikey jika ada akunnya, atau plain key jika tidak)
+  // 2. Simpan Rate Limited results (ke apikey-ratelimit.txt dan akun-ratelimit-tokenharbor.txt)
+  if (rateLimited.length > 0) {
+    const rateLimitFile = config.outputRateLimit || "apikey-ratelimit.txt";
+    const plainRateKeys = rateLimited.map((r) => r.key).join("\n") + "\n";
+    writeFileSync(rateLimitFile, plainRateKeys, "utf-8");
+    console.log(
+      `${c.yellow("⚠")} ${c.bold(rateLimited.length)} Key terkena Rate Limit dipisahkan ke: ${c.bold(c.yellow(rateLimitFile))}`
+    );
+
+    const hasAccountInfo = rateLimited.some((r) => !!r.entry.email);
+    if (hasAccountInfo) {
+      const rateLimitAccountFile = isTokenHarbor
+        ? "akun-ratelimit-tokenharbor.txt"
+        : "akun-ratelimit.txt";
+      const accountLines = rateLimited.map((r) => r.entry.rawLine).join("\n") + "\n";
+      writeFileSync(rateLimitAccountFile, accountLines, "utf-8");
+      console.log(
+        `${c.yellow("⚠")} ${c.bold(rateLimited.length)} Akun terkena Rate Limit (lengkap) juga disimpan ke: ${c.bold(c.yellow(rateLimitAccountFile))}`
+      );
+    }
+  }
+
+  // 3. Simpan Bad / Invalid results (format email:password:apikey jika ada akunnya, atau plain key jika tidak)
   if (bad.length > 0 && config.outputBad) {
     const badLines = bad.map((r) => r.entry.rawLine).join("\n") + "\n";
     writeFileSync(config.outputBad, badLines, "utf-8");
     console.log(
-      `${c.yellow("✔")} ${c.bold(bad.length)} Akun/Key gagal (BAD) dipisahkan ke: ${c.bold(c.yellow(config.outputBad))}`
+      `${c.red("✕")} ${c.bold(bad.length)} Akun/Key mati / invalid (BAD) dipisahkan ke: ${c.bold(c.red(config.outputBad))}`
     );
   }
 
@@ -1194,6 +1287,7 @@ async function main() {
     proxyList: [],
     outputValid: cliArgs.outputValid || (cliArgs.baseUrl?.includes("tokenharbor") ? "akun-good-tokenharbor.txt" : "valid_keys.txt"),
     outputBad: cliArgs.outputBad || (cliArgs.baseUrl?.includes("tokenharbor") ? "akun-bad-tokenharbor.txt" : "bad_keys.txt"),
+    outputRateLimit: cliArgs.outputRateLimit || "apikey-ratelimit.txt",
     outputCsv: cliArgs.outputCsv || "check_results.csv",
     limit: cliArgs.limit,
   };
@@ -1210,6 +1304,7 @@ async function main() {
       defaultKeysFile?: string;
       outputValid?: string;
       outputBad?: string;
+      outputRateLimit?: string;
     }
 
     const providerChoice = await selectMenu<ProviderPreset | "custom">(
@@ -1226,6 +1321,7 @@ async function main() {
             defaultKeysFile: resolveDefaultKeysFile("tokenharbor"),
             outputValid: "akun-good-tokenharbor.txt",
             outputBad: "akun-bad-tokenharbor.txt",
+            outputRateLimit: "apikey-ratelimit.txt",
           },
         },
         {
@@ -1311,6 +1407,9 @@ async function main() {
       }
       if (providerChoice.outputBad && !cliArgs.outputBad) {
         config.outputBad = providerChoice.outputBad;
+      }
+      if (providerChoice.outputRateLimit && !cliArgs.outputRateLimit) {
+        config.outputRateLimit = providerChoice.outputRateLimit;
       }
     }
 
@@ -1611,8 +1710,11 @@ swiftcedar749@huzt.my.id:torabikA1###########:thk_live_FTu1P_w16ctoHILbjdRg8mpY8
   if (config.outputValid) {
     console.log(`   ${c.dim("•")} Output Good  : ${c.green(config.outputValid)}`);
   }
+  if (config.outputRateLimit) {
+    console.log(`   ${c.dim("•")} Output Limit : ${c.yellow(config.outputRateLimit)}`);
+  }
   if (config.outputBad) {
-    console.log(`   ${c.dim("•")} Output Bad   : ${c.yellow(config.outputBad)}`);
+    console.log(`   ${c.dim("•")} Output Bad   : ${c.red(config.outputBad)}`);
   }
   console.log(
     `   ${c.dim("•")} Jaringan     : ${

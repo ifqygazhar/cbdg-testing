@@ -49,3 +49,6 @@ akun-bad-tokenharbor.txt
 akun-good-tokenharbor.txt
 apikey-good-tokenharbor.txt
 apikey-unli.txt
+apikey-ratelimit.txt
+akun-ratelimit-tokenharbor.txt
+akun-ratelimit.txt
