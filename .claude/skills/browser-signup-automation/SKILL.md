@@ -1,128 +1,148 @@
 ---
 name: browser-signup-automation
-description: Build or debug a browser signup/onboarding automation using either Bun (Puppeteer/Chromium) or Python (Camoufox/Firefox anti-Turnstile engine). Use when adding a new target platform, when Cloudflare Turnstile blocks login, when a run hangs or "bengong" on a page, or when a selector, OAuth click, or extracted value stops working. Enforces probe-before-guess so debugging costs one browser run instead of many exploratory ones.
+description: Build or debug a browser signup/onboarding automation using either Bun (Puppeteer/Chromium) or Python (Camoufox/Firefox anti-Turnstile engine), with standardized support for both Google OAuth (GSuite) and TempMail (disposable inboxes). Use when adding a new target platform, when Cloudflare Turnstile blocks login, when a run hangs or "bengong", or when adapting to platform-specific onboarding steps. Enforces probe-before-guess, idempotency, and resilient multi-tab execution.
 ---
 
-# Browser signup automation
+# Browser Signup & Onboarding Automation
 
-Automations here fail in a narrow, repeating set of ways. Diagnose by **probing
-the live page**, never by reading the flow code and guessing. One probe run
-answers what ten rounds of selector edits cannot.
+Automations here follow a standardized dual-engine, dual-auth architecture. When adding a new target platform or debugging an existing one, adhere to these proven patterns to ensure resilience against bot protections, mid-flow crashes, and platform-specific quirks.
 
-## Dual-Engine Architecture
+---
 
-This repository supports two execution engines selectable per-run via CLI (`--engine bun|python`) or environment (`BROWSER_ENGINE=python|bun`):
+## 1. Dual-Auth Modality
 
-1. **Bun Engine (`@ifqy/google-oauth` + Puppeteer / Chromium)**
-   - Native TypeScript codebase under Bun workspaces (`apps/*`).
-   - Best for fast, standard flows where Cloudflare Turnstile is absent or solvable via standard stealth flags.
-   - Run via: `bun run <app> --engine bun` (or default `bun run <app>`).
+Every automation platform should support one or both of the following authentication strategies:
 
-2. **Python Engine (`packages/camoufox_core` + Camoufox / Firefox / Playwright)**
-   - C++ patched Firefox build with genuine hardware spoofing (Canvas, WebGL, Audio, Fonts, GeoIP).
-   - **Crucial for Cloudflare Turnstile & Clerk SSO challenges:** In our live tests, Camoufox completely bypasses Turnstile challenges silently where Chromium triggers "Security check: Complete this verification" and errors with "troubleshoot".
-   - Run via: `bun run <app> --engine python` (delegates automatically), or `bun run <app>:python`, or `/home/azhar/.venvs/camoufox/bin/python apps/<app>/camoufox_runner.py`.
+### Mode A: Google OAuth (`--auth google`)
+- **Account Source**: `gsuite.txt` or platform-specific account files via `load_accounts()`.
+- **SSO Handling**: Solves Google login screens (`#identifierId`, `#password`), handles account choosers, and automatically accepts Google Workspace Terms of Service speedbumps (`/speedbump/workspacetermsofservice`).
+- **Proxy Bypass (`GOOGLE_DIRECT=1`)**: Automatically bypasses proxy for Google and Gmail hostnames (`accounts.google.com,ssl.gstatic.com,www.gstatic.com,mail.google.com,gmail.com`) so Google risk control sees the direct machine IP instead of flagged datacenter proxies.
+- **Gmail Tab Verification (In-Session)**: If the target platform sends an email verification link even after Google SSO (e.g. TokenHarbor "Verify your email to claim rewards"), open Gmail web in a secondary tab inside the same authenticated context (`context.new_page()`), extract the link, and visit it.
 
-## The rule
+### Mode B: TempMail (`--auth tempmail`)
+- **API Provider**: TempMail-Pro (`https://temp-postservice.verifwebsitepro.workers.dev`).
+- **Flow**: Generates an `@ifqy.net` address via `TempMailClient.create_email()`, fills the direct signup form, polls the API inbox for verification links or magic links (e.g. Stytch in GroqCloud), and navigates to the activation URL.
 
-**A hang has exactly one question: what is on the page right now, and what
-happens when we touch it?** Answer that with a throwaway probe script before
-changing any flow code.
+---
 
-### 1. Bun / Puppeteer Probe
-```bash
-# probe lives beside the app so the workspace import resolves
-cat > apps/<app>/src/__probe.ts <<'TS'
-import { launchGoogleOAuthBrowser, findGoogleTrigger, dom } from "@ifqy/google-oauth";
-const handle = await launchGoogleOAuthBrowser({ headless: true, opts: { headless: true } });
-const page = handle.page;
-page.on("pageerror", (e) => console.log("pageerror:", String((e as Error).stack ?? e).slice(0, 400)));
-page.on("response", (r) => { if (r.status() >= 400) console.log(r.status(), r.url().slice(0, 120)); });
-try {
-  await page.goto("<URL>", { waitUntil: "domcontentloaded" });
-  await new Promise((r) => setTimeout(r, 6000));
-  console.log(await page.evaluate(() =>
-    Array.from(document.querySelectorAll("button,a,[role=button]")).map((el) => ({
-      tag: el.tagName, label: el.getAttribute("aria-label"),
-      text: (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40),
-    }))));
-} finally { await handle.close().catch(() => {}); }
-TS
-bun run apps/<app>/src/__probe.ts; rm apps/<app>/src/__probe.ts
+## 2. Dual-Engine Architecture
+
+| Engine | Best For | Invocation |
+|---|---|---|
+| **Bun Engine** (`@ifqy/google-oauth` + Puppeteer / Chromium) | Standard SPAs, high-speed execution, straightforward login forms without aggressive bot detection. | `bun run <app> --engine bun` |
+| **Python Engine** (`packages/camoufox_core` + Camoufox / Firefox) | **Cloudflare Turnstile**, Clerk SSO security checks, Datadome, Kasada. Hardware fingerprint spoofing passes Turnstile silently. | `bun run <app> --engine python` (auto-delegates), or `/home/azhar/.venvs/camoufox/bin/python apps/<app>/camoufox_runner.py` |
+
+---
+
+## 3. Standard Layout for New Apps (`apps/<app>/`)
+
+When creating a new target automation, follow this uniform structure:
+
+```
+apps/<app>/
+├── src/
+│   ├── cli.ts            # CLI arguments parser (supports --auth, --engine, --pace, --limit, etc.)
+│   ├── config.ts         # Typed config & env resolution
+│   ├── runner.ts         # Bun/Puppeteer execution entrypoint
+│   └── flow/
+│       ├── selectors.ts  # Centralized CSS/XPath selectors
+│       ├── steps.ts      # Granular step functions
+│       └── engine.ts     # Flow orchestration
+├── camoufox_runner.py    # Python Camoufox execution entrypoint
+└── package.json          # Workspace package definition
 ```
 
-### 2. Camoufox / Python Probe (Use when testing Turnstile / Bot Protections)
+Beside the app, create `<app>-dataset/` to store raw HTML snapshots:
+- `<app>-dataset/signup.html`: Registration / SSO landing page.
+- `<app>-dataset/onboarding.html`: Post-signup consent or survey screens.
+- `<app>-dataset/dashboard.html`: Authenticated main dashboard.
+- `<app>-dataset/apikey.html`: API key generation modal / page.
+- `<app>-dataset/email.html`: Verification or magic link email structure.
+
+---
+
+## 4. Non-Negotiable Implementation Rules
+
+### Rule 1: Always Use `browser.new_context()` in Python / Playwright
+**NEVER** do `page = await browser.new_page()`. Playwright attaches `_owner_page` to the internal context, causing any subsequent `context.new_page()` (such as opening Gmail or popup) to crash with `Error: Please use browser.new_context()`.
+**Always write:**
+```python
+async with browser_ctx as browser:
+    context = await browser.new_context(ignore_https_errors=True)
+    page = await context.new_page()
+```
+
+### Rule 2: Resumable & Idempotent Flows
+Accounts often fail midway (rate limit, network blip) and get resumed. Every step must be idempotent:
+- **Landing Check**: If navigating to the signup URL redirects immediately to `/dashboard`, skip login and proceed directly to dashboard steps.
+- **Consent / Feature Flags**: Check if features (e.g. "Free models") are already enabled (e.g. `Free allowance` text visible) before waiting on buttons with long timeouts.
+- **Verification Banners**: Check if the "Verify your email" banner exists before attempting to click it or check inboxes.
+- **Fallback Access**: On Google OAuth, API access is often active immediately. If email verification link cannot be retrieved within timeout, log a warning and proceed directly to API key creation.
+
+### Rule 3: Single-File Selectors with Text/Role Priority
+Hashed CSS classes (e.g. `.css-c4xhxe`, `.btn-v3-blue`) change with every platform build. Always select using:
+1. `data-testid` or `data-analytics`
+2. `aria-label` or button role with text: `button:has-text("...")`
+3. Structural tags: `tr.zA:has-text("...")`
+
+### Rule 4: Clean Resource Disposal
+- Always wrap browser instances in `async with` or `try ... finally`.
+- Close secondary tabs (`gmail_page.close()`) as soon as the verification token is extracted.
+- Catch signals using `setup_process_signals()` so Ctrl+C never leaves zombie browser processes.
+
+---
+
+## 5. Integrating New Apps into the Master Runner
+
+To make the new app available system-wide:
+1. **Interactive Menu (`scripts/run.ts`)**:
+   Add the app to the choices prompt. If the app supports both Google and TempMail, prompt for auth method:
+   ```ts
+   const authMethod = await select({
+     message: "Metode pendaftaran <App>?",
+     choices: [
+       { name: "Google OAuth (GSuite)", value: "google" },
+       { name: "TempMail (Disposable)", value: "tempmail" },
+     ],
+   });
+   ```
+2. **Planner (`scripts/plan.ts`)**:
+   Map the chosen options to CLI flags (`--auth`, `--accounts-file`, `--domain`).
+3. **`package.json`**:
+   Add root script: `"<app>": "bun run apps/<app>/src/cli.ts"`.
+
+---
+
+## 6. Diagnosis & Probe-Before-Guess
+
+Before modifying code when an automation hangs or fails, run a quick disposable probe:
+
+### Quick Camoufox Probe:
 ```bash
-cat > apps/<app>/__probe_camoufox.py <<'PY'
+cat > apps/<app>/__probe.py <<'PY'
 import asyncio
 from camoufox.async_api import AsyncCamoufox
 
 async def main():
-    async with AsyncCamoufox(headless=True) as browser:
-        page = await browser.new_page()
-        page.on("pageerror", lambda e: print("pageerror:", str(e)[:300]))
+    async with AsyncCamoufox(headless=False) as browser:
+        ctx = await browser.new_context()
+        page = await ctx.new_page()
         await page.goto("<URL>", wait_until="domcontentloaded")
-        await asyncio.sleep(4)
+        await asyncio.sleep(5)
         print("URL:", page.url)
-        print("Title:", await page.title())
-        buttons = await page.query_selector_all("button,a,[role=button]")
-        for b in buttons:
-            txt = (await b.text_content() or "").strip().replace("\n", " ")[:40]
-            aria = await b.get_attribute("aria-label")
-            testid = await b.get_attribute("data-testid")
-            print(f"tag={b} aria={aria} testid={testid} text={txt}")
+        print("Buttons:", [await b.text_content() for b in await page.query_selector_all("button")])
 asyncio.run(main())
 PY
-/home/azhar/.venvs/camoufox/bin/python apps/<app>/__probe_camoufox.py; rm apps/<app>/__probe_camoufox.py
+/home/azhar/.venvs/camoufox/bin/python apps/<app>/__probe.py; rm apps/<app>/__probe.py
 ```
 
-Delete the probe when done. Never commit temporary probes.
+---
 
-## Diagnosis order
+## 7. Reference Catalogue
 
-1. **Is the element there?** Dump every button with its `aria-label`. If the
-   label you expect is absent, the surface changed — read
-   `references/traps.md` §"button that does not exist yet".
-2. **Does clicking it trigger Cloudflare Turnstile or Security Check?** If
-   Turnstile pops up and errors with "troubleshoot", switch to Camoufox (`--engine python`).
-3. **Does clicking it do anything?** Attach `pageerror` and click. A handler
-   that throws is invisible in the flow log and looks exactly like a hang.
-4. **Did a request fail or content-negotiate wrong?** Log responses and
-   `request().headers()`. See §"forced headers" — this one is ours, not theirs.
-5. **Only then** change the flow.
-
-## What to write
-
-### Bun Apps
-Layout: `cli.ts` (flags → env), `config.ts` (env → typed config), `loaders.ts` (seed files),
-`store.ts` (jsonl state + result writers), `queue.ts` (skip logic, worker pool, spacing),
-`runner.ts` (one account: launch → flow → close), `flow/{selectors,steps,engine}.ts`.
-
-### Python Camoufox Runners
-Layout: `apps/<app>/camoufox_runner.py` backed by `packages/camoufox_core`:
-- `packages/camoufox_core/browser.py`: `launch_camoufox` with proxy & geoip.
-- `packages/camoufox_core/google_oauth.py`: `perform_google_oauth` for Playwright.
-- `packages/camoufox_core/loaders.py`: account & proxy parsers.
-- `packages/camoufox_core/store.py`: jsonl state tracking & result writing.
-
-Non-negotiables, each learned from a real failure:
-
-- **One account, one browser launch, always closed** in `finally`.
-- **Selectors in one file**, keyed off `aria-label` or stable `data-*`. CSS
-  classes here are hashed (`css-c4xhxe`) and change per build.
-- **Every step is resumable.** Write state before and after, and let a re-run
-  detect an already-completed account rather than redoing it.
-- **Never discard a value the site shows once.** Widen the validator instead,
-  and dump the page on failure. See `references/traps.md` §"key charset".
-- **Regression-test selectors against saved HTML** with `HTMLRewriter`, so a
-  layout change fails a test instead of a run.
-
-## Reference
-
-- `references/traps.md` — the failure catalogue: symptom → cause → fix. Read
-  this first when something hangs.
-- `references/camoufox.md` — Camoufox architecture, anti-Turnstile bypass guide, and Playwright patterns.
-- `references/tempmail.md` — TempMail-Pro integration, polling, email activation, and link extraction.
-- `references/probes.md` — copy-paste probe recipes (network trace, click
-  trace, bundle spelunking, header inspection).
-- `references/pacing.md` — making a run fast without making it robotic.
+- `references/app-template.md` — Complete, copy-pasteable boilerplate for creating a new app runner supporting Google OAuth + TempMail.
+- `references/camoufox.md` — Camoufox architecture, multi-tab context rules, Turnstile bypass, and proxy bypass.
+- `references/tempmail.md` — TempMail-Pro API endpoints, polling strategies, and magic link extraction.
+- `references/traps.md` — Catalogue of known traps (Playwright context errors, GSuite speedbumps, Google redirect wrapping, etc.).
+- `references/probes.md` — Copy-paste probe recipes for network, clicks, and headers.
+- `references/pacing.md` — Human typing cadence, random mouse movements, and delays.

@@ -14,7 +14,7 @@ import re
 import sys
 import time
 from typing import Optional, List, Set
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 # Ensure repo root is on sys.path so packages.camoufox_core can be imported
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -44,6 +44,7 @@ API_KEY_RE = re.compile(r"gsk_[A-Za-z0-9_\-]{20,}")
 MAGIC_LINK_RE = re.compile(r"https://(?:[a-zA-Z0-9_\-\.]+\.)?stytch\.com/v1/magic_links/redirect\?[^\s\"'<>]+")
 
 DEFAULT_SIGNUP_URL = "https://console.groq.com/home"
+HOME_URL = "https://console.groq.com/home"
 KEYS_URL = "https://console.groq.com/keys"
 
 class SmartProxyPool:
@@ -206,38 +207,184 @@ async def run_single_account(
 
             # ── 4. Authenticate via Magic Link ──────────────────────────────
             logger.info("navigating to magic link...")
+
+            # Track network response for signupb2b and telemetry
+            signup_error_info = None
+            signup_succeeded = False
+
+            async def handle_response(response):
+                nonlocal signup_error_info, signup_succeeded
+                resp_url = response.url
+                if "signupb2b" in resp_url or "/user/profile/signupb2b" in resp_url:
+                    status = response.status
+                    try:
+                        data = await response.json()
+                        err_msg = data.get("error", {}).get("message") or str(data)
+                    except Exception:
+                        try:
+                            err_msg = await response.text()
+                        except Exception:
+                            err_msg = ""
+                    if status >= 400:
+                        signup_error_info = f"HTTP {status}: {err_msg}"
+                        logger.warn(f"GroqCloud signupb2b backend rejected request: {signup_error_info}")
+                    else:
+                        signup_succeeded = True
+                        logger.info(f"GroqCloud signupb2b accepted by backend: HTTP {status}")
+                elif "gste.groq.io" in resp_url and response.status >= 400:
+                    logger.warn(f"Stytch DFP telemetry error: HTTP {response.status}")
+
+            page.on("response", handle_response)
+
             await page.goto(magic_url, wait_until="domcontentloaded")
             await human_delay(int(3000 * delay_mult), int(5000 * delay_mult))
 
             # Wait until redirected back to console.groq.com
-            for _ in range(30):
-                if "console.groq.com" in page.url and "stytch.com" not in page.url:
+            authenticated = False
+            for _ in range(35):
+                if "console.groq.com" in page.url and "stytch.com" not in page.url and "redirect-error" not in page.url:
+                    authenticated = True
+                    break
+                if "redirect-error" in page.url:
                     break
                 await asyncio.sleep(0.5)
 
+            if not authenticated or "redirect-error" in page.url:
+                # Fallback: extract token and attempt direct auth navigation on console.groq.com
+                parsed_magic = urlparse(magic_url)
+                qs = parse_qs(parsed_magic.query)
+                token = qs.get("token", [""])[0]
+                token_type = qs.get("stytch_token_type", ["discovery"])[0]
+                if token:
+                    direct_auth_url = f"https://console.groq.com/authenticate?stytch_redirect_type=login&stytch_token_type={token_type}&token={token}"
+                    logger.info("Stytch DFP intercepted or pending, attempting direct Groq authentication...")
+                    await page.goto(direct_auth_url, wait_until="domcontentloaded")
+                    await human_delay(int(2500 * delay_mult), int(4000 * delay_mult))
+                    for _ in range(30):
+                        if "console.groq.com" in page.url and "stytch.com" not in page.url and "redirect-error" not in page.url:
+                            authenticated = True
+                            break
+                        await asyncio.sleep(0.5)
+
+            if "redirect-error" in page.url or not authenticated:
+                raise RuntimeError(f"Stytch magic link redirect error: {page.url}")
+
             logger.info(f"magic link login successful, current URL: {page.url}")
 
-            # ── 5. Navigate to API Keys page ────────────────────────────────
-            store.upsert({"email": email, "status": "KEYS_PAGE"})
-            logger.info(f"navigating to {KEYS_URL}...")
-            await page.goto(KEYS_URL, wait_until="domcontentloaded")
-            await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
+            # ── 5. Wait for Organization Creation & Dashboard Home Landing ───
+            store.upsert({"email": email, "status": "CREATING_ORGANIZATION"})
+            logger.info("waiting for GroqCloud automatic organization creation to complete and land on home dashboard...")
 
-            # Dismiss any cookie banner on keys page
+            home_ready = False
+            for attempt in range(60):  # wait up to 60 seconds
+                curr_url = page.url
+
+                # Condition A: Redirected to /home (matches dashboard-home.html)
+                if "/home" in curr_url and "console.groq.com" in curr_url and "stytch.com" not in curr_url:
+                    home_ready = True
+                    logger.info(f"GroqCloud successfully landed on dashboard home: {curr_url}")
+                    break
+
+                # Condition B: Dashboard navigation or organization selector mounted
+                try:
+                    dashboard_el = await page.query_selector(
+                        '[data-testid="organization-selector"], [data-testid="project-selector"], a[href="/keys"]'
+                    )
+                    if dashboard_el:
+                        home_ready = True
+                        logger.info(f"GroqCloud organization and dashboard elements active on page ({curr_url}).")
+                        break
+                except Exception:
+                    pass
+
+                # Condition C: Detect rejection / page reverting back to email input (matches stuck.html)
+                try:
+                    reverted_input = await page.query_selector('input#email-input, button:has-text("Continue with email")')
+                    body_text_curr = await page.evaluate("() => document.body.innerText || ''")
+                    if reverted_input and "creating your organization" not in body_text_curr.lower():
+                        # The organization creation failed and React unmounted the loading state back to email login
+                        rejection_reason = signup_error_info or "Backend GroqCloud menolak pembuatan organisasi baru (form kembali ke input email)"
+                        raise RuntimeError(
+                            f"GroqCloud organization creation gagal dan kembali ke halaman input email: {rejection_reason}. "
+                            f"Penyebab: IP terkena Anti-Abuse / Risk Control / Rate Limit GroqCloud (terlalu banyak registrasi dari 1 IP tanpa jeda/proxy). "
+                            f"Solusi: Gunakan proxy hidup dari proxy-live.txt ('Otomatis (proxy hidup bergiliran)') atau beri jeda waktu."
+                        )
+                except RuntimeError:
+                    raise
+                except Exception:
+                    pass
+
+                # Log periodic status if still on "Creating your organization..."
+                try:
+                    body_text = await page.evaluate("() => document.body.innerText || ''")
+                    if "creating your organization" in body_text.lower():
+                        if attempt % 5 == 0:
+                            logger.info("still creating organization on GroqCloud...")
+                except Exception:
+                    pass
+
+                await asyncio.sleep(1)
+
+            # Ensure we are on dashboard home and session is settled
+            if not home_ready:
+                if signup_error_info:
+                    raise RuntimeError(
+                        f"GroqCloud organization creation gagal: {signup_error_info}. "
+                        f"Penyebab: IP terkena Anti-Abuse / Risk Control / Rate Limit GroqCloud. Gunakan proxy dari proxy-live.txt."
+                    )
+                logger.info(f"Navigating to dashboard home ({HOME_URL}) to confirm active organization session...")
+                await page.goto(HOME_URL, wait_until="domcontentloaded")
+                await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
+                if "authenticate" in page.url or await page.query_selector('input#email-input'):
+                    raise RuntimeError(
+                        "GroqCloud sesi belum terautentikasi (dashboard home mengalihkan kembali ke login). "
+                        "Pembuatan organisasi gagal diproses backend."
+                    )
+            else:
+                await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
+
+            # Confirm dashboard home state
+            store.upsert({"email": email, "status": "DASHBOARD"})
+            logger.info(f"GroqCloud dashboard home confirmed at {page.url} with active organization!")
+
+            # ── 6. Navigate from Dashboard Home to API Keys page ────────────
+            store.upsert({"email": email, "status": "KEYS_PAGE"})
+            # From dashboard home, click the API Keys link in the sidebar/navigation
+            keys_link = await page.query_selector('a[href="/keys"]')
+            if keys_link:
+                logger.info("navigating from dashboard home to API Keys page via navigation link...")
+                await keys_link.click()
+                await human_delay(int(1500 * delay_mult), int(2500 * delay_mult))
+
+            # Fallback or ensure we are on /keys
+            if "/keys" not in page.url:
+                logger.info(f"navigating directly to {KEYS_URL}...")
+                await page.goto(KEYS_URL, wait_until="domcontentloaded")
+                await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
+
+            # Dismiss any cookie banner on keys page (standard or custom Datagrail banner)
             try:
                 cookie_btn = await page.query_selector('button:has-text("Accept all"), button:has-text("Accept"), button.accept_all')
                 if cookie_btn:
                     await cookie_btn.click()
                     await human_delay(500, 1000)
+                await page.evaluate("""() => {
+                    const banners = document.querySelectorAll('.dg-consent-banner');
+                    for (const b of banners) {
+                        const root = b.shadowRoot || b;
+                        const btn = root.querySelector('.accept_all, button');
+                        if (btn) btn.click();
+                    }
+                }""")
             except Exception:
                 pass
 
-            # ── 6. Open Create API Key Modal ────────────────────────────────
+            # ── 7. Open Create API Key Modal ────────────────────────────────
             store.upsert({"email": email, "status": FlowState.API_KEY})
             logger.info("clicking Create API Key button...")
             create_btn = await page.wait_for_selector(
                 'button[data-testid="keys-page-create-button"], button:has-text("Create API Key")',
-                timeout=15000,
+                timeout=30000,
             )
             if not create_btn:
                 raise RuntimeError("Create API Key button not found on /keys")
@@ -245,7 +392,7 @@ async def run_single_account(
             await create_btn.click()
             await human_delay(1000, 1800)
 
-            # ── 7. Fill Display Name ────────────────────────────────────────
+            # ── 8. Fill Display Name ────────────────────────────────────────
             label = f"App-groq-{random.randint(100, 999)}"
             logger.info(f"typing key display name: {label}...")
             name_input = await page.wait_for_selector(
@@ -264,7 +411,7 @@ async def run_single_account(
             )
             await human_delay(800, 1500)
 
-            # ── 8. Resolve Cloudflare Turnstile & Submit ─────────────────────
+            # ── 9. Resolve Cloudflare Turnstile & Submit ─────────────────────
             logger.info("checking and resolving Cloudflare Turnstile security challenge...")
             await resolve_turnstile_if_present(page, timeout_sec=25, logger=logger)
 
@@ -294,7 +441,7 @@ async def run_single_account(
             await submit_key_btn.click()
             await human_delay(2000, 3500)
 
-            # ── 9. Extract API Key ──────────────────────────────────────────
+            # ── 10. Extract API Key ──────────────────────────────────────────
             logger.info("extracting generated GroqCloud API key...")
             api_key = None
             for _ in range(25):
@@ -322,7 +469,7 @@ async def run_single_account(
 
             logger.info(f"GroqCloud API key obtained successfully: {api_key[:12]}...")
 
-            # ── 10. Record Success ──────────────────────────────────────────
+            # ── 11. Record Success ──────────────────────────────────────────
             store.upsert({
                 "email": email,
                 "password": password,

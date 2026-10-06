@@ -147,6 +147,20 @@ async def launch_camoufox(
             proxy_dict["username"] = proxy.username
         if proxy.password:
             proxy_dict["password"] = proxy.password
+
+        # Configure proxy bypass if GOOGLE_DIRECT is enabled
+        google_direct = os.getenv("GOOGLE_DIRECT", "1").lower() in ("1", "true", "yes", "y")
+        bypass = kwargs.pop("bypass", None)
+        if not bypass and google_direct:
+            env_hosts = os.getenv("GOOGLE_DIRECT_HOSTS", "")
+            hosts_list = [h.strip() for h in re.split(r"[;,\s]+", env_hosts) if h.strip()]
+            default_bypass = ["accounts.google.com", "ssl.gstatic.com", "www.gstatic.com", "mail.google.com", "gmail.com"]
+            combined = list(dict.fromkeys(hosts_list + default_bypass))
+            bypass = ",".join(combined)
+
+        if bypass:
+            proxy_dict["bypass"] = bypass
+
         launch_kwargs["proxy"] = proxy_dict
         if geoip:
             if isinstance(geoip, str):

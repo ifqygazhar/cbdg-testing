@@ -47,7 +47,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
     { value: "fastrouter", label: "fastrouter", hint: "daftar FastRouter → kredit $1 + API key ke apikey-fastrouter" },
     { value: "cbdg", label: "cbdg", hint: "daftar CodeBuddy → kredit new-user (+ VCC opsional)" },
-    { value: "tokenharbor", label: "tokenharbor", hint: "daftar TokenHarbor (TempMail) → API key ke apikey-tokenharbor.txt" },
+    { value: "tokenharbor", label: "tokenharbor", hint: "daftar TokenHarbor (TempMail / GSuite) → API key ke apikey-tokenharbor.txt" },
     { value: "groqcloud", label: "groqcloud", hint: "daftar GroqCloud (TempMail + Turnstile) → API key ke apikey-groqcloud.txt" },
   ]);
 
@@ -145,24 +145,28 @@ async function askPlan(): Promise<RunPlan> {
   ]);
 
   let authMethod: "google" | "tempmail" | undefined;
-  if (app === "fastrouter") {
-    authMethod = await select<"tempmail" | "google">("Metode pendaftaran FastRouter?", [
-      {
-        value: "tempmail",
-        label: "TempMail (TempMail-Pro)",
-        hint: "otomatis buat email & verif kode OTP (disarankan)",
-      },
-      {
-        value: "google",
-        label: "Google OAuth",
-        hint: `daftar via akun Google (butuh gsuite.txt: ${seeds.accounts} akun)`,
-      },
-    ]);
+  if (app === "fastrouter" || app === "tokenharbor") {
+    authMethod = await select<"tempmail" | "google">(
+      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : "FastRouter"}?`,
+      [
+        {
+          value: "google",
+          label: "Google OAuth (GSuite)",
+          hint: `daftar via akun Google (butuh gsuite.txt: ${seeds.accounts} akun)`,
+        },
+        {
+          value: "tempmail",
+          label: "TempMail (TempMail-Pro)",
+          hint: "otomatis buat email & verif link",
+        },
+      ],
+      seeds.accounts > 0 ? 0 : 1,
+    );
   }
 
   let domain: string | undefined;
   let limit: number | undefined;
-  if (app === "tokenharbor" || app === "groqcloud" || (app === "fastrouter" && authMethod === "tempmail")) {
+  if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter") && authMethod === "tempmail")) {
     domain = await select<string>("Domain TempMail?", [
       { value: "ifqy.net", label: "ifqy.net", hint: "domain utama TempMail-Pro (default)" },
       { value: "meongtopup.my.id", label: "meongtopup.my.id", hint: "domain alternatif 1" },
@@ -173,6 +177,8 @@ async function askPlan(): Promise<RunPlan> {
       domain = await askText("Masukkan domain email kustom", "ifqy.net");
     }
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
+  } else if ((app === "tokenharbor" || app === "fastrouter") && authMethod === "google") {
+    limit = await askNumber("Berapa banyak akun yang ingin dibuat?", seeds.accounts || 1, " akun");
   }
 
   const delaySec = await askNumber("Jeda antar akun", 60, " detik");

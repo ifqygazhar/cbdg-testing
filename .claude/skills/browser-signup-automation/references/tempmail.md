@@ -1,6 +1,6 @@
 # TempMail Integration & Email Verification Guide
 
-This reference documents the pattern for using temporary disposable email addresses (TempMail-Pro API) in automated browser registration flows (e.g. TokenHarbor, custom Next.js apps) across both Bun (TypeScript) and Python (Camoufox) engines.
+This reference documents the pattern for using temporary disposable email addresses (TempMail-Pro API) in automated browser registration flows (e.g. TokenHarbor, GroqCloud, custom SPAs) across both Bun (TypeScript) and Python (Camoufox) engines.
 
 ---
 
@@ -8,8 +8,8 @@ This reference documents the pattern for using temporary disposable email addres
 
 | Strategy | When to use | Primary targets |
 |---|---|---|
-| **Google OAuth** (`@ifqy/google-oauth`) | Site mandates Google SSO or presents Turnstile on email forms | CBDG, Crusoe, FastRouter, Webshare |
-| **TempMail Automation** (`TempMailClient`) | Site allows direct email/password registration with email verification link or code | TokenHarbor, platforms with email-only activation |
+| **Google OAuth** (`@ifqy/google-oauth` / `packages.camoufox_core`) | Site mandates Google SSO, presents impossible Turnstile on email forms, or restricts disposable email domains | CBDG, Crusoe, FastRouter, Webshare, TokenHarbor (Google mode) |
+| **TempMail Automation** (`TempMailClient`) | Site allows direct email signup with verification links, magic links, or 6-digit OTP codes | TokenHarbor (TempMail mode), GroqCloud, platforms with email-only activation |
 
 ---
 
@@ -64,45 +64,23 @@ This reference documents the pattern for using temporary disposable email addres
 
 ---
 
-## 3. Recommended Flow Pattern
+## 3. Supported Verification Patterns
 
-1. **Email Provisioning**:
-   - Call `client.createEmail()` at the start of an account run to generate a fresh inbox.
-   - Use default secure password (e.g. `torabikA1###########` or per-account generated password).
+### Pattern A: Direct Activation Link (e.g. TokenHarbor)
+- **Email Content**: Contains `<a href="https://tokenharbor.ai/verify-email?token=...">`
+- **Regex**: `r"https?://(?:www\.)?tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-\.%]+"`
+- **Action**: Navigate browser directly to the link. Verify dashboard renders.
 
-2. **Registration Form Fill**:
-   - Navigate to signup page (e.g. `https://tokenharbor.ai/login?mode=signup`).
-   - Dismiss cookie/analytics modals if present.
-   - Fill email, password, and submit.
-   - Wait for redirection to dashboard or confirmation screen.
+### Pattern B: Magic Link / Stytch Redirect (e.g. GroqCloud)
+- **Email Content**: Contains `<a href="https://stytch.com/v1/magic_links/redirect?public_token=...&token=...">`
+- **Regex**: `r"https?://stytch\.com/v1/magic_links/redirect\?[^\s\"'<>]+"`
+- **Action**: Navigate browser to the magic link. Stytch handles authentication and redirects back to the console (`console.groq.com`).
+- **Post-Magic-Link Step**: Check for organization creation loading state or auto-redirect to `/home` before navigating to API keys.
 
-3. **Trigger Verification**:
-   - If the platform requires explicitly clicking "Verify email" on dashboard (like TokenHarbor), click the verification banner.
-   - Also handle post-signup consent modals (e.g. "Enable free models").
-
-4. **Inbox Polling & Link Extraction**:
-   - Poll inbox every 2–3s for up to 60–90s.
-   - Match email by sender (`verify@tokenharbor.ai`) or subject.
-   - Extract verification URL via regex:
-     ```ts
-     const link = await tempMail.waitForVerificationLink(email, {
-       filterSender: "tokenharbor",
-       linkRegex: /https:\/\/tokenharbor\.ai\/verify-email\?token=[A-Za-z0-9_\-]+/,
-     });
-     ```
-
-5. **Email Activation**:
-   - Navigate page to the extracted link (`await page.goto(link)`).
-   - Verify activation success indicators.
-
-6. **Post-Activation Steps (API Key Creation)**:
-   - Navigate to API Keys section (`/dashboard/api-keys`).
-   - Click `+ New key`, input label, and submit `Create key`.
-   - Extract raw API key from `<code ...>` element via regex (`thk_(live_)?[A-Za-z0-9_-]{20,}`).
-   - Append to result files (`apikey-tokenharbor.txt`, `akun-result-tokenharbor.txt`).
-
-7. **Cleanup**:
-   - Optionally call `client.deleteEmail(email)` after successful completion to keep inbox pool clean.
+### Pattern C: 6-Digit OTP Verification Code
+- **Email Content**: Contains a 6-digit confirmation PIN (e.g. `Your verification code is 492014`).
+- **Regex**: `r"\b\d{6}\b"`
+- **Action**: Locate the PIN input boxes or single numeric input, fill with `human_type`, and submit.
 
 ---
 
@@ -114,11 +92,16 @@ import { TempMailClient } from "@ifqy/google-oauth";
 
 const client = new TempMailClient({
   apiKey: process.env.TEMPMAIL_API_KEY ?? "anjingmemekkontol",
+  defaultDomain: "ifqy.net",
 });
 
 const account = await client.createEmail();
-// ... complete browser signup ...
-const verifyUrl = await client.waitForVerificationLink(account.email);
+// 1. Submit email to signup form...
+// 2. Poll for verification / magic link
+const verifyUrl = await client.waitForVerificationLink(account.email, {
+  filterSender: "groq", // or "tokenharbor"
+  timeoutMs: 65_000,
+});
 await page.goto(verifyUrl);
 ```
 
@@ -126,9 +109,37 @@ await page.goto(verifyUrl);
 ```python
 from packages.camoufox_core import TempMailClient
 
-client = TempMailClient()
+client = TempMailClient(default_domain="ifqy.net")
 account = client.create_email()
-# ... complete browser signup ...
-verify_url = await client.wait_for_verification_link(account["email"])
+email = account["email"]
+
+# 1. Submit email in Camoufox page...
+# 2. Poll for link
+verify_url = await client.wait_for_verification_link(
+    email=email,
+    filter_sender="tokenharbor",
+    link_regex=r"https?://tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-\.%]+",
+    timeout_sec=65,
+)
 await page.goto(verify_url)
+```
+
+---
+
+## 5. Clean Unescaping & Google URL Redirect Handling
+
+When extracting verification URLs from HTML emails or Gmail forwarded content:
+1. Always run `html.unescape()` to remove `&amp;` and numeric entities.
+2. If the URL is wrapped in Google's tracking redirect (`https://www.google.com/url?q=...`), extract the underlying URL:
+```python
+import html
+from urllib.parse import urlparse, parse_qs
+
+raw_url = html.unescape(matched_str)
+if "google.com/url" in raw_url:
+    parsed = urlparse(raw_url)
+    qs = parse_qs(parsed.query)
+    clean_url = qs.get("q", [raw_url])[0]
+else:
+    clean_url = raw_url
 ```

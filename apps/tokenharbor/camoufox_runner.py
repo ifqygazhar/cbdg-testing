@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
 TokenHarbor Camoufox Runner (Python + Camoufox / Firefox engine)
-Registers on TokenHarbor using TempMail-Pro, verifies email, enables free models,
-creates API keys, and saves tokens.
+Registers on TokenHarbor using either Google OAuth (GSuite) or TempMail-Pro,
+verifies email, enables free models, creates API keys, and saves tokens.
 """
 
 import argparse
 import asyncio
 from collections import deque
+import html
 import os
 import random
 import re
 import sys
 import time
 from typing import Optional, List, Set
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, unquote
 
 # Ensure repo root is on sys.path so packages.camoufox_core can be imported
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -38,10 +39,11 @@ from packages.camoufox_core import (
     kill_descendant_processes,
     TempMailClient,
     resolve_turnstile_if_present,
+    perform_google_oauth,
 )
 
 API_KEY_RE = re.compile(r"thk_(?:live_)?[A-Za-z0-9_\-]{20,}")
-VERIFY_LINK_RE = re.compile(r"https://tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-]+")
+VERIFY_LINK_RE = re.compile(r"https?://(?:www\.)?tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-\.%]+", re.IGNORECASE)
 
 DEFAULT_SIGNUP_URL = "https://tokenharbor.ai/login?mode=signup"
 DASHBOARD_URL = "https://tokenharbor.ai/dashboard"
@@ -98,7 +100,7 @@ class SmartProxyPool:
         return bool(self.fresh_proxies or self.good_proxies)
 
 async def check_something_snapped(page) -> bool:
-    """Checks if Next.js 'Something snapped.' full-screen error is present."""
+    """Detect Next.js unhandled crash screen 'Something snapped.'"""
     try:
         return await page.evaluate("""() => {
             const h2 = document.querySelector('h2');
@@ -110,10 +112,8 @@ async def check_something_snapped(page) -> bool:
     except Exception:
         return False
 
-async def recover_if_something_snapped(page, target_url: Optional[str] = None, logger=None) -> bool:
-    """If 'Something snapped.' error screen is displayed, clicks 'Try again' or reloads target_url.
-    Returns True if recovered or if no error was present, False if recovery failed after retries.
-    """
+async def recover_if_something_snapped(page, target_url: Optional[str] = None, logger = None) -> bool:
+    """If 'Something snapped.' is shown, clicks 'Try again' or reloads target_url."""
     for attempt in range(1, 4):
         if not await check_something_snapped(page):
             return True
@@ -121,31 +121,31 @@ async def recover_if_something_snapped(page, target_url: Optional[str] = None, l
         if logger:
             logger.warn(f"'Something snapped.' error screen detected! (recovery attempt {attempt}/3)")
 
-        # 1. Try clicking the 'Try again' button
+        # 1. Try clicking 'Try again' button
         try:
-            try_again_btn = await page.query_selector('button:has-text("Try again"), button.bg-zinc-900')
-            if try_again_btn:
+            btn = await page.query_selector('button:has-text("Try again"), button.bg-zinc-900')
+            if btn:
                 if logger:
-                    logger.info("clicking 'Try again' button to recover...")
-                await try_again_btn.click()
-                await human_delay(2000, 3500)
+                    logger.info("clicked 'Try again' button to recover...")
+                await btn.click()
+                await human_delay(2000, 3000)
                 if not await check_something_snapped(page):
                     if logger:
-                        logger.info("Successfully recovered from 'Something snapped' via 'Try again' button!")
+                        logger.info("Successfully recovered from 'Something snapped' via button!")
                     return True
         except Exception:
             pass
 
-        # 2. If still snapped, reload or navigate back to target_url
+        # 2. Reload or navigate back to target_url
         if await check_something_snapped(page):
             if logger:
-                logger.info(f"reloading page / navigating to {target_url or 'current URL'} to recover...")
+                logger.info(f"reloading page / navigating to {target_url or 'current URL'}...")
             try:
                 if target_url:
-                    await page.goto(target_url, wait_until="domcontentloaded")
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
                 else:
-                    await page.reload(wait_until="domcontentloaded")
-                await human_delay(2500, 4000)
+                    await page.reload(wait_until="domcontentloaded", timeout=30000)
+                await human_delay(2500, 3500)
                 if not await check_something_snapped(page):
                     if logger:
                         logger.info("Successfully recovered from 'Something snapped' after reload!")
@@ -155,6 +155,456 @@ async def recover_if_something_snapped(page, target_url: Optional[str] = None, l
                     logger.warn(f"Reload failed: {e}")
 
     return not await check_something_snapped(page)
+
+async def handle_finish_and_start_chatting(page, logger) -> bool:
+    """
+    Handles 'One more step' screen after Google OAuth signup (tokenharbor-dataset/oauth-finish-after-signup.html)
+    """
+    for _ in range(12):
+        if "/dashboard" in page.url:
+            return True
+        try:
+            finish_btn = await page.query_selector('button:has-text("Finish and start chatting"), button[type="submit"]:has-text("Finish and start chatting")')
+            if finish_btn:
+                logger.info("detected 'One more step' onboarding screen, clicking 'Finish and start chatting'...")
+                await finish_btn.click()
+                await human_delay(2000, 3500)
+                return True
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+    return False
+
+async def retrieve_verification_link_from_gmail(context, email: str, logger, timeout_sec: int = 65) -> Optional[str]:
+    """
+    Opens Gmail web (mail.google.com) in a new tab within the existing authenticated context,
+    locates the Token Harbor verification email, and extracts the verification URL.
+    """
+    logger.info(f"opening Gmail (mail.google.com) in a new tab to retrieve TokenHarbor verification email for {email}...")
+    gmail_page = None
+    verify_url = None
+    try:
+        gmail_page = await context.new_page()
+        gmail_page.set_default_timeout(35000)
+
+        await gmail_page.goto("https://mail.google.com/mail/u/0/#inbox", wait_until="domcontentloaded")
+        await human_delay(2000, 3500)
+
+        start_time = time.time()
+        while time.time() - start_time < timeout_sec:
+            # Handle Workspace Terms speedbump if present
+            if "speedbump" in gmail_page.url:
+                accept_btn = await gmail_page.query_selector(
+                    'button:has-text("I understand"), button:has-text("Saya mengerti"), button:has-text("Accept"), button:has-text("Setuju")'
+                )
+                if accept_btn:
+                    logger.info("accepted Workspace Terms speedbump in Gmail tab...")
+                    await accept_btn.click()
+                    await human_delay(2000, 3500)
+
+            # Handle account chooser if shown
+            if "accounts.google.com" in gmail_page.url:
+                acc_chooser = await gmail_page.query_selector(f'[data-identifier="{email}"]')
+                if acc_chooser:
+                    logger.info(f"clicking account chooser for {email}...")
+                    await acc_chooser.click()
+                    await human_delay(2000, 3500)
+
+            # Dismiss any promo/onboarding popups
+            try:
+                dismiss_btn = await gmail_page.query_selector(
+                    'button:has-text("Not now"), button:has-text("Dismiss"), button:has-text("Close"), div[role="button"]:has-text("Done")'
+                )
+                if dismiss_btn:
+                    await dismiss_btn.click()
+                    await human_delay(500, 1000)
+            except Exception:
+                pass
+
+            # First, check if verify link is already in page content (e.g. preview / already opened)
+            content = await gmail_page.content()
+            m = VERIFY_LINK_RE.search(content)
+            if m:
+                raw_url = html.unescape(m.group(0))
+                if "google.com/url" in raw_url:
+                    parsed = urlparse(raw_url)
+                    qs = parse_qs(parsed.query)
+                    verify_url = qs.get("q", [raw_url])[0]
+                else:
+                    verify_url = raw_url
+                logger.info(f"Token Harbor verification URL retrieved: {verify_url}")
+                break
+
+            # Look for Token Harbor email row in inbox
+            email_row = await gmail_page.query_selector(
+                'tr.zA:has-text("Token Harbor"), tr:has-text("Token Harbor"), div[role="row"]:has-text("Token Harbor"), tr:has-text("Verify your email")'
+            )
+            if email_row:
+                logger.info("found Token Harbor email in Gmail inbox! Clicking to open...")
+                await email_row.click()
+                await human_delay(2000, 3500)
+
+                # Look for link element in opened email
+                try:
+                    link_el = await gmail_page.wait_for_selector('a[href*="tokenharbor.ai/verify-email"]', timeout=10000)
+                    if link_el:
+                        raw_href = await link_el.get_attribute("href")
+                        if raw_href:
+                            raw_href = html.unescape(raw_href)
+                            if "google.com/url" in raw_href:
+                                parsed = urlparse(raw_href)
+                                qs = parse_qs(parsed.query)
+                                verify_url = qs.get("q", [raw_href])[0]
+                            else:
+                                verify_url = raw_href
+                            logger.info(f"Token Harbor verification URL retrieved: {verify_url}")
+                            break
+                except Exception:
+                    pass
+
+                content = await gmail_page.content()
+                m = VERIFY_LINK_RE.search(content)
+                if m:
+                    raw_url = html.unescape(m.group(0))
+                    if "google.com/url" in raw_url:
+                        parsed = urlparse(raw_url)
+                        qs = parse_qs(parsed.query)
+                        verify_url = qs.get("q", [raw_url])[0]
+                    else:
+                        verify_url = raw_url
+                    logger.info(f"Token Harbor verification URL retrieved: {verify_url}")
+                    break
+
+            # Refresh inbox
+            try:
+                refresh_btn = await gmail_page.query_selector('div[aria-label*="Refresh" i], div[data-tooltip*="Refresh" i], div[act="20"]')
+                if refresh_btn:
+                    await refresh_btn.click()
+                else:
+                    await gmail_page.reload(wait_until="domcontentloaded")
+            except Exception:
+                pass
+
+            await asyncio.sleep(4)
+
+    except Exception as e:
+        logger.warn(f"error while retrieving email from Gmail: {e}")
+    finally:
+        if gmail_page:
+            try:
+                await gmail_page.close()
+            except Exception:
+                pass
+
+    return verify_url
+
+async def create_and_extract_api_key(page, email: str, screenshot_dir: str, logger) -> str:
+    """Navigates to API keys page, creates a new key, and extracts the generated token."""
+    logger.info(f"navigating to {API_KEYS_URL}...")
+    await page.goto(API_KEYS_URL, wait_until="domcontentloaded")
+    await human_delay(1500, 2500)
+
+    sanitized_email = re.sub(r"[^a-zA-Z0-9]", "_", email)
+    api_key = None
+
+    for key_attempt in range(1, 4):
+        await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+
+        # Click "+ New key" button
+        new_key_btn = await page.wait_for_selector(
+            'button:has-text("+ New key"), button:has-text("New key")',
+            timeout=15000,
+        )
+        if not new_key_btn:
+            if await check_something_snapped(page):
+                logger.warn("'Something snapped.' detected on API keys page! Retrying...")
+                await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+                continue
+            raise RuntimeError("+ New key button not found on API keys page")
+        await new_key_btn.click()
+        await human_delay(800, 1500)
+
+        # Type label
+        label = f"App-{email.split('@')[0][:8]}-{random.randint(10, 99)}"
+        logger.info(f"typing key label: {label}...")
+        label_input = await page.wait_for_selector(
+            'input[placeholder*="Cursor, Production"], input.input-float[type="text"], input[type="text"]',
+            timeout=8000,
+        )
+        if not label_input:
+            if await check_something_snapped(page):
+                logger.warn("'Something snapped.' detected while opening key modal! Retrying...")
+                await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+                continue
+            raise RuntimeError("API key label input not found")
+        await human_type(
+            page,
+            'input[placeholder*="Cursor, Production"], input.input-float[type="text"], input[type="text"]',
+            label,
+        )
+        await human_delay(500, 1000)
+
+        # Click "Create key" submit
+        create_btn = await page.wait_for_selector(
+            'button:has-text("Create key")',
+            timeout=10000,
+        )
+        if not create_btn:
+            if await check_something_snapped(page):
+                logger.warn("'Something snapped.' detected before create submit! Retrying...")
+                await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+                continue
+            raise RuntimeError("Create key submit button not found")
+        await create_btn.click()
+        await human_delay(2000, 3500)
+
+        # Extract generated API key
+        logger.info("extracting generated API key...")
+        for _ in range(20):
+            if await check_something_snapped(page):
+                break
+            text = await page.evaluate("""() => {
+                const el = document.querySelector('code.input-float, code');
+                if (el && el.textContent) return el.textContent;
+                return document.body.innerText;
+            }""")
+            match = API_KEY_RE.search(text)
+            if match:
+                api_key = match.group(0)
+                break
+            await asyncio.sleep(0.5)
+
+        if api_key:
+            break
+
+        if await check_something_snapped(page):
+            logger.warn("'Something snapped.' detected after creating key! Retrying key creation step...")
+            await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+            continue
+
+        break
+
+    if not api_key:
+        ss_path = os.path.join(screenshot_dir, f"apikey_extract_failed_{sanitized_email}.png")
+        await page.screenshot(path=ss_path)
+        raise RuntimeError(f"API key not found after creation; saved debug screenshot to {ss_path}")
+
+    return api_key
+
+async def run_single_google_account(
+    account: Account,
+    proxy: Optional[Proxy],
+    store: JsonlStore,
+    results: ResultWriter,
+    headed: bool,
+    screenshot_dir: str,
+    logger,
+    pace: str = "human",
+) -> bool:
+    email = account.email
+    password = account.password
+    logger.info(f"starting TokenHarbor Google OAuth signup for {email} (proxy={proxy.server if proxy else 'direct'}, pace={pace})")
+    store.upsert({"email": email, "password": password, "status": FlowState.PENDING, "proxy": proxy.server if proxy else None})
+
+    os.makedirs(screenshot_dir, exist_ok=True)
+    delay_mult = 1.4 if pace == "careful" else (0.85 if pace == "fast" else 1.0)
+
+    browser_ctx = None
+    try:
+        browser_ctx = await launch_camoufox(
+            headless=not headed,
+            proxy=proxy,
+            geoip=True,
+        )
+
+        async with browser_ctx as browser:
+            context = await browser.new_context(ignore_https_errors=True)
+            page = await context.new_page()
+            page.set_default_timeout(35000)
+
+            fp = await get_browser_fingerprint_info(page)
+            if fp:
+                logger.info(f"🛡️ Camoufox Fingerprint: OS={fp.get('platform')} | Screen={fp.get('screen')} | Viewport={fp.get('viewport')} | Cores={fp.get('cores')} | UA={fp.get('ua')}")
+
+            # ── 1. Navigate to Sign Up / Dashboard ─────────────────────────
+            logger.info(f"navigating to {DEFAULT_SIGNUP_URL}")
+            await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded")
+            await human_delay(int(1500 * delay_mult), int(2500 * delay_mult))
+            await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
+
+            # Dismiss analytics/cookie banner if present
+            try:
+                cookie_btn = await page.query_selector('button:has-text("Accept analytics"), button:has-text("Essential only")')
+                if cookie_btn:
+                    await cookie_btn.click()
+                    await human_delay(500, 1000)
+            except Exception:
+                pass
+
+            if "/dashboard" not in page.url:
+                # ── 2. Click Continue with Google ──────────────────────────
+                store.upsert({"email": email, "status": FlowState.SIGNUP})
+                google_btn = await page.wait_for_selector(
+                    'button:has-text("Continue with Google"), button[aria-label="Continue with Google"]',
+                    timeout=20000,
+                )
+                if not google_btn:
+                    raise RuntimeError("Button 'Continue with Google' not found")
+
+                logger.info("clicking 'Continue with Google'...")
+                await google_btn.click()
+                await human_delay(1500, 2500)
+
+                # Resolve Turnstile if presented before redirecting to Google
+                solved = await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
+                if solved:
+                    await human_delay(1500, 2500)
+                    try:
+                        if "accounts.google.com" not in page.url and await page.locator('button:has-text("Continue with Google")').count() > 0:
+                            logger.info("Turnstile solved, ensuring SSO button clicked...")
+                            await page.locator('button:has-text("Continue with Google")').first.click(timeout=3000)
+                    except Exception:
+                        pass
+
+                # ── 3. Google OAuth Flow ───────────────────────────────────
+                post_auth_page = await perform_google_oauth(
+                    page=page,
+                    email=account.email,
+                    password=account.password,
+                    recovery_email=account.recovery_email,
+                    timeout_sec=60,
+                    logger=logger,
+                )
+                page = post_auth_page
+                await human_delay(2000, 3500)
+
+                # Resolve Turnstile if present on callback
+                await resolve_turnstile_if_present(page, timeout_sec=15, logger=logger)
+
+                # ── 4. Handle "One more step" / Finish and start chatting ───
+                await handle_finish_and_start_chatting(page, logger)
+
+            # ── 5. Ensure Reached Dashboard ────────────────────────────────
+            reached_dashboard = False
+            for _ in range(25):
+                if "/dashboard" in page.url:
+                    reached_dashboard = True
+                    break
+                if await page.query_selector('button:has-text("Finish and start chatting")'):
+                    await handle_finish_and_start_chatting(page, logger)
+                await asyncio.sleep(0.5)
+
+            if not reached_dashboard and "/dashboard" not in page.url:
+                await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+                if "/dashboard" not in page.url:
+                    logger.info("navigating explicitly to dashboard...")
+                    await page.goto(DASHBOARD_URL, wait_until="domcontentloaded")
+                    await human_delay(2000, 3500)
+
+            store.upsert({"email": email, "status": FlowState.DASHBOARD})
+            await human_delay(2000, 3000)
+
+            # ── 6. Enable Free Models (Idempotent) ──────────────────────────
+            logger.info("checking Enable free models consent...")
+            await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+            is_already_enabled = await page.evaluate("""() => {
+                const text = document.body.innerText || '';
+                return text.includes("Free allowance") || 
+                       text.includes("Starts with your first free request");
+            }""")
+            if is_already_enabled:
+                logger.info("Free models already enabled on this account.")
+            else:
+                try:
+                    free_btn = await page.wait_for_selector(
+                        'button[data-analytics="freemodel-consent-enable"], button:has-text("Enable free models")',
+                        timeout=4000,
+                    )
+                    if free_btn:
+                        logger.info("clicking Enable free models button...")
+                        await free_btn.click()
+                        await human_delay(1000, 2000)
+                except Exception:
+                    pass
+
+            # Dismiss cookie banner if present
+            try:
+                cookie_btn = await page.query_selector('button:has-text("Accept analytics"), button:has-text("Essential only")')
+                if cookie_btn:
+                    await cookie_btn.click()
+                    await human_delay(500, 1000)
+            except Exception:
+                pass
+
+            # ── 7. Email Verification via Gmail (Idempotent) ───────────────
+            store.upsert({"email": email, "status": FlowState.TRIGGER_VERIFY})
+            await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+
+            # Check if email verification banner is present
+            needs_verification = await page.evaluate("""() => {
+                const text = document.body.innerText || '';
+                return text.includes("Verify your email") ||
+                       text.includes("Send verification email");
+            }""")
+
+            verify_url = None
+            if not needs_verification:
+                logger.info("Email verification not required or already verified on dashboard.")
+            else:
+                logger.info("checking Verify email button on dashboard...")
+                verify_clicked = False
+                for _ in range(5):
+                    try:
+                        verify_btn = await page.query_selector(
+                            'button.btn-float-primary:has-text("Verify email"), button:has-text("Verify email"), button:has-text("Send verification email"), button:has-text("Resend email")'
+                        )
+                        if verify_btn and await verify_btn.is_enabled():
+                            btn_txt = (await verify_btn.text_content() or "").strip()
+                            if "email sent" not in btn_txt.lower():
+                                logger.info(f"clicking '{btn_txt}' button to trigger verification email...")
+                                await verify_btn.click()
+                                verify_clicked = True
+                                await human_delay(2000, 3500)
+                                await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+                                break
+                            else:
+                                logger.info("Verify email button is already in 'Email sent' state.")
+                                verify_clicked = True
+                                break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1)
+
+                if not verify_clicked:
+                    logger.warn("could not click 'Verify email' button; checking if already sent...")
+
+                # Wait briefly for email dispatch
+                await human_delay(2000, 3500)
+
+                verify_url = await retrieve_verification_link_from_gmail(context, email, logger, timeout_sec=65)
+                if verify_url:
+                    store.upsert({"email": email, "status": FlowState.EMAIL_VERIFIED, "verificationLink": verify_url})
+                    logger.info(f"navigating to verification URL: {verify_url}...")
+                    await page.goto(verify_url, wait_until="domcontentloaded")
+                    await human_delay(2500, 4000)
+                    await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+                else:
+                    logger.warn("no verification URL retrieved from Gmail; proceeding to generate API key...")
+
+            # ── 8. Create API Key ───────────────────────────────────────────
+            store.upsert({"email": email, "status": FlowState.API_KEY})
+            api_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
+
+            logger.info(f"SUCCESS: API key extracted -> {api_key[:12]}...")
+            store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
+            results.mark_success(email, password, api_key)
+            return True
+
+    except Exception as e:
+        logger.error(f"failed: {e}")
+        store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e)})
+        results.mark_failed(email, password, str(e))
+        return False
 
 async def run_single_account(
     email: str,
@@ -172,7 +622,6 @@ async def run_single_account(
     store.upsert({"email": email, "password": password, "status": FlowState.PENDING, "proxy": proxy.server if proxy else None})
 
     os.makedirs(screenshot_dir, exist_ok=True)
-    sanitized_email = re.sub(r"[^a-zA-Z0-9]", "_", email)
     delay_mult = 1.4 if pace == "careful" else (0.85 if pace == "fast" else 1.0)
 
     browser_ctx = None
@@ -184,7 +633,8 @@ async def run_single_account(
         )
 
         async with browser_ctx as browser:
-            page = await browser.new_page(ignore_https_errors=True)
+            context = await browser.new_context(ignore_https_errors=True)
+            page = await context.new_page()
             page.set_default_timeout(35000)
 
             # Log active anonymous fingerprint for this process/worker
@@ -229,7 +679,7 @@ async def run_single_account(
                 max_delay_ms=115,
             )
 
-            # Natural human pause between email and password (reading / moving focus)
+            # Natural human pause between email and password
             await human_delay(int(1500 * delay_mult), int(2600 * delay_mult))
 
             # Type password with realistic keystrokes
@@ -242,91 +692,94 @@ async def run_single_account(
             )
 
             # Natural human hesitation/verification before clicking submit (4.0 - 6.0s)
-            # This prevents TokenHarbor's "You're doing that a bit fast — take a breath" anti-bot warning
             logger.info("pausing naturally before submit (human verification)...")
             await human_delay(int(4000 * delay_mult), int(6000 * delay_mult))
 
             # Submit signup
             submit_btn = await page.wait_for_selector(
                 'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]',
-                timeout=12000,
+                timeout=10000,
             )
             if not submit_btn:
-                if "/dashboard" not in page.url:
-                    raise RuntimeError("Create account submit button not found")
+                raise RuntimeError("Submit signup button not found")
 
-            # Move mouse smoothly over submit button
-            try:
-                box = await submit_btn.bounding_box()
-                if box:
-                    await page.mouse.move(
-                        box["x"] + box["width"] * random.uniform(0.3, 0.7),
-                        box["y"] + box["height"] * random.uniform(0.3, 0.7),
-                        steps=random.randint(6, 14),
-                    )
-                    await human_delay(300, 700)
-            except Exception:
-                pass
+            # Retry loop on speed limit warning ("take a breath and try again")
+            max_submit_attempts = 3
+            for attempt in range(1, max_submit_attempts + 1):
+                logger.info(f"submitting signup form (attempt {attempt}/{max_submit_attempts})...")
+                btn = await page.wait_for_selector(
+                    'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]',
+                    timeout=8000,
+                )
+                if btn:
+                    await btn.click()
+                await human_delay(1500, 2500)
 
-            logger.info("clicking Create account submit button...")
-            await submit_btn.click()
+                # Check if Cloudflare Turnstile popped up
+                solved = await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
+                if solved:
+                    await human_delay(1500, 2500)
+                    # Re-click submit if still on login page
+                    if "/dashboard" not in page.url and await page.query_selector('button[type="submit"]'):
+                        logger.info("Turnstile completed, re-submitting form...")
+                        r_btn = await page.query_selector('button[type="submit"]')
+                        if r_btn:
+                            await r_btn.click()
+                            await human_delay(1500, 2500)
 
-            # Resolve Turnstile if challenged
-            await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
+                # Check for dashboard redirect or speed warning
+                speed_warning = None
+                signup_error = None
+                for _ in range(14):
+                    if "/dashboard" in page.url:
+                        break
+                    found_err = await page.evaluate("""() => {
+                        const el = document.querySelector('form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500');
+                        return el ? (el.textContent || '').trim() : null;
+                    }""")
+                    if found_err:
+                        if re.search(r"fast|breath|slow down|too many attempts", found_err, re.I):
+                            speed_warning = found_err
+                            break
+                        elif not re.search(r"sending|checking|one moment", found_err, re.I):
+                            signup_error = found_err
+                            break
+                    await asyncio.sleep(0.5)
 
-            # Check for immediate warning / error, 'Something snapped', or dashboard redirect
-            logger.info("waiting for response or dashboard transition...")
-            signup_error = None
-            for _ in range(30):  # poll for up to ~15 seconds
                 if "/dashboard" in page.url:
                     break
 
-                # Check if Next.js 'Something snapped.' error screen appeared
-                if await check_something_snapped(page):
-                    logger.warn("'Something snapped.' full-screen error detected! Recovering and repeating submit step...")
-                    recovered = await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
-                    if recovered:
-                        if "/dashboard" in page.url:
-                            break
-                        retry_btn = await page.query_selector(
-                            'button[type="submit"][data-analytics="login-signup"], button[data-analytics="login-signup"], button[type="submit"]'
-                        )
-                        if retry_btn:
-                            logger.info("re-submitting signup form after recovering from 'Something snapped'...")
-                            await retry_btn.click()
-                            await resolve_turnstile_if_present(page, timeout_sec=12, logger=logger)
-                            continue
+                if speed_warning:
+                    if attempt < max_submit_attempts:
+                        wait_sec = 12 + attempt * 4
+                        logger.warn(f"Speed warning: '{speed_warning}'. Taking a breath (waiting {wait_sec}s) and retrying submit...")
+                        await asyncio.sleep(wait_sec)
+                        continue
+                    else:
+                        raise RuntimeError(f"Rate limited by TokenHarbor (speed check): {speed_warning}")
 
-                error_msg = await page.evaluate("""() => {
-                    // Check dedicated form error paragraph (Next.js server action result container)
-                    const errEl = document.querySelector('form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500, .text-red-600');
-                    if (errEl && errEl.textContent) {
-                        const t = errEl.textContent.trim();
-                        if (t && !/sending|checking|one moment/i.test(t)) return t;
-                    }
-                    // Broader check for any alert/warning container
-                    const allEls = document.querySelectorAll('form p, form div, [role="alert"], p');
-                    const warningPattern = /couldn['’]t create your account|team has been alerted|not supported|take a breath|doing that a bit fast|too many attempts|slow down|support@tokenharbor\\.ai|try again in a minute|invalid email|already registered/i;
-                    for (const el of allEls) {
-                        const t = el.textContent ? el.textContent.trim() : "";
-                        if (t && warningPattern.test(t)) {
-                            return t;
-                        }
-                    }
-                    return null;
-                }""")
+                if signup_error:
+                    logger.warn(f"TokenHarbor error detected: '{signup_error}'. Skipping account immediately...")
+                    raise RuntimeError(f"Signup rejected: {signup_error}")
 
-                if error_msg:
-                    signup_error = error_msg
+                break
+
+            # Confirm dashboard reached
+            reached_dashboard = False
+            for _ in range(25):
+                if "/dashboard" in page.url:
+                    reached_dashboard = True
                     break
-
                 await asyncio.sleep(0.5)
 
-            if signup_error:
-                logger.warn(f"TokenHarbor warning/error detected: '{signup_error}'. Skipping account immediately to switch to different IP...")
-                raise RuntimeError(f"Signup rejected: {signup_error}")
-
-            if "/dashboard" not in page.url:
+            if not reached_dashboard and "/dashboard" not in page.url:
+                await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
+                err_text = await page.evaluate("""() => {
+                    const el = document.querySelector('form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500');
+                    return el ? (el.textContent || '').trim() : null;
+                }""")
+                if err_text:
+                    raise RuntimeError(f"Signup rejected: {err_text}")
                 raise RuntimeError(f"Signup timed out without reaching /dashboard (current URL: {page.url})")
 
             store.upsert({"email": email, "status": FlowState.DASHBOARD})
@@ -384,94 +837,7 @@ async def run_single_account(
 
             # ── 6. Create API Key ───────────────────────────────────────────
             store.upsert({"email": email, "status": FlowState.API_KEY})
-            logger.info(f"navigating to {API_KEYS_URL}...")
-            await page.goto(API_KEYS_URL, wait_until="domcontentloaded")
-            await human_delay(1500, 2500)
-
-            # Create API key loop with retry if 'Something snapped' occurs
-            api_key = None
-            for key_attempt in range(1, 4):
-                await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
-
-                # Click "+ New key" button
-                new_key_btn = await page.wait_for_selector(
-                    'button:has-text("+ New key"), button:has-text("New key")',
-                    timeout=15000,
-                )
-                if not new_key_btn:
-                    if await check_something_snapped(page):
-                        logger.warn("'Something snapped.' detected on API keys page! Retrying...")
-                        await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
-                        continue
-                    raise RuntimeError("+ New key button not found on API keys page")
-                await new_key_btn.click()
-                await human_delay(800, 1500)
-
-                # Type label
-                label = f"App-{email.split('@')[0][:8]}-{random.randint(10, 99)}"
-                logger.info(f"typing key label: {label}...")
-                label_input = await page.wait_for_selector(
-                    'input[placeholder*="Cursor, Production"], input.input-float[type="text"], input[type="text"]',
-                    timeout=8000,
-                )
-                if not label_input:
-                    if await check_something_snapped(page):
-                        logger.warn("'Something snapped.' detected while opening key modal! Retrying...")
-                        await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
-                        continue
-                    raise RuntimeError("API key label input not found")
-                await human_type(
-                    page,
-                    'input[placeholder*="Cursor, Production"], input.input-float[type="text"], input[type="text"]',
-                    label,
-                )
-                await human_delay(500, 1000)
-
-                # Click "Create key" submit
-                create_btn = await page.wait_for_selector(
-                    'button:has-text("Create key")',
-                    timeout=10000,
-                )
-                if not create_btn:
-                    if await check_something_snapped(page):
-                        logger.warn("'Something snapped.' detected before create submit! Retrying...")
-                        await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
-                        continue
-                    raise RuntimeError("Create key submit button not found")
-                await create_btn.click()
-                await human_delay(2000, 3500)
-
-                # Extract generated API key
-                logger.info("extracting generated API key...")
-                for _ in range(20):
-                    if await check_something_snapped(page):
-                        break
-                    text = await page.evaluate("""() => {
-                        const el = document.querySelector('code.input-float, code');
-                        if (el && el.textContent) return el.textContent;
-                        return document.body.innerText;
-                    }""")
-                    match = API_KEY_RE.search(text)
-                    if match:
-                        api_key = match.group(0)
-                        break
-                    await asyncio.sleep(0.5)
-
-                if api_key:
-                    break
-
-                if await check_something_snapped(page):
-                    logger.warn("'Something snapped.' detected after creating key! Retrying key creation step...")
-                    await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
-                    continue
-
-                break
-
-            if not api_key:
-                # Capture debug screenshot
-                ss_path = os.path.join(screenshot_dir, f"apikey_extract_failed_{sanitized_email}.png")
-                await page.screenshot(path=ss_path)
-                raise RuntimeError(f"API key not found after creation; saved debug screenshot to {ss_path}")
+            api_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
 
             logger.info(f"SUCCESS: API key extracted -> {api_key[:12]}...")
             store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
@@ -485,7 +851,9 @@ async def run_single_account(
         return False
 
 async def main_async():
-    parser = argparse.ArgumentParser(description="TokenHarbor Camoufox runner (TempMail + Camoufox)")
+    parser = argparse.ArgumentParser(description="TokenHarbor Camoufox runner (Google OAuth / TempMail + Camoufox)")
+    parser.add_argument("--auth", choices=["tempmail", "google"], default=os.getenv("TOKENHARBOR_AUTH", "tempmail"), help="Auth method: tempmail or google (default: tempmail)")
+    parser.add_argument("--accounts-file", default="", help="Path to gsuite accounts file (required if --auth google)")
     parser.add_argument("--headed", action="store_true", help="Run browser in headed (visible) mode")
     parser.add_argument("--no-proxy", action="store_true", help="Run directly without proxy")
     parser.add_argument("--proxy-file", default=None, help="Path to proxy list file")
@@ -494,10 +862,10 @@ async def main_async():
     parser.add_argument("--state-file", default="state-tokenharbor.jsonl", help="State file")
     parser.add_argument("--output-file", default="apikey-tokenharbor.txt", help="API key output file")
     parser.add_argument("--workers", "-w", type=int, default=1, help="Number of parallel workers")
-    parser.add_argument("--limit", type=int, default=1, help="Max accounts to process (default: 1)")
-    parser.add_argument("--password", default=os.getenv("TOKENHARBOR_PASSWORD", "torabikA1###########"), help="Account password")
+    parser.add_argument("--limit", type=int, default=0, help="Max accounts to process")
+    parser.add_argument("--password", default=os.getenv("TOKENHARBOR_PASSWORD", "torabikA1###########"), help="Account password (for tempmail)")
     parser.add_argument("--domain", default=os.getenv("TEMPMAIL_DOMAIN", "ifqy.net"), help="TempMail domain")
-    parser.add_argument("--pace", choices=["fast", "human", "careful"], default=os.getenv("PACE", "human"), help="Typing cadence and interaction pace")
+    parser.add_argument("--pace", choices=["fast", "human", "careful"], default=os.getenv("PACE", "human"), help="Cadence pace")
     parser.add_argument("--dry-run", action="store_true", help="Validate config without launching browser")
     parser.add_argument("--screenshot-dir", default="screenshots-tokenharbor", help="Directory for failure screenshots")
     args = parser.parse_args()
@@ -516,7 +884,7 @@ async def main_async():
         key_files.append(args.output_file)
 
     proxies = load_proxies(proxy_file) if (proxy_file and not args.no_proxy) else []
-    temp_mail = TempMailClient(default_domain=args.domain)
+    proxy_pool = SmartProxyPool(proxies) if proxies else None
 
     store = JsonlStore(args.state_file)
     results = ResultWriter(
@@ -526,13 +894,102 @@ async def main_async():
     )
 
     logger = create_logger()
-    logger.info(f"TokenHarbor Camoufox runner started (pace={args.pace}, workers={args.workers}). Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
+    logger.info(f"TokenHarbor Camoufox runner started (auth={args.auth}, pace={args.pace}, workers={args.workers}). Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
 
     if args.dry_run:
         logger.info("dry-run: config validated (no browser launched)")
         return
 
-    proxy_pool = SmartProxyPool(proxies) if proxies else None
+    # ── GOOGLE OAUTH FLOW ───────────────────────────────────────────────────
+    if args.auth == "google":
+        accounts_file = args.accounts_file
+        if not accounts_file:
+            if os.path.exists("tokenharbor-dataset/gsuite.txt"):
+                accounts_file = "tokenharbor-dataset/gsuite.txt"
+            elif os.path.exists("gsuite.txt"):
+                accounts_file = "gsuite.txt"
+            else:
+                logger.error("No accounts file found for Google OAuth (checked tokenharbor-dataset/gsuite.txt and gsuite.txt)")
+                sys.exit(1)
+
+        accounts = load_accounts(accounts_file)
+        logger.info(f"Loaded {len(accounts)} Google accounts from {accounts_file}")
+
+        target_count = args.limit if args.limit > 0 else len(accounts)
+        worker_count = max(1, min(args.workers, target_count, len(accounts)))
+        logger.info(f"Planning to process up to {target_count} Google account(s) with {worker_count} parallel worker(s)")
+
+        processed = 0
+        success_count = 0
+        account_idx = 0
+        lock = asyncio.Lock()
+
+        async def google_worker(worker_id: int):
+            nonlocal processed, success_count, account_idx
+            while True:
+                account = None
+                proxy = None
+                async with lock:
+                    if (args.limit > 0 and processed >= args.limit) or account_idx >= len(accounts):
+                        break
+
+                    while account_idx < len(accounts):
+                        cand = accounts[account_idx]
+                        account_idx += 1
+                        if store.is_done(cand.email):
+                            logger.info(f"Skipping already DONE account: {cand.email}")
+                            continue
+                        if store.is_restricted_or_banned(cand.email) and not args.retry_failed:
+                            logger.warn(f"Skipping permanently restricted account: {cand.email}")
+                            continue
+                        if not args.retry_failed and store.get(cand.email) and store.get(cand.email).get("status") == FlowState.FAILED:
+                            logger.info(f"Skipping previously failed account: {cand.email}")
+                            continue
+                        account = cand
+                        break
+
+                    if not account:
+                        break
+
+                    if not args.no_proxy and proxies:
+                        proxy = proxy_pool.get_next_proxy() if proxy_pool else None
+                    processed += 1
+
+                acc_logger = create_logger(f"w{worker_id}:{account.email}")
+                ok = await run_single_google_account(
+                    account=account,
+                    proxy=proxy,
+                    store=store,
+                    results=results,
+                    headed=args.headed,
+                    screenshot_dir=args.screenshot_dir,
+                    logger=acc_logger,
+                    pace=args.pace,
+                )
+
+                async with lock:
+                    if proxy_pool and proxy:
+                        proxy_pool.mark_result(proxy, ok)
+                    if ok:
+                        success_count += 1
+                        logger.info(f"Progress: {success_count}/{target_count} accounts completed successfully.")
+
+                if success_count < target_count:
+                    if ok and args.delay > 0:
+                        await asyncio.sleep(args.delay)
+                    elif not ok:
+                        await asyncio.sleep(min(3.0, float(args.delay)))
+
+        if worker_count > 1:
+            await asyncio.gather(*(google_worker(i + 1) for i in range(worker_count)))
+        else:
+            await google_worker(1)
+
+        logger.info(f"TokenHarbor Camoufox Google batch finished: {success_count}/{processed} succeeded.")
+        return
+
+    # ── TEMPMAIL FLOW ───────────────────────────────────────────────────────
+    temp_mail = TempMailClient(default_domain=args.domain)
     count = args.limit if args.limit > 0 else (len(proxies) if proxies else 1)
     worker_count = max(1, min(args.workers, count))
     logger.info(f"Planning to process target {count} account(s) using domain @{args.domain} with {worker_count} parallel worker(s)")

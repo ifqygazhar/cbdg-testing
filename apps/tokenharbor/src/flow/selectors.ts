@@ -22,11 +22,13 @@ export const SELECTORS = {
   apiKeyDisplay: 'code.input-float, code',
   errorMessage: 'form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500',
   somethingSnappedHeading: 'h2:has-text("Something snapped"), h2',
-  tryAgainButton: 'button:has-text("Try again"), button.bg-zinc-900',
+  googleOAuthButton: 'button[aria-label="Continue with Google"], button:has-text("Continue with Google")',
+  finishAndStartChattingButton: 'button:has-text("Finish and start chatting"), button[type="submit"]:has-text("Finish and start chatting")',
+  sendVerificationEmailButton: 'button:has-text("Send verification email"), button:has-text("Resend email")',
 } as const;
 
 /** Regex matching TokenHarbor API key format (e.g. thk_live_tkotA3u0vklWQT1yg5sAhRJP8za-2lnWx9SrT37EO2b2wd2LQe5iAlf8z-25Jo4j) */
 export const API_KEY_RE = /thk_(?:live_)?[A-Za-z0-9_-]{20,}/;
 
 /** Regex matching TokenHarbor email verification links */
-export const VERIFY_LINK_RE = /https:\/\/tokenharbor\.ai\/verify-email\?token=[A-Za-z0-9_\-]+/;
+export const VERIFY_LINK_RE = /https:\/\/tokenharbor\.ai\/verify-email\?token=[A-Za-z0-9_\-\.]+/;

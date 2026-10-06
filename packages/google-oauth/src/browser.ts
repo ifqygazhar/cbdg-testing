@@ -38,6 +38,8 @@ export const GOOGLE_DIRECT_HOSTS = [
   "accounts.youtube.com",
   "ssl.gstatic.com",
   "www.gstatic.com",
+  "mail.google.com",
+  "gmail.com",
 ];
 
 /**

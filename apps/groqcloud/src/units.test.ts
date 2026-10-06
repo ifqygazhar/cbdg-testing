@@ -201,6 +201,59 @@ describe("groqcloud dataset selectors and markup verification", () => {
     expect(API_KEY_RE.test(keyValue)).toBe(true);
   });
 
+  it("creating-organization-after-click-magicklink.html contains organization creation splash indicator", () => {
+    if (!existsSync(join(datasetDir, "creating-organization-after-click-magicklink.html"))) return;
+    const html = readFileSync(join(datasetDir, "creating-organization-after-click-magicklink.html"), "utf8");
+    expect(html).toContain("Creating your organization...");
+    expect(html).toContain("authenticate");
+  });
+
+  it("stuck.html contains reverted email input state indicating organization creation rejection", async () => {
+    if (!existsSync(join(datasetDir, "stuck.html"))) return;
+    const html = readFileSync(join(datasetDir, "stuck.html"), "utf8");
+
+    let emailInput = false;
+    await new HTMLRewriter()
+      .on('input#email-input', {
+        element() {
+          emailInput = true;
+        },
+      })
+      .transform(new Response(html))
+      .text();
+
+    expect(emailInput).toBe(true);
+    expect(html).toContain("Continue with email");
+    expect(html).not.toContain("Creating your organization...");
+    expect(html).toContain('data-route="/authenticate"');
+  });
+
+  it("dashboard-home.html contains organization-selector and navigation to /keys", async () => {
+    if (!existsSync(join(datasetDir, "dashboard-home.html"))) return;
+    const html = readFileSync(join(datasetDir, "dashboard-home.html"), "utf8");
+
+    let orgSelector = false;
+    let keysLink = false;
+
+    await new HTMLRewriter()
+      .on('[data-testid="organization-selector"]', {
+        element() {
+          orgSelector = true;
+        },
+      })
+      .on('a[href="/keys"]', {
+        element() {
+          keysLink = true;
+        },
+      })
+      .transform(new Response(html))
+      .text();
+
+    expect(orgSelector).toBe(true);
+    expect(keysLink).toBe(true);
+    expect(html).toContain('data-route="/home"');
+  });
+
   it("MAGIC_LINK_RE matches sample link from link.txt", () => {
     const sampleLink =
       "https://stytch.com/v1/magic_links/redirect?public_token=public-token-live-58df57a9-a1f5-4066-bc0c-2ff942db684f&stytch_token_type=discovery&token=wVk91WspsLP9eQyI49hghH5IxUpG9xmqZPV9DuKr34mH";

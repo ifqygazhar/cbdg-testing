@@ -15,6 +15,7 @@ export interface TokenHarborConfig {
   useProxy: boolean;
   proxyReuse: boolean;
   seedProxy: string;
+  authMethod?: "google" | "tempmail";
   seedAccounts?: string;
   stateFile: string;
   resultSuccessFile: string;
@@ -45,6 +46,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): TokenHarborCon
   const useProxy = parseBool(env.USE_PROXY, true);
   const proxyReuse = parseBool(env.PROXY_REUSE, false);
   const limit = Math.max(0, parseInt(env.LIMIT || "0", 10) || 0);
+  const authMethod = env.TOKENHARBOR_AUTH === "google" ? "google" : "tempmail";
 
   // Auto-resolve proxy seed
   let seedProxy = env.SEED_PROXY || "proxy-live.txt";
@@ -56,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): TokenHarborCon
   let seedAccounts = env.SEED_ACCOUNTS;
   if (!seedAccounts) {
     if (fs.existsSync("tokenharbor-dataset/gsuite.txt")) seedAccounts = "tokenharbor-dataset/gsuite.txt";
+    else if (fs.existsSync("gsuite.txt")) seedAccounts = "gsuite.txt";
     else if (fs.existsSync("accounts-tokenharbor.txt")) seedAccounts = "accounts-tokenharbor.txt";
   }
 
@@ -78,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): TokenHarborCon
     useProxy,
     proxyReuse,
     seedProxy,
+    authMethod,
     seedAccounts,
     stateFile,
     resultSuccessFile,

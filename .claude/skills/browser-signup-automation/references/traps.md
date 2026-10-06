@@ -206,3 +206,64 @@ or long-poll. It burns the full timeout and then proceeds anyway.
 
 **Fix.** Race it against "the element I need is visible". See
 `pacing.md`.
+
+---
+
+## Playwright `Please use browser.new_context()` on secondary tabs
+
+**Symptom.** The automation runs through signup, but when opening a secondary tab (e.g. Gmail inbox to fetch verification link), it immediately crashes with:
+`playwright._impl._errors.Error: Please use browser.new_context()`.
+
+**Cause.** The browser session was started using `page = await browser.new_page()`. In Playwright, `browser.new_page()` creates an implicit internal context with `_owner_page` pinned to that single page. Calling `page.context.new_page()` is explicitly forbidden by Playwright.
+
+**Fix.** Always create an explicit `BrowserContext` first:
+```python
+async with browser_ctx as browser:
+    context = await browser.new_context(ignore_https_errors=True)
+    page = await context.new_page()
+    # Now context.new_page() works anywhere in this session!
+```
+
+---
+
+## GSuite / Workspace Terms of Service Speedbump
+
+**Symptom.** During Google OAuth, the page stops on `https://accounts.google.com/speedbump/workspacetermsofservice` with title "Selamat datang di akun baru Anda" / "Welcome to your new account", and never redirects back to the application.
+
+**Cause.** Freshly provisioned Google Workspace / GSuite enterprise accounts mandate accepting the organization's domain policy on first login.
+
+**Fix.** In `packages/camoufox_core/google_oauth.py`, check for `speedbump/workspacetermsofservice` and automatically click `button:has-text("I understand")` / `button:has-text("Saya mengerti")`.
+
+---
+
+## Resume hang on already-enabled features (Idempotency failure)
+
+**Symptom.** When re-running or resuming an account that previously completed partially (e.g. Google OAuth finished, but API key creation failed), the runner hangs on the dashboard waiting for a first-time button (e.g. "Enable free models" or "Finish and start chatting") until timeout.
+
+**Cause.** On accounts that already completed those steps, the platform hides the onboarding banner permanently. Waiting on that selector with a long timeout causes unnecessary hangs or failures.
+
+**Fix.** Make every step idempotent:
+1. If the landing page already redirects to `/dashboard`, skip login/OAuth entirely.
+2. Check if the feature is already active (e.g. `Free allowance` text visible) before waiting for the consent button.
+3. Check if the email verification banner exists before clicking or opening Gmail.
+
+---
+
+## Verification URL wrapped in Google tracking redirect
+
+**Symptom.** Link extracted from Gmail is a Google redirect URL (`https://www.google.com/url?q=...`) containing encoded entities (`&amp;`, `%3D`), and navigating to it fails or triggers security warnings.
+
+**Cause.** Gmail desktop web wraps external links in `google.com/url` redirection.
+
+**Fix.** Unescape HTML entities with `html.unescape()` and parse the `q` query parameter:
+```python
+from urllib.parse import urlparse, parse_qs
+import html
+
+raw_url = html.unescape(extracted_text)
+if "google.com/url" in raw_url:
+    parsed = urlparse(raw_url)
+    qs = parse_qs(parsed.query)
+    clean_url = qs.get("q", [raw_url])[0]
+```
+

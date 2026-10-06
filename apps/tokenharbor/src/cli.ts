@@ -23,6 +23,8 @@ interface Args {
   limit?: number;
   password?: string;
   domain?: string;
+  auth?: string;
+  accountsFile?: string;
 }
 
 /** Pure: merge parsed CLI flags into an env object (CLI wins over env file). */
@@ -40,6 +42,8 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.limit !== undefined) env.LIMIT = String(args.limit);
   if (args.password !== undefined) env.TOKENHARBOR_PASSWORD = args.password;
   if (args.domain !== undefined) env.TEMPMAIL_DOMAIN = args.domain;
+  if (args.auth !== undefined) env.TOKENHARBOR_AUTH = args.auth;
+  if (args.accountsFile !== undefined) env.SEED_ACCOUNTS = args.accountsFile;
   return env;
 }
 
@@ -72,11 +76,14 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--limit" || a === "-l" || a === "-n") args.limit = Number(next());
     else if (a === "--password") args.password = next();
     else if (a === "--domain") args.domain = next();
+    else if (a === "--auth") args.auth = next();
+    else if (a === "--accounts-file") args.accountsFile = next();
     else if (a === "--help" || a === "-h") {
       console.log(
-        `Usage: bun run tokenharbor -- [--engine bun|python] [--headless] [--headed] [-w N] [--dry-run]\n` +
+        `Usage: bun run tokenharbor -- [--engine bun|python] [--auth tempmail|google] [--accounts-file F] [--headless] [--headed] [-w N] [--dry-run]\n` +
           `                           [--delay SEC] [--limit N] [--fast | --careful | --pace fast|human|careful]\n\n` +
           `  --engine E  pilih engine browser: 'bun' (Chromium/Puppeteer) atau 'python' (Camoufox/Firefox)\n` +
+          `  --auth A    metode autentikasi: 'tempmail' (default) atau 'google' (Google OAuth via gsuite.txt)\n` +
           `  --camoufox  alias untuk --engine python (Camoufox hardware anti-detect engine)\n` +
           `  --bun       alias untuk --engine bun (default Puppeteer engine)\n` +
           `  --limit N   jumlah akun yang dibuat/diproses (default: 1 jika direct, atau sesuai proxy pool)\n` +
@@ -112,6 +119,8 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       limit: args.limit !== undefined ? args.limit : (cfg.limit > 0 ? cfg.limit : undefined),
       domain: args.domain ?? cfg.tempMailDomain,
       pace: args.pace ?? (typeof cfg.pace === "object" ? (cfg.pace as any).name : cfg.pace),
+      auth: args.auth ?? cfg.authMethod,
+      accountsFile: args.accountsFile ?? cfg.seedAccounts,
       dryRun: args.dryRun,
       workers: args.workers ?? cfg.workers,
     });

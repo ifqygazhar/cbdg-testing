@@ -106,21 +106,26 @@ async def perform_google_oauth(
     logger.info("password submitted, waiting for authentication response...")
     await human_delay(2000, 3500)
 
-    # 5. Handle Challenge / Recovery Email / 2FA / Consent
+    # 5. Handle Challenge / Recovery Email / 2FA / Consent / Speedbump ("I understand")
     deadline = asyncio.get_event_loop().time() + timeout_sec
     while asyncio.get_event_loop().time() < deadline:
-        # Check if already redirected back from Google
+        # Keep track of active Google page (in case of tab/popup switch)
+        for p in context.pages:
+            if not p.is_closed() and GOOGLE_AUTH_URL_RE.search(p.url):
+                target_page = p
+                break
+
         current_url = target_page.url
-        if not GOOGLE_AUTH_URL_RE.search(current_url) and ("clerk" in current_url or "fastrouter" in current_url or "crusoe" in current_url or "dashboard" in current_url):
+        # Check if already redirected back from Google to the target application
+        if not GOOGLE_AUTH_URL_RE.search(current_url) and current_url != "about:blank":
             logger.info(f"OAuth success, redirected to: {current_url}")
             return target_page
 
         # Check for another tab/page that might be the app page if popup closed
         for p in context.pages:
             if not p.is_closed() and not GOOGLE_AUTH_URL_RE.search(p.url) and p.url != "about:blank":
-                if "fastrouter" in p.url or "clerk" in p.url or "crusoe" in p.url:
-                    logger.info(f"OAuth callback page active: {p.url}")
-                    return p
+                logger.info(f"OAuth callback page active: {p.url}")
+                return p
 
         content = await target_page.content()
         if "wrong password" in content.lower() or "sandi salah" in content.lower():
@@ -150,12 +155,57 @@ async def perform_google_oauth(
                 await target_page.keyboard.press("Enter")
             await human_delay(2000, 3000)
 
-        # Check for Google Consent screen ("Continue", "Allow")
-        consent_btn = await target_page.query_selector('#submit_approve_access, button:has-text("Continue"), button:has-text("Lanjutkan"), button:has-text("Allow")')
-        if consent_btn:
-            logger.info("clicking OAuth consent / continue button...")
-            await consent_btn.click()
-            await human_delay(1500, 3000)
+        # Check if Account Chooser screen (click account matching email)
+        acc_chooser = await target_page.query_selector(f'[data-identifier="{email}"]')
+        if acc_chooser:
+            logger.info(f"detected account chooser for {email}, clicking...")
+            await acc_chooser.click()
+            await human_delay(1500, 2500)
+            continue
+
+        # Check for Google Speedbump / Workspace Terms of Service ("I understand", "Saya mengerti", "I agree", etc.)
+        speedbump_handled = False
+        speedbump_selectors = [
+            'button:has-text("I understand")',
+            'button:has-text("Saya mengerti")',
+            'button:has-text("I agree")',
+            'button:has-text("Saya setuju")',
+            'button:has-text("Accept all")',
+            'button:has-text("Accept")',
+            'button:has-text("Terima")',
+            'button:has-text("Continue")',
+            'button:has-text("Lanjutkan")',
+            'button:has-text("Confirm")',
+            'button:has-text("Konfirmasi")',
+            'button:has-text("Next")',
+            'button:has-text("Berikutnya")',
+            '#submit_approve_access',
+            'button:has-text("Allow")',
+            'button:has-text("Izinkan")',
+            '#confirm',
+            'button[jsname="LgbsSe"]',
+        ]
+        for sel in speedbump_selectors:
+            try:
+                btns = await target_page.query_selector_all(sel)
+                for btn in btns:
+                    if await btn.is_visible() and await btn.is_enabled():
+                        btn_text = (await btn.text_content() or "").strip()
+                        # Avoid clicking Next if we are still at email or password input step
+                        if btn_text.lower() in ("next", "berikutnya") and (
+                            await target_page.query_selector('input[type="password"]') or await target_page.query_selector('#identifierId')
+                        ):
+                            continue
+                        logger.info(f"detected Google consent / speedbump button ('{btn_text}'), clicking...")
+                        await btn.scroll_into_view_if_needed()
+                        await btn.click()
+                        await human_delay(2000, 3500)
+                        speedbump_handled = True
+                        break
+                if speedbump_handled:
+                    break
+            except Exception:
+                pass
 
         await asyncio.sleep(1)
 

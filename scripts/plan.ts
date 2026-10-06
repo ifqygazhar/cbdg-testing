@@ -198,9 +198,8 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
     return out;
   }
   const isTempMail =
-    plan.app === "tokenharbor" ||
     plan.app === "groqcloud" ||
-    (plan.app === "fastrouter" && plan.authMethod !== "google");
+    ((plan.app === "tokenharbor" || plan.app === "fastrouter") && plan.authMethod !== "google");
   if (!isTempMail && seeds.accounts === 0) {
     out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
   }
