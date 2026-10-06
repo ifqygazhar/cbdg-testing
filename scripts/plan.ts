@@ -112,8 +112,16 @@ export function buildArgs(plan: RunPlan): string[] {
   if (plan.workers > 1) args.push("-w", String(plan.workers));
   if (plan.delaySec > 0) args.push("--delay", String(plan.delaySec));
   if (plan.authMethod) args.push("--auth", plan.authMethod);
-  if (plan.limit !== undefined && plan.limit > 0) args.push("--limit", String(plan.limit));
   if (plan.domain) args.push("--domain", plan.domain);
+  if (plan.limit !== undefined && plan.limit > 0) {
+    if (plan.authMethod === "google") {
+      const rem = getRemainingAccountsForApp(plan.app);
+      const effectiveLimit = rem.remaining > 0 ? Math.min(plan.limit, rem.remaining) : plan.limit;
+      args.push("--limit", String(effectiveLimit));
+    } else {
+      args.push("--limit", String(plan.limit));
+    }
+  }
   if (plan.retryFailed) args.push("--retry-failed");
   if (plan.dryRun) args.push("--dry-run");
   if (ENGINE_CAPABLE.includes(plan.app) && plan.engine === "python") {
@@ -177,6 +185,94 @@ function countAddresses(file: string): number {
   return hosts.size;
 }
 
+export interface AppAccountStats {
+  total: number;
+  completed: number;
+  remaining: number;
+}
+
+export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd()): Set<string> {
+  const completed = new Set<string>();
+
+  const resultFiles: Record<AppName, string[]> = {
+    tokenharbor: ["akun-result-tokenharbor.txt"],
+    fastrouter: ["akun-result-fastrouter.txt"],
+    crusoe: ["akun-result-crusoe.txt"],
+    cbdg: ["akun-result.txt"],
+    webshare: ["akun-result-webshare.txt"],
+    groqcloud: ["akun-result-groqcloud.txt"],
+    "proxy-check": [],
+  };
+
+  const stateFiles: Record<AppName, string[]> = {
+    tokenharbor: ["state.jsonl", "state-tokenharbor.jsonl"],
+    fastrouter: ["state-fastrouter.jsonl", "state.jsonl"],
+    crusoe: ["state-crusoe.jsonl", "state.jsonl"],
+    cbdg: ["state.jsonl"],
+    webshare: ["state-webshare.jsonl"],
+    groqcloud: ["state-groqcloud.jsonl", "state.jsonl"],
+    "proxy-check": [],
+  };
+
+  for (const rf of resultFiles[app] ?? []) {
+    const fullPath = path.join(cwd, rf);
+    if (fs.existsSync(fullPath)) {
+      for (const line of fs.readFileSync(fullPath, "utf8").split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        const email = t.split("#")[0].split(/[:|]/)[0].trim().toLowerCase();
+        if (email.includes("@")) completed.add(email);
+      }
+    }
+  }
+
+  for (const sf of stateFiles[app] ?? []) {
+    const fullPath = path.join(cwd, sf);
+    if (fs.existsSync(fullPath)) {
+      for (const line of fs.readFileSync(fullPath, "utf8").split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t) continue;
+        try {
+          const rec = JSON.parse(t);
+          if (rec.email && rec.status === "DONE") {
+            completed.add(rec.email.toLowerCase());
+          }
+        } catch {}
+      }
+    }
+  }
+
+  return completed;
+}
+
+export function getRemainingAccountsForApp(app: AppName, cwd = process.cwd()): AppAccountStats {
+  const candidateFiles = [
+    path.join(cwd, "gsuite.txt"),
+    path.join(cwd, `${app}-dataset/gsuite.txt`),
+  ];
+  let accountsFile = "";
+  for (const cf of candidateFiles) {
+    if (fs.existsSync(cf)) {
+      accountsFile = cf;
+      break;
+    }
+  }
+  if (!accountsFile) return { total: 0, completed: 0, remaining: 0 };
+
+  const allAccounts = readEntries(accountsFile)
+    .map((l) => l.split(/[:|]/)[0].trim().toLowerCase())
+    .filter((l) => l.includes("@"));
+
+  const completed = getCompletedEmailsForApp(app, cwd);
+  const remainingAccounts = allAccounts.filter((acc) => !completed.has(acc));
+
+  return {
+    total: allAccounts.length,
+    completed: allAccounts.length - remainingAccounts.length,
+    remaining: remainingAccounts.length,
+  };
+}
+
 export function readSeeds(cwd = process.cwd()): SeedInfo {
   return {
     accounts: countLines(path.join(cwd, "gsuite.txt")),
@@ -202,6 +298,20 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
     ((plan.app === "tokenharbor" || plan.app === "fastrouter") && plan.authMethod !== "google");
   if (!isTempMail && seeds.accounts === 0) {
     out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
+  }
+  if (plan.authMethod === "google") {
+    const rem = getRemainingAccountsForApp(plan.app);
+    if (rem.total > 0) {
+      if (rem.remaining === 0) {
+        out.push(
+          `Semua ${rem.total} akun di gsuite.txt sudah berhasil dibuat untuk ${plan.app}. Akun yang sudah selesai tidak akan diulang.`,
+        );
+      } else if (plan.limit !== undefined && plan.limit > rem.remaining) {
+        out.push(
+          `Target input (${plan.limit} akun) melebihi sisa akun (${rem.remaining} akun tersisa). Antrean akan berhenti setelah sisa akun diproses agar akun sukses tidak diulang.`,
+        );
+      }
+    }
   }
   if (plan.app === "cbdg" && plan.mode === "full" && seeds.cards === 0) {
     out.push("vcc.txt kosong padahal mode full — antrean akan berhenti. Pakai signup-only.");

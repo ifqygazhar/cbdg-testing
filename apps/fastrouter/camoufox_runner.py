@@ -561,8 +561,11 @@ async def run_single_google_account(
     screenshot_dir: str,
     logger,
 ) -> bool:
-    """Executes FastRouter signup via Google OAuth."""
     email = account.email
+    if store.is_done(email) or email.lower() in results.get_successful_emails():
+        logger.info(f"Safeguard: {email} is already completed / successful (API key exists). Skipping execution.")
+        return True
+
     logger.info(f"starting FastRouter Google OAuth signup for {email} (proxy={proxy.server if proxy else 'direct'})")
     store.upsert({"email": email, "status": FlowState.PENDING, "proxy": proxy.server if proxy else None})
 
@@ -665,6 +668,32 @@ async def run_single_google_account(
         store.upsert({"email": email, "status": FlowState.FAILED, "error": err_msg, "proxy": proxy.server if proxy else None})
         return False
 
+
+def get_completed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str) -> Set[str]:
+    completed: Set[str] = set()
+    completed.update(results.get_successful_emails())
+    completed.update(store.get_all_done_emails())
+    for sf in ["state.jsonl", "state-fastrouter.jsonl"]:
+        if os.path.exists(sf) and os.path.abspath(sf) != os.path.abspath(current_state_file):
+            try:
+                alt = JsonlStore(sf)
+                completed.update(alt.get_all_done_emails())
+            except Exception:
+                pass
+    return completed
+
+def get_failed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str) -> Set[str]:
+    failed: Set[str] = set()
+    failed.update(results.get_failed_emails())
+    failed.update(store.get_all_failed_emails())
+    for sf in ["state.jsonl", "state-fastrouter.jsonl"]:
+        if os.path.exists(sf) and os.path.abspath(sf) != os.path.abspath(current_state_file):
+            try:
+                alt = JsonlStore(sf)
+                failed.update(alt.get_all_failed_emails())
+            except Exception:
+                pass
+    return failed
 
 async def main_async():
     parser = argparse.ArgumentParser(description="FastRouter Camoufox Signup Automation")
@@ -842,9 +871,47 @@ async def main_async():
     accounts = load_accounts(accounts_file)
     logger.info(f"Loaded {len(accounts)} Google accounts from {accounts_file}")
 
-    target_count = args.limit if args.limit > 0 else len(accounts)
-    worker_count = max(1, min(args.workers, target_count, len(accounts)))
-    logger.info(f"Planning to process up to {target_count} Google account(s) with {worker_count} parallel worker(s)")
+    completed_emails = get_completed_emails(store, results, args.state_file)
+    failed_emails = get_failed_emails(store, results, args.state_file)
+
+    # Strictly exclude ANY account that has already completed successfully!
+    eligible_accounts = [
+        acc for acc in accounts
+        if acc.email.lower() not in completed_emails
+    ]
+
+    if not args.retry_failed:
+        eligible_accounts = [
+            acc for acc in eligible_accounts
+            if acc.email.lower() not in failed_emails
+            and not store.is_restricted_or_banned(acc.email)
+        ]
+    else:
+        logger.info("Retry mode active: prioritizing previously failed accounts at the front of the queue.")
+        def sort_key(acc):
+            return 0 if acc.email.lower() in failed_emails else 1
+        eligible_accounts.sort(key=sort_key)
+
+    if not eligible_accounts:
+        logger.info("All accounts have already been completed successfully! Nothing to do.")
+        return
+
+    target_count = min(args.limit, len(eligible_accounts)) if args.limit > 0 else len(eligible_accounts)
+    worker_count = max(1, min(args.workers, target_count, len(eligible_accounts)))
+    if args.limit > 0 and args.limit > len(eligible_accounts):
+        logger.warn(
+            f"Limit yang diminta ({args.limit} akun) melebihi sisa akun yang tersedia ({len(eligible_accounts)} akun). "
+            f"Target otomatis disesuaikan menjadi {target_count} akun agar akun yang sudah selesai tidak diulang."
+        )
+
+    logger.info(
+        f"Account queue stats: total={len(accounts)}, completed={len(accounts) - len(eligible_accounts)}, "
+        f"todo={len(eligible_accounts)}, target={target_count}, workers={worker_count}, retry_failed={args.retry_failed}"
+    )
+
+    if args.dry_run:
+        logger.info(f"dry-run: next account(s) to process: {[a.email for a in eligible_accounts[:target_count]]}")
+        return
 
     processed = 0
     success_count = 0
@@ -857,26 +924,11 @@ async def main_async():
             account = None
             proxy = None
             async with lock:
-                if (args.limit > 0 and processed >= args.limit) or account_idx >= len(accounts):
+                if success_count >= target_count or processed >= target_count or account_idx >= len(eligible_accounts):
                     break
 
-                while account_idx < len(accounts):
-                    cand = accounts[account_idx]
-                    account_idx += 1
-                    if store.is_done(cand.email):
-                        logger.info(f"Skipping already DONE account: {cand.email}")
-                        continue
-                    if store.is_restricted_or_banned(cand.email) and not args.retry_failed:
-                        logger.warn(f"Skipping permanently restricted account: {cand.email}")
-                        continue
-                    if not args.retry_failed and store.get(cand.email) and store.get(cand.email).get("status") == FlowState.FAILED:
-                        logger.info(f"Skipping previously failed account: {cand.email}")
-                        continue
-                    account = cand
-                    break
-
-                if not account:
-                    break
+                account = eligible_accounts[account_idx]
+                account_idx += 1
 
                 if not args.no_proxy and proxies:
                     proxy = proxy_pool.get_next_proxy() if proxy_pool else None

@@ -986,6 +986,12 @@ async def main_async():
 
         target_count = min(args.limit, len(eligible_accounts)) if args.limit > 0 else len(eligible_accounts)
         worker_count = max(1, min(args.workers, target_count, len(eligible_accounts)))
+        if args.limit > 0 and args.limit > len(eligible_accounts):
+            logger.warn(
+                f"Limit yang diminta ({args.limit} akun) melebihi sisa akun yang tersedia ({len(eligible_accounts)} akun). "
+                f"Target otomatis disesuaikan menjadi {target_count} akun agar akun yang sudah selesai tidak diulang."
+            )
+
         logger.info(
             f"Account queue stats: total={len(accounts)}, completed={len(accounts) - len(eligible_accounts)}, "
             f"todo={len(eligible_accounts)}, target={target_count}, workers={worker_count}, retry_failed={args.retry_failed}"
@@ -1006,7 +1012,7 @@ async def main_async():
                 account = None
                 proxy = None
                 async with lock:
-                    if success_count >= target_count or (args.limit > 0 and processed >= args.limit) or account_idx >= len(eligible_accounts):
+                    if success_count >= target_count or processed >= target_count or account_idx >= len(eligible_accounts):
                         break
 
                     account = eligible_accounts[account_idx]

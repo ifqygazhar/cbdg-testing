@@ -17,6 +17,7 @@ import {
   commandLine,
   readSeeds,
   warningsFor,
+  getRemainingAccountsForApp,
   type AppName,
   type CbdgMode,
   type Pace,
@@ -177,8 +178,26 @@ async function askPlan(): Promise<RunPlan> {
       domain = await askText("Masukkan domain email kustom", "ifqy.net");
     }
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
-  } else if ((app === "tokenharbor" || app === "fastrouter") && authMethod === "google") {
-    limit = await askNumber("Berapa banyak akun yang ingin dibuat?", seeds.accounts || 1, " akun");
+  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
+    const rem = getRemainingAccountsForApp(app);
+    if (rem.completed > 0) {
+      console.log(
+        ui.cyan(
+          `\n  · ${rem.completed} akun dari ${rem.total} sudah selesai dibuat sebelumnya (${rem.remaining} akun tersisa)`,
+        ),
+      );
+    }
+    const defaultLimit = rem.remaining > 0 ? rem.remaining : (seeds.accounts || 1);
+    const hint = rem.completed > 0 ? `sisa ${rem.remaining} akun dari ${rem.total}` : `${seeds.accounts || 1} akun`;
+    limit = await askNumber(`Berapa banyak akun yang ingin dibuat? (${hint})`, defaultLimit, " akun");
+    if (rem.remaining > 0 && limit > rem.remaining) {
+      console.log(
+        ui.yellow(
+          `  ! Input ${limit} akun melebihi ${rem.remaining} akun yang tersisa. Target otomatis dibatasi maks ${rem.remaining} akun agar akun yang sudah selesai tidak diulang.`,
+        ),
+      );
+      limit = rem.remaining;
+    }
   }
 
   const delaySec = await askNumber("Jeda antar akun", 60, " detik");
@@ -244,7 +263,16 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
       ? ([["google", plan.googleDirect === false ? "lewat proxy" : "langsung (hindari captcha)"]] as Array<[string, string]>)
       : []),
     ["pace", plan.pace],
-    ...(plan.limit ? ([["target", `${plan.limit} akun`]] as Array<[string, string]>) : []),
+    ...(plan.limit
+      ? ([
+          [
+            "target",
+            plan.authMethod === "google"
+              ? `${plan.limit} akun (dari sisa akun yang belum dibuat)`
+              : `${plan.limit} akun`,
+          ],
+        ] as Array<[string, string]>)
+      : []),
     ["jeda", `${plan.delaySec}s`],
     ["worker", String(plan.workers)],
     ["browser", plan.headless ? "headless" : "headed"],

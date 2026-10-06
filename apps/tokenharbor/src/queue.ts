@@ -119,7 +119,18 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
     });
   }
 
-  const targetCount = cfg.limit > 0 ? cfg.limit : (rawAccounts.length > 0 ? todoAccounts.length : (proxies.length > 0 ? proxies.length : 1));
+  const availableAccounts = rawAccounts.length > 0 ? todoAccounts.length : 0;
+  const targetCount =
+    cfg.limit > 0
+      ? (availableAccounts > 0 ? Math.min(cfg.limit, availableAccounts) : cfg.limit)
+      : (availableAccounts > 0 ? availableAccounts : (proxies.length > 0 ? proxies.length : 1));
+
+  if (rawAccounts.length > 0 && cfg.limit > availableAccounts) {
+    log(
+      "warn",
+      `Limit yang diminta (${cfg.limit} akun) melebihi sisa akun yang tersedia (${availableAccounts} akun). Target disesuaikan menjadi ${targetCount} akun agar akun sukses tidak diulang.`,
+    );
+  }
   log("info", "processing plan", { targetSuccess: targetCount, useProxy: cfg.useProxy, proxyCount: proxies.length });
 
   let accountCursor = 0;
