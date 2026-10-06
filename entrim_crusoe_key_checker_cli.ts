@@ -47,8 +47,16 @@ const c = {
   bgDark: (s: string | number) => `\x1b[48;5;236m\x1b[38;5;250m ${s} \x1b[0m`,
 };
 
+interface KeyEntry {
+  key: string;
+  rawLine: string;
+  email?: string;
+  password?: string;
+}
+
 interface KeyCheckResult {
   key: string;
+  entry: KeyEntry;
   status: "VALID" | "QUOTA" | "INVALID" | "ERROR";
   httpStatus: number | null;
   latencyMs: number;
@@ -67,11 +75,18 @@ interface CliConfig {
   proxiesFile: string;
   proxyList: string[];
   outputValid: string;
+  outputBad: string;
   outputCsv: string;
   limit?: number;
 }
 
-function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim"): string {
+function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim" | "tokenharbor"): string {
+  if (provider === "tokenharbor") {
+    if (existsSync(resolve(process.cwd(), "akun-result-tokenharbor.txt"))) return "akun-result-tokenharbor.txt";
+    if (existsSync(resolve(process.cwd(), "apikey-tokenharbor.txt"))) return "apikey-tokenharbor.txt";
+    if (existsSync(resolve(process.cwd(), "tokenharbor-dataset/apikey-tokenharbor.txt"))) return "tokenharbor-dataset/apikey-tokenharbor.txt";
+    return "akun-result-tokenharbor.txt";
+  }
   if (provider === "fastrouter") {
     if (existsSync(resolve(process.cwd(), "apikey-fastrouter.txt"))) return "apikey-fastrouter.txt";
     if (existsSync(resolve(process.cwd(), "apikey-fastrouter"))) return "apikey-fastrouter";
@@ -87,10 +102,8 @@ function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim"): 
     if (existsSync(resolve(process.cwd(), "apikey.txt"))) return "apikey.txt";
     return "apikey.txt";
   }
-  // Fallback umum: prioritaskan apikey.txt jika ada, lalu apikey-fastrouter.txt
-  if (existsSync(resolve(process.cwd(), "apikey-fastrouter.txt")) && !existsSync(resolve(process.cwd(), "apikey.txt"))) {
-    return "apikey-fastrouter.txt";
-  }
+  // Fallback umum: prioritaskan akun-result-tokenharbor.txt jika ada, apikey.txt, apikey-fastrouter.txt
+  if (existsSync(resolve(process.cwd(), "akun-result-tokenharbor.txt"))) return "akun-result-tokenharbor.txt";
   if (existsSync(resolve(process.cwd(), "apikey.txt"))) return "apikey.txt";
   if (existsSync(resolve(process.cwd(), "apikey-fastrouter.txt"))) return "apikey-fastrouter.txt";
   if (existsSync(resolve(process.cwd(), "keys.txt"))) return "keys.txt";
@@ -110,8 +123,8 @@ function printBanner() {
   }
   console.log(`
 ${c.cyan("  ╔═══════════════════════════════════════════════════════════════════════════╗")}
-${c.cyan("  ║")}  ${c.bold(c.white("⚡ MULTI-PROVIDER BULK API KEY INSPECTOR"))}   ${c.yellow("v2.3 (Interactive TUI)")} ${c.cyan("║")}
-${c.cyan("  ║")}  ${c.dim("Crusoe • FastRouter • Entrim • OpenAI • Groq • Direct Upstream")}     ${c.cyan("║")}
+${c.cyan("  ║")}  ${c.bold(c.white("⚡ MULTI-PROVIDER BULK API KEY INSPECTOR"))}   ${c.yellow("v2.4 (Interactive TUI)")} ${c.cyan("║")}
+${c.cyan("  ║")}  ${c.dim("Crusoe • FastRouter • TokenHarbor • Entrim • OpenAI • Groq • Direct")}     ${c.cyan("║")}
 ${c.cyan("  ╚═══════════════════════════════════════════════════════════════════════════╝")}
 `);
 }
@@ -262,6 +275,13 @@ function parseArguments(): Partial<CliConfig> {
       config.targetModel = "openai/gpt-4o-mini";
       config.mode = "chat";
       if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("fastrouter");
+    } else if (arg === "--tokenharbor" || arg === "--th") {
+      config.baseUrl = "https://tokenharbor.ai/v1";
+      config.targetModel = "deepseek-v4-flash:free";
+      config.mode = "smart";
+      if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("tokenharbor");
+      if (!config.outputValid) config.outputValid = "akun-good-tokenharbor.txt";
+      if (!config.outputBad) config.outputBad = "akun-bad-tokenharbor.txt";
     } else if (arg === "--crusoe") {
       config.baseUrl = "https://api.inference.crusoecloud.com/v1";
       config.targetModel = "deepseek-ai/Deepseek-V4-Flash";
@@ -304,8 +324,11 @@ function parseArguments(): Partial<CliConfig> {
         config.mode = next;
       }
       i++;
-    } else if (arg === "--output" || arg === "-o") {
+    } else if (arg === "--output" || arg === "--output-valid" || arg === "-o") {
       config.outputValid = next;
+      i++;
+    } else if (arg === "--output-bad" || arg === "--bad" || arg === "-b") {
+      config.outputBad = next;
       i++;
     } else if (arg === "--csv") {
       config.outputCsv = next;
@@ -326,29 +349,31 @@ ${c.bold("PENGGUNAAN:")}
   bun run entrim_crusoe_key_checker_cli.ts [OPSI...]    ${c.dim("(Mode CLI Langsung)")}
 
 ${c.bold("OPSI:")}
+  --tokenharbor, --th      Preset TokenHarbor AI (https://tokenharbor.ai/v1 • deepseek-v4-flash:free)
   --fastrouter, --fr       Preset otomatis untuk FastRouter AI (https://api.fastrouter.ai/api/v1)
   --crusoe                 Preset otomatis untuk Crusoe Cloud Inference
   --entrim                 Preset otomatis untuk Entrim AI
-  -k, --keys <file>        File path daftar API key (Default: apikey-fastrouter.txt / apikey.txt)
+  -k, --keys <file>        File path daftar API key / akun (email:password:apikey)
   -p, --proxy [file]       Gunakan proxy pool (Opsional, Default: proxy-live.txt)
   --no-proxy, --direct     Koneksi langsung tanpa proxy (Default)
-  -u, --url <url>          Base URL API (Default: Crusoe Cloud Inference)
-  -m, --model <id>         Model target ping (Default: deepseek-ai/Deepseek-V4-Flash)
+  -u, --url <url>          Base URL API (Default: TokenHarbor / Crusoe)
+  -m, --model <id>         Model target ping (Default: deepseek-v4-flash:free / Deepseek-V4-Flash)
   --mode <mode>            Metode cek: "smart" (rekomendasi), "chat", "models"
   -c, --concurrency <num>  Jumlah worker simultan (Default: 5)
   -t, --timeout <sec>      Batas timeout request dalam detik (Default: 12)
   -l, --limit <num>        Batasi jumlah key yang diuji
-  -o, --output <file>      File hasil simpan key valid (Default: valid_keys.txt)
+  -o, --output <file>      File hasil simpan key/akun valid (Default: akun-good-tokenharbor.txt / valid_keys.txt)
+  -b, --output-bad <file>  File hasil simpan akun/key bad (email:password:apikey) (Default: akun-bad-tokenharbor.txt / bad_keys.txt)
   --csv <file>             File hasil ekspor CSV (Default: check_results.csv)
   -h, --help               Tampilkan panduan ini
 
 ${c.bold("CONTOH:")}
   ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts")}
+  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --tokenharbor")}
+  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --tokenharbor -k akun-result-tokenharbor.txt -c 10")}
+  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --tokenharbor --limit 5")}
   ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --fastrouter")}
-  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --fastrouter -k apikey-fastrouter.txt")}
   ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts -k apikey.txt")}
-  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts -k apikey.txt -p proxy-live.txt -c 10")}
-  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts -k apikey.txt --limit 10")}
 `);
 }
 
@@ -380,7 +405,55 @@ function loadProxiesFromFile(filePath: string): string[] {
   return Array.from(new Set(validProxies));
 }
 
-function loadKeysFromFile(filePath: string): string[] {
+function parseLineToKeyEntry(line: string): KeyEntry | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) {
+    return null;
+  }
+
+  // Bersihkan trailing timestamp jika ada (misal format: ...|2026-10-06T...)
+  let cleanLine = trimmed;
+  if (trimmed.includes("|")) {
+    const pipeIdx = trimmed.lastIndexOf("|");
+    const potentialTs = trimmed.slice(pipeIdx + 1);
+    if (potentialTs.includes("T") || potentialTs.includes("-") || potentialTs.length > 10) {
+      cleanLine = trimmed.slice(0, pipeIdx).trim();
+    }
+  }
+
+  // Deteksi format akun: email:password:apikey
+  if (cleanLine.includes(":")) {
+    const parts = cleanLine.split(":");
+    if (parts.length >= 3) {
+      const first = parts[0].trim();
+      const last = parts[parts.length - 1].trim();
+      // Format email:password:apikey
+      if (first.includes("@") || last.startsWith("thk_") || last.startsWith("sk-") || last.length > 25) {
+        const email = first;
+        const key = last;
+        const password = parts.slice(1, parts.length - 1).join(":");
+        return {
+          key,
+          rawLine: `${email}:${password}:${key}`,
+          email,
+          password,
+        };
+      }
+    }
+  }
+
+  // Fallback: line adalah plain API key
+  if (cleanLine.length > 5) {
+    return {
+      key: cleanLine,
+      rawLine: cleanLine,
+    };
+  }
+
+  return null;
+}
+
+function loadKeysFromFile(filePath: string): KeyEntry[] {
   if (!filePath) return [];
   const resolved = resolve(process.cwd(), filePath);
   if (!existsSync(resolved)) {
@@ -388,17 +461,16 @@ function loadKeysFromFile(filePath: string): string[] {
   }
   const content = readFileSync(resolved, "utf-8");
   const rawLines = content.split(/[\r\n]+/);
-  const keysSet = new Set<string>();
+  const keysMap = new Map<string, KeyEntry>();
 
   for (const line of rawLines) {
-    const trimmed = line.trim();
-    // Abaikan komentar dan baris kosong
-    if (trimmed && !trimmed.startsWith("#") && !trimmed.startsWith("//") && trimmed.length > 5) {
-      keysSet.add(trimmed);
+    const entry = parseLineToKeyEntry(line);
+    if (entry && !keysMap.has(entry.key)) {
+      keysMap.set(entry.key, entry);
     }
   }
 
-  return Array.from(keysSet);
+  return Array.from(keysMap.values());
 }
 
 function maskKey(key: string): string {
@@ -407,10 +479,11 @@ function maskKey(key: string): string {
 }
 
 async function verifyKey(
-  key: string,
+  entry: KeyEntry,
   config: CliConfig,
   proxyUrl?: string
 ): Promise<KeyCheckResult> {
+  const key = entry.key;
   const cleanBase = config.baseUrl.replace(/\/+$/, "");
   const startTime = performance.now();
   const isFastRouter = cleanBase.includes("fastrouter") || key.startsWith("sk-v1-");
@@ -448,6 +521,7 @@ async function verifyKey(
           const count = Array.isArray(data?.data) ? data.data.length : 0;
           return {
             key,
+            entry,
             status: "VALID",
             httpStatus: modelsResp.status,
             latencyMs,
@@ -460,10 +534,23 @@ async function verifyKey(
         if (modelsResp.status === 429) {
           return {
             key,
+            entry,
             status: "QUOTA",
             httpStatus: 429,
             latencyMs,
             message: "Rate Limit / Quota Habis (HTTP 429)",
+            proxyUsed: proxyUrl,
+          };
+        }
+
+        if (modelsResp.status === 402) {
+          return {
+            key,
+            entry,
+            status: "QUOTA",
+            httpStatus: 402,
+            latencyMs,
+            message: "Insufficient Credits / Quota Habis (HTTP 402)",
             proxyUsed: proxyUrl,
           };
         }
@@ -473,9 +560,10 @@ async function verifyKey(
           const msg =
             errJson?.error?.message ||
             (Array.isArray(errJson?.errors) ? errJson.errors[0] : null) ||
-            "Unauthorized";
+            "Unauthorized / Invalid API Key";
           return {
             key,
+            entry,
             status: "INVALID",
             httpStatus: modelsResp.status,
             latencyMs,
@@ -488,6 +576,7 @@ async function verifyKey(
         if (config.mode === "models") {
           return {
             key,
+            entry,
             status: "ERROR",
             httpStatus: modelsResp.status,
             latencyMs,
@@ -530,6 +619,7 @@ async function verifyKey(
 
       return {
         key,
+        entry,
         status: "VALID",
         httpStatus: response.status,
         latencyMs,
@@ -546,6 +636,7 @@ async function verifyKey(
         (response.status === 402 ? "Insufficient Credits / Quota Habis (HTTP 402)" : "Rate Limit / Quota Habis (HTTP 429)");
       return {
         key,
+        entry,
         status: "QUOTA",
         httpStatus: response.status,
         latencyMs,
@@ -559,9 +650,10 @@ async function verifyKey(
       const msg =
         errJson?.error?.message ||
         (Array.isArray(errJson?.errors) ? errJson.errors[0] : null) ||
-        "Unauthorized";
+        "Unauthorized / Invalid API Key";
       return {
         key,
+        entry,
         status: "INVALID",
         httpStatus: response.status,
         latencyMs,
@@ -583,6 +675,7 @@ async function verifyKey(
             const count = Array.isArray(modelsData?.data) ? modelsData.data.length : 0;
             return {
               key,
+              entry,
               status: "VALID",
               httpStatus: 200,
               latencyMs,
@@ -602,6 +695,7 @@ async function verifyKey(
         `Model "${config.targetModel}" tidak ditemukan di server`;
       return {
         key,
+        entry,
         status: "ERROR",
         httpStatus: 404,
         latencyMs,
@@ -613,6 +707,7 @@ async function verifyKey(
     const errText = await response.text().catch(() => response.statusText);
     return {
       key,
+      entry,
       status: "ERROR",
       httpStatus: response.status,
       latencyMs,
@@ -624,6 +719,7 @@ async function verifyKey(
     if (err.name === "AbortError" || err.message?.includes("timeout")) {
       return {
         key,
+        entry,
         status: "ERROR",
         httpStatus: null,
         latencyMs,
@@ -634,6 +730,7 @@ async function verifyKey(
 
     return {
       key,
+      entry,
       status: "ERROR",
       httpStatus: null,
       latencyMs,
@@ -646,7 +743,7 @@ async function verifyKey(
 }
 
 async function runConcurrentChecker(
-  keys: string[],
+  keys: KeyEntry[],
   config: CliConfig
 ): Promise<KeyCheckResult[]> {
   const results: KeyCheckResult[] = [];
@@ -670,7 +767,8 @@ async function runConcurrentChecker(
   async function worker(workerId: number) {
     while (currentIndex < keys.length) {
       const index = currentIndex++;
-      const currentKey = keys[index];
+      const currentEntry = keys[index];
+      const currentKey = currentEntry.key;
 
       // Ambil proxy jika ada
       let currentProxy: string | undefined = undefined;
@@ -679,13 +777,13 @@ async function runConcurrentChecker(
         proxyIdx++;
       }
 
-      let res = await verifyKey(currentKey, config, currentProxy);
+      let res = await verifyKey(currentEntry, config, currentProxy);
 
       // Jika terjadi error koneksi saat memakai proxy pool, coba fallback sekali ke proxy berikutnya
       if (res.status === "ERROR" && currentProxy && config.proxyList.length > 1) {
         const altProxy = config.proxyList[proxyIdx % config.proxyList.length];
         proxyIdx++;
-        const retryRes = await verifyKey(currentKey, config, altProxy);
+        const retryRes = await verifyKey(currentEntry, config, altProxy);
         if (retryRes.status !== "ERROR") {
           res = retryRes;
         }
@@ -697,6 +795,7 @@ async function runConcurrentChecker(
       // Format Baris Terminal
       const seqStr = c.dim(`[${(index + 1).toString().padStart(padding, "0")}/${total}]`);
       const masked = c.bold(maskKey(currentKey));
+      const accTag = currentEntry.email ? c.dim(` (${currentEntry.email})`) : "";
       const latStr = res.latencyMs > 0 ? c.gray(`${res.latencyMs.toString().padStart(4, " ")}ms`) : c.gray("   -  ");
 
       let badge = "";
@@ -726,7 +825,7 @@ async function runConcurrentChecker(
         : "";
 
       console.log(
-        ` ${seqStr} ${badge} ${masked} ${latStr} ── ${detailMsg}${proxyTag}`
+        ` ${seqStr} ${badge} ${masked}${accTag} ${latStr} ── ${detailMsg}${proxyTag}`
       );
     }
   }
@@ -743,12 +842,13 @@ async function runConcurrentChecker(
   return results;
 }
 
-function printSummary(results: KeyCheckResult[], totalDurationMs: number) {
+function printSummary(results: KeyCheckResult[], totalDurationMs: number, config: CliConfig) {
   const total = results.length;
   const valid = results.filter((r) => r.status === "VALID");
   const quota = results.filter((r) => r.status === "QUOTA");
   const invalid = results.filter((r) => r.status === "INVALID");
   const error = results.filter((r) => r.status === "ERROR");
+  const bad = results.filter((r) => r.status !== "VALID");
 
   const validPct = total > 0 ? ((valid.length / total) * 100).toFixed(1) : "0.0";
   const durationSec = (totalDurationMs / 1000).toFixed(2);
@@ -767,10 +867,10 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number) {
     `${c.bold(c.white("╠═══════════════════════════════════════════════════════════════════════════╣"))}`
   );
   console.log(
-    `║  Total Key Diuji     : ${c.bold(c.white(total.toString().padEnd(6)))}  ║  Waktu Eksekusi   : ${c.white(`${durationSec}s`.padEnd(10))} ║`
+    `║  Total Diuji         : ${c.bold(c.white(total.toString().padEnd(6)))}  ║  Waktu Eksekusi   : ${c.white(`${durationSec}s`.padEnd(10))} ║`
   );
   console.log(
-    `║  ${c.green("● Key Aktif (Valid)")}  : ${c.bold(c.green(valid.length.toString().padEnd(6)))}  ║  Rata-rata Latensi: ${c.white(`${avgLatency}ms`.padEnd(10))} ║`
+    `║  ${c.green("● Aktif (Good/Valid)")} : ${c.bold(c.green(valid.length.toString().padEnd(6)))}  ║  Rata-rata Latensi: ${c.white(`${avgLatency}ms`.padEnd(10))} ║`
   );
   console.log(
     `║  ${c.yellow("▲ Limit / Habis Kuota")} : ${c.bold(c.yellow(quota.length.toString().padEnd(6)))}  ║  Rasio Keberhasilan: ${c.bold(c.green(`${validPct}%`.padEnd(9)))} ║`
@@ -782,36 +882,82 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number) {
     `${c.bold(c.white("╚═══════════════════════════════════════════════════════════════════════════╝"))}`
   );
 
-  // Tap-to-copy friendly list printed directly in terminal
+  // Daftar Key / Akun Valid
   if (valid.length > 0) {
-    console.log(`\n${c.bold(c.green("🔑 DAFTAR KEY VALID (Siap Langsung Disalin):"))}`);
+    console.log(`\n${c.bold(c.green("🔑 DAFTAR KEY / AKUN VALID (GOOD):"))}`);
     console.log(c.dim("─".repeat(70)));
-    valid.forEach((item, i) => {
-      console.log(`  ${c.cyan((i + 1).toString().padStart(2, "0") + ".")} ${c.bold(c.white(item.key))}`);
+    valid.slice(0, 15).forEach((item, i) => {
+      const emailHint = item.entry.email ? c.dim(` (${item.entry.email})`) : "";
+      console.log(`  ${c.cyan((i + 1).toString().padStart(2, "0") + ".")} ${c.bold(c.white(item.key))}${emailHint}`);
     });
+    if (valid.length > 15) {
+      console.log(`  ${c.dim(`... dan ${valid.length - 15} lainnya (lihat ${config.outputValid})`)}`);
+    }
+    console.log(c.dim("─".repeat(70)));
+  }
+
+  // Daftar Key / Akun Gagal (BAD)
+  if (bad.length > 0) {
+    console.log(`\n${c.bold(c.yellow("⚠ DAFTAR AKUN / KEY GAGAL (BAD):"))}`);
+    console.log(c.dim("─".repeat(70)));
+    bad.slice(0, 10).forEach((item, i) => {
+      console.log(`  ${c.yellow((i + 1).toString().padStart(2, "0") + ".")} ${c.red(item.entry.rawLine)} ── ${c.dim(item.message)}`);
+    });
+    if (bad.length > 10) {
+      console.log(`  ${c.dim(`... dan ${bad.length - 10} akun/key gagal lainnya (lihat ${config.outputBad})`)}`);
+    }
     console.log(c.dim("─".repeat(70)));
   }
 }
 
 function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
   const valid = results.filter((r) => r.status === "VALID");
+  const bad = results.filter((r) => r.status !== "VALID");
 
-  // 1. Simpan valid keys file (plain text, 1 per baris)
+  // 1. Simpan Good / Valid results
   if (valid.length > 0) {
-    const validLines = valid.map((r) => r.key).join("\n") + "\n";
+    const validLines = valid.map((r) => r.entry.rawLine).join("\n") + "\n";
     writeFileSync(config.outputValid, validLines, "utf-8");
     console.log(
-      `${c.green("✔")} ${c.bold(valid.length)} Key aktif berhasil disimpan ke: ${c.bold(c.cyan(config.outputValid))}`
+      `${c.green("✔")} ${c.bold(valid.length)} Akun/Key aktif (GOOD) disimpan ke: ${c.bold(c.cyan(config.outputValid))}`
+    );
+
+    // Jika format input adalah akun (email:password:key), simpan juga file plain keys murni jika outputValid bukan valid_keys.txt
+    const hasAccountInfo = valid.some((r) => !!r.entry.email);
+    if (hasAccountInfo && config.outputValid !== "valid_keys.txt") {
+      const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
+      const plainKeyFile = config.keysFile.includes("tokenharbor")
+        ? "apikey-good-tokenharbor.txt"
+        : "valid_keys.txt";
+      writeFileSync(plainKeyFile, plainKeys, "utf-8");
+      console.log(
+        `${c.green("✔")} ${c.bold(valid.length)} Plain API key valid juga disimpan ke: ${c.bold(c.cyan(plainKeyFile))}`
+      );
+    }
+  }
+
+  // 2. Simpan Bad / Invalid results (format email:password:apikey jika ada akunnya, atau plain key jika tidak)
+  if (bad.length > 0 && config.outputBad) {
+    const badLines = bad.map((r) => r.entry.rawLine).join("\n") + "\n";
+    writeFileSync(config.outputBad, badLines, "utf-8");
+    console.log(
+      `${c.yellow("✔")} ${c.bold(bad.length)} Akun/Key gagal (BAD) dipisahkan ke: ${c.bold(c.yellow(config.outputBad))}`
     );
   }
 
-  // 2. Simpan CSV detail
-  const csvHeaders = "Key,Status,HTTP_Code,Latency_ms,Message,Proxy\n";
+  // 3. Simpan CSV detail
+  const hasAccountInfo = results.some((r) => !!r.entry.email);
+  const csvHeaders = hasAccountInfo
+    ? "Email,Password,Key,Status,HTTP_Code,Latency_ms,Message,Proxy\n"
+    : "Key,Status,HTTP_Code,Latency_ms,Message,Proxy\n";
   const csvRows = results
-    .map(
-      (r) =>
-        `"${r.key}","${r.status}",${r.httpStatus || 0},${r.latencyMs},"${r.message.replace(/"/g, '""')}","${r.proxyUsed || ""}"`
-    )
+    .map((r) => {
+      const esc = (s: string) => `"${(s || "").replace(/"/g, '""')}"`;
+      if (hasAccountInfo) {
+        return `${esc(r.entry.email || "")},${esc(r.entry.password || "")},${esc(r.key)},"${r.status}",${r.httpStatus || 0},${r.latencyMs},${esc(r.message)},${esc(r.proxyUsed || "")}`;
+      }
+      return `${esc(r.key)},"${r.status}",${r.httpStatus || 0},${r.latencyMs},${esc(r.message)},${esc(r.proxyUsed || "")}`;
+    })
     .join("\n");
 
   writeFileSync(config.outputCsv, csvHeaders + csvRows, "utf-8");
@@ -839,7 +985,8 @@ async function main() {
     keysFile: cliArgs.keysFile || defaultKeys,
     proxiesFile: cliArgs.proxiesFile !== undefined ? cliArgs.proxiesFile : "",
     proxyList: [],
-    outputValid: cliArgs.outputValid || "valid_keys.txt",
+    outputValid: cliArgs.outputValid || (cliArgs.baseUrl?.includes("tokenharbor") ? "akun-good-tokenharbor.txt" : "valid_keys.txt"),
+    outputBad: cliArgs.outputBad || (cliArgs.baseUrl?.includes("tokenharbor") ? "akun-bad-tokenharbor.txt" : "bad_keys.txt"),
     outputCsv: cliArgs.outputCsv || "check_results.csv",
     limit: cliArgs.limit,
   };
@@ -854,11 +1001,26 @@ async function main() {
       model: string;
       mode: "chat" | "models" | "smart";
       defaultKeysFile?: string;
+      outputValid?: string;
+      outputBad?: string;
     }
 
     const providerChoice = await selectMenu<ProviderPreset | "custom">(
       "Pilih Target Provider API",
       [
+        {
+          label: "TokenHarbor AI",
+          badge: c.bgGreen("Free Models"),
+          desc: "https://tokenharbor.ai/v1 • deepseek-v4-flash:free • Auto parsing email:password:key",
+          value: {
+            url: "https://tokenharbor.ai/v1",
+            model: "deepseek-v4-flash:free",
+            mode: "smart",
+            defaultKeysFile: resolveDefaultKeysFile("tokenharbor"),
+            outputValid: "akun-good-tokenharbor.txt",
+            outputBad: "akun-bad-tokenharbor.txt",
+          },
+        },
         {
           label: "FastRouter AI",
           badge: c.bgGreen("Kredit $1"),
@@ -936,6 +1098,12 @@ async function main() {
       config.mode = providerChoice.mode;
       if (providerChoice.defaultKeysFile && !cliArgs.keysFile) {
         config.keysFile = providerChoice.defaultKeysFile;
+      }
+      if (providerChoice.outputValid && !cliArgs.outputValid) {
+        config.outputValid = providerChoice.outputValid;
+      }
+      if (providerChoice.outputBad && !cliArgs.outputBad) {
+        config.outputBad = providerChoice.outputBad;
       }
     }
 
@@ -1109,14 +1277,15 @@ async function main() {
           inputKeys.push(line.trim());
         }
       }
-      keys = Array.from(new Set(inputKeys.filter((k) => k.length > 5)));
-      writeFileSync(config.keysFile, keys.join("\n") + "\n", "utf-8");
+      writeFileSync(config.keysFile, inputKeys.join("\n") + "\n", "utf-8");
+      keys = loadKeysFromFile(config.keysFile);
       console.log(`${c.green("✔")} ${keys.length} key berhasil disimpan ke ${config.keysFile}!\n`);
       rl.close();
     } else {
       const sampleContent = `# Masukkan API Key Anda di bawah ini (satu per baris):
-XCtEqqnHSnC61UQzncdYLw_2a_10_DlK6fSh883wXx8Ss9cV5SevuVspzkvcJ7rKgEMR9r3MXs4eODNfeq
-# sk-entrim-contohkey12345
+# Format: email:password:apikey ATAU apikey saja
+swiftcedar749@huzt.my.id:torabikA1###########:thk_live_FTu1P_w16ctoHILbjdRg8mpY8aXBch12pT59enkH6cD_H0D-ut5Glkuixr8NUwK7
+# sk-v1-contohkey12345
 `;
       writeFileSync(config.keysFile, sampleContent, "utf-8");
       console.log(`${c.green("✔")} File ${c.bold(config.keysFile)} telah dibuat!`);
@@ -1129,8 +1298,21 @@ XCtEqqnHSnC61UQzncdYLw_2a_10_DlK6fSh883wXx8Ss9cV5SevuVspzkvcJ7rKgEMR9r3MXs4eODNf
 
   // Auto-deteksi format key jika flag --url tidak ditentukan secara eksplisit
   if (keys.length > 0 && !cliArgs.baseUrl) {
-    const hasFastRouterKeys = keys.some((k) => k.startsWith("sk-v1-"));
-    if (hasFastRouterKeys && !config.baseUrl.includes("fastrouter")) {
+    const hasTokenHarborKeys = keys.some(
+      (k) => k.key.startsWith("thk_") || k.key.startsWith("thk_live_") || k.rawLine.includes("tokenharbor")
+    );
+    const hasFastRouterKeys = keys.some((k) => k.key.startsWith("sk-v1-"));
+
+    if (hasTokenHarborKeys && !config.baseUrl.includes("tokenharbor")) {
+      console.log(
+        `${c.cyan("ℹ")} Format TokenHarbor (${c.bold("thk_live_...")}) terdeteksi! Mengalihkan target otomatis ke ${c.bold(c.green("TokenHarbor AI"))} (${c.yellow("deepseek-v4-flash:free")})\n`
+      );
+      config.baseUrl = "https://tokenharbor.ai/v1";
+      config.targetModel = "deepseek-v4-flash:free";
+      config.mode = "smart";
+      if (!cliArgs.outputValid) config.outputValid = "akun-good-tokenharbor.txt";
+      if (!cliArgs.outputBad) config.outputBad = "akun-bad-tokenharbor.txt";
+    } else if (hasFastRouterKeys && !config.baseUrl.includes("fastrouter")) {
       console.log(
         `${c.cyan("ℹ")} Format key ${c.bold("sk-v1-...")} terdeteksi! Mengalihkan target otomatis ke ${c.bold(c.green("FastRouter AI"))} (${c.yellow("openai/gpt-4o-mini")})\n`
       );
@@ -1160,6 +1342,12 @@ XCtEqqnHSnC61UQzncdYLw_2a_10_DlK6fSh883wXx8Ss9cV5SevuVspzkvcJ7rKgEMR9r3MXs4eODNf
   console.log(`   ${c.dim("•")} Mode Uji     : ${c.green(config.mode.toUpperCase())}`);
   console.log(`   ${c.dim("•")} Concurrency  : ${c.white(config.concurrency)} thread simultan`);
   console.log(`   ${c.dim("•")} File Key     : ${c.cyan(config.keysFile)} (${c.bold(c.white(keys.length.toString()))} keys)`);
+  if (config.outputValid) {
+    console.log(`   ${c.dim("•")} Output Good  : ${c.green(config.outputValid)}`);
+  }
+  if (config.outputBad) {
+    console.log(`   ${c.dim("•")} Output Bad   : ${c.yellow(config.outputBad)}`);
+  }
   console.log(
     `   ${c.dim("•")} Jaringan     : ${
       config.proxyList.length > 0
@@ -1174,7 +1362,7 @@ XCtEqqnHSnC61UQzncdYLw_2a_10_DlK6fSh883wXx8Ss9cV5SevuVspzkvcJ7rKgEMR9r3MXs4eODNf
   const totalDuration = performance.now() - startTime;
 
   // Tampilkan Ringkasan & Simpan File
-  printSummary(results, totalDuration);
+  printSummary(results, totalDuration, config);
   saveOutputs(results, config);
 }
 
