@@ -174,7 +174,10 @@ async def handle_finish_and_start_chatting(page, logger) -> bool:
             finish_btn = await page.query_selector('button:has-text("Finish and start chatting"), button[type="submit"]:has-text("Finish and start chatting")')
             if finish_btn:
                 logger.info("detected 'One more step' onboarding screen, clicking 'Finish and start chatting'...")
-                await finish_btn.click()
+                try:
+                    await finish_btn.click(no_wait_after=True, timeout=10000)
+                except Exception:
+                    await finish_btn.click(force=True, no_wait_after=True, timeout=5000)
                 await human_delay(2000, 3500)
                 return True
         except Exception:
@@ -290,7 +293,7 @@ async def handle_enable_free_models_modal(page, logger=None, timeout_sec: int = 
         return False
 
 
-async def retrieve_verification_link_from_gmail(context, email: str, logger, timeout_sec: int = 65) -> Optional[str]:
+async def retrieve_verification_link_from_gmail(context, email: str, logger, timeout_sec: int = 90) -> Optional[str]:
     """
     Opens Gmail web (mail.google.com) in a new tab within the existing authenticated context,
     locates the Token Harbor verification email, and extracts the verification URL.
@@ -300,9 +303,10 @@ async def retrieve_verification_link_from_gmail(context, email: str, logger, tim
     verify_url = None
     try:
         gmail_page = await context.new_page()
-        gmail_page.set_default_timeout(35000)
+        gmail_page.set_default_timeout(60000)
+        gmail_page.set_default_navigation_timeout(60000)
 
-        await gmail_page.goto("https://mail.google.com/mail/u/0/#inbox", wait_until="domcontentloaded")
+        await gmail_page.goto("https://mail.google.com/mail/u/0/#inbox", wait_until="domcontentloaded", timeout=60000)
         await human_delay(2000, 3500)
 
         start_time = time.time()
@@ -314,7 +318,10 @@ async def retrieve_verification_link_from_gmail(context, email: str, logger, tim
                 )
                 if accept_btn:
                     logger.info("accepted Workspace Terms speedbump in Gmail tab...")
-                    await accept_btn.click()
+                    try:
+                        await accept_btn.click(no_wait_after=True, timeout=10000)
+                    except Exception:
+                        await accept_btn.click(force=True, no_wait_after=True, timeout=5000)
                     await human_delay(2000, 3500)
 
             # Handle account chooser if shown
@@ -322,7 +329,10 @@ async def retrieve_verification_link_from_gmail(context, email: str, logger, tim
                 acc_chooser = await gmail_page.query_selector(f'[data-identifier="{email}"]')
                 if acc_chooser:
                     logger.info(f"clicking account chooser for {email}...")
-                    await acc_chooser.click()
+                    try:
+                        await acc_chooser.click(no_wait_after=True, timeout=10000)
+                    except Exception:
+                        await acc_chooser.click(force=True, no_wait_after=True, timeout=5000)
                     await human_delay(2000, 3500)
 
             # Dismiss any promo/onboarding popups
@@ -542,7 +552,9 @@ async def run_single_google_account(
         async with browser_ctx as browser:
             context = await browser.new_context(ignore_https_errors=True)
             page = await context.new_page()
-            page.set_default_timeout(35000)
+            timeout_ms = 90000 if proxy else 45000
+            page.set_default_timeout(timeout_ms)
+            page.set_default_navigation_timeout(timeout_ms)
 
             fp = await get_browser_fingerprint_info(page)
             if fp:
@@ -550,7 +562,7 @@ async def run_single_google_account(
 
             # ── 1. Navigate to Sign Up / Dashboard ─────────────────────────
             logger.info(f"navigating to {DEFAULT_SIGNUP_URL}")
-            await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded")
+            await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded", timeout=timeout_ms)
             await human_delay(int(1500 * delay_mult), int(2500 * delay_mult))
             await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
 
@@ -562,23 +574,31 @@ async def run_single_google_account(
                 store.upsert({"email": email, "status": FlowState.SIGNUP})
                 google_btn = await page.wait_for_selector(
                     'button:has-text("Continue with Google"), button[aria-label="Continue with Google"]',
-                    timeout=20000,
+                    timeout=30000 if proxy else 20000,
                 )
                 if not google_btn:
                     raise RuntimeError("Button 'Continue with Google' not found")
 
                 logger.info("clicking 'Continue with Google'...")
-                await google_btn.click()
+                try:
+                    await google_btn.click(no_wait_after=True, timeout=15000)
+                except Exception as e:
+                    logger.warn(f"Standard click on SSO button failed ({e}), attempting JS click...")
+                    await page.evaluate("""() => {
+                        const btn = document.querySelector('button[aria-label="Continue with Google"]') ||
+                                    Array.from(document.querySelectorAll('button')).find(b => (b.textContent || '').includes('Continue with Google'));
+                        if (btn) btn.click();
+                    }""")
                 await human_delay(1500, 2500)
 
                 # Resolve Turnstile if presented before redirecting to Google
-                solved = await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
+                solved = await resolve_turnstile_if_present(page, timeout_sec=25, logger=logger)
                 if solved:
                     await human_delay(1500, 2500)
                     try:
                         if "accounts.google.com" not in page.url and await page.locator('button:has-text("Continue with Google")').count() > 0:
                             logger.info("Turnstile solved, ensuring SSO button clicked...")
-                            await page.locator('button:has-text("Continue with Google")').first.click(timeout=3000)
+                            await page.locator('button:has-text("Continue with Google")').first.click(no_wait_after=True, timeout=5000)
                     except Exception:
                         pass
 
@@ -588,7 +608,7 @@ async def run_single_google_account(
                     email=account.email,
                     password=account.password,
                     recovery_email=account.recovery_email,
-                    timeout_sec=60,
+                    timeout_sec=120 if proxy else 75,
                     logger=logger,
                 )
                 page = post_auth_page
@@ -682,11 +702,11 @@ async def run_single_google_account(
                 # Wait briefly for email dispatch
                 await human_delay(2000, 3500)
 
-                verify_url = await retrieve_verification_link_from_gmail(context, email, logger, timeout_sec=65)
+                verify_url = await retrieve_verification_link_from_gmail(context, email, logger, timeout_sec=90 if proxy else 65)
                 if verify_url:
                     store.upsert({"email": email, "status": FlowState.EMAIL_VERIFIED, "verificationLink": verify_url})
                     logger.info(f"navigating to verification URL: {verify_url}...")
-                    await page.goto(verify_url, wait_until="domcontentloaded")
+                    await page.goto(verify_url, wait_until="domcontentloaded", timeout=timeout_ms)
                     await human_delay(2500, 4000)
                     await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
                 else:
@@ -703,7 +723,8 @@ async def run_single_google_account(
 
     except Exception as e:
         logger.error(f"failed: {e}")
-        store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e)})
+        status_to_record = FlowState.PENDING if not mark_failed_on_error else FlowState.FAILED
+        store.upsert({"email": email, "status": status_to_record, "error": str(e)})
         if mark_failed_on_error:
             results.mark_failed(email, password, str(e))
         return False
@@ -742,7 +763,9 @@ async def run_single_account(
         async with browser_ctx as browser:
             context = await browser.new_context(ignore_https_errors=True)
             page = await context.new_page()
-            page.set_default_timeout(35000)
+            timeout_ms = 90000 if proxy else 45000
+            page.set_default_timeout(timeout_ms)
+            page.set_default_navigation_timeout(timeout_ms)
 
             # Log active anonymous fingerprint for this process/worker
             fp = await get_browser_fingerprint_info(page)
@@ -751,7 +774,7 @@ async def run_single_account(
 
             # ── 1. Navigate to Sign Up ──────────────────────────────────────
             logger.info(f"navigating to {DEFAULT_SIGNUP_URL}")
-            await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded")
+            await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded", timeout=timeout_ms)
             await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
             await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
 
@@ -819,7 +842,10 @@ async def run_single_account(
                     timeout=8000,
                 )
                 if btn:
-                    await btn.click()
+                    try:
+                        await btn.click(no_wait_after=True, timeout=10000)
+                    except Exception:
+                        await btn.click(force=True, no_wait_after=True, timeout=5000)
                 await human_delay(1500, 2500)
 
                 # Check if Cloudflare Turnstile popped up
@@ -831,7 +857,10 @@ async def run_single_account(
                         logger.info("Turnstile completed, re-submitting form...")
                         r_btn = await page.query_selector('button[type="submit"]')
                         if r_btn:
-                            await r_btn.click()
+                            try:
+                                await r_btn.click(no_wait_after=True, timeout=10000)
+                            except Exception:
+                                await r_btn.click(force=True, no_wait_after=True, timeout=5000)
                             await human_delay(1500, 2500)
 
                 # Check for dashboard redirect or speed warning

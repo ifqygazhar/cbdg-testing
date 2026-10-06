@@ -20,7 +20,7 @@ async def perform_google_oauth(
     email: str,
     password: str,
     recovery_email: Optional[str] = None,
-    timeout_sec: int = 60,
+    timeout_sec: int = 90,
     logger: Optional[Logger] = None
 ) -> Page:
     """
@@ -34,8 +34,9 @@ async def perform_google_oauth(
     logger.info("waiting for Google OAuth sign-in page...")
     target_page = page
     start_time = asyncio.get_event_loop().time()
+    oauth_wait_timeout = max(45, min(timeout_sec, 90))
 
-    while asyncio.get_event_loop().time() - start_time < 35:
+    while asyncio.get_event_loop().time() - start_time < oauth_wait_timeout:
         found = await find_google_page(context, page)
         if GOOGLE_AUTH_URL_RE.search(found.url):
             target_page = found
@@ -46,6 +47,12 @@ async def perform_google_oauth(
         solved = await resolve_turnstile_if_present(target_page, timeout_sec=2, logger=logger)
         if solved:
             await human_delay(1000, 2000)
+            try:
+                sso_btn = await target_page.query_selector('button[aria-label="Continue with Google"], button:has-text("Continue with Google")')
+                if sso_btn:
+                    await sso_btn.click(no_wait_after=True, timeout=5000)
+            except Exception:
+                pass
 
         await asyncio.sleep(0.5)
 
@@ -62,18 +69,21 @@ async def perform_google_oauth(
     logger.info("entering Google email...")
     email_sel = "#identifierId"
     try:
-        await target_page.wait_for_selector(email_sel, timeout=15000)
+        await target_page.wait_for_selector(email_sel, timeout=30000)
     except Exception:
         email_sel = 'input[type="email"], input[name="identifier"]'
-        await target_page.wait_for_selector(email_sel, timeout=10000)
+        await target_page.wait_for_selector(email_sel, timeout=20000)
 
-    await human_type(target_page, email_sel, email)
+    await human_type(target_page, email_sel, email, timeout=30000)
     await human_delay(300, 700)
 
     # Click Next
     next_btn = await target_page.query_selector("#identifierNext button, #identifierNext")
     if next_btn:
-        await next_btn.click()
+        try:
+            await next_btn.click(no_wait_after=True, timeout=15000)
+        except Exception:
+            await next_btn.click(force=True, no_wait_after=True, timeout=10000)
     else:
         await target_page.keyboard.press("Enter")
 
@@ -83,7 +93,7 @@ async def perform_google_oauth(
     logger.info("waiting for password step...")
     pwd_sel = 'input[type="password"], input[name="Passwd"], input[name="password"]'
     try:
-        await target_page.wait_for_selector(pwd_sel, timeout=15000)
+        await target_page.wait_for_selector(pwd_sel, timeout=30000)
     except Exception as e:
         # Check if Google gave a security check or restriction
         content = await target_page.content()
@@ -93,13 +103,16 @@ async def perform_google_oauth(
             raise RuntimeError("ACCOUNT_NOT_FOUND: Akun Google tidak ditemukan")
         raise RuntimeError(f"Gagal memuat password input: {e}")
 
-    await human_type(target_page, pwd_sel, password)
+    await human_type(target_page, pwd_sel, password, timeout=30000)
     await human_delay(400, 800)
 
     # Click Password Next
     pwd_next = await target_page.query_selector("#passwordNext button, #passwordNext")
     if pwd_next:
-        await pwd_next.click()
+        try:
+            await pwd_next.click(no_wait_after=True, timeout=15000)
+        except Exception:
+            await pwd_next.click(force=True, no_wait_after=True, timeout=10000)
     else:
         await target_page.keyboard.press("Enter")
 
@@ -139,7 +152,10 @@ async def perform_google_oauth(
         recovery_choice = await target_page.query_selector('div[data-recovery-email-address], [data-challengetype="12"]')
         if recovery_choice:
             logger.info("detected recovery email option challenge, clicking...")
-            await recovery_choice.click()
+            try:
+                await recovery_choice.click(no_wait_after=True, timeout=10000)
+            except Exception:
+                await recovery_choice.click(force=True, no_wait_after=True, timeout=5000)
             await human_delay(1000, 2000)
 
         # Option 2: recovery email input
@@ -150,7 +166,10 @@ async def perform_google_oauth(
             await human_delay(400, 800)
             rec_next = await target_page.query_selector('button:has-text("Next"), button:has-text("Berikutnya")')
             if rec_next:
-                await rec_next.click()
+                try:
+                    await rec_next.click(no_wait_after=True, timeout=10000)
+                except Exception:
+                    await rec_next.click(force=True, no_wait_after=True, timeout=5000)
             else:
                 await target_page.keyboard.press("Enter")
             await human_delay(2000, 3000)
@@ -159,7 +178,10 @@ async def perform_google_oauth(
         acc_chooser = await target_page.query_selector(f'[data-identifier="{email}"]')
         if acc_chooser:
             logger.info(f"detected account chooser for {email}, clicking...")
-            await acc_chooser.click()
+            try:
+                await acc_chooser.click(no_wait_after=True, timeout=10000)
+            except Exception:
+                await acc_chooser.click(force=True, no_wait_after=True, timeout=5000)
             await human_delay(1500, 2500)
             continue
 
@@ -198,7 +220,10 @@ async def perform_google_oauth(
                             continue
                         logger.info(f"detected Google consent / speedbump button ('{btn_text}'), clicking...")
                         await btn.scroll_into_view_if_needed()
-                        await btn.click()
+                        try:
+                            await btn.click(no_wait_after=True, timeout=10000)
+                        except Exception:
+                            await btn.click(force=True, no_wait_after=True, timeout=5000)
                         await human_delay(2000, 3500)
                         speedbump_handled = True
                         break

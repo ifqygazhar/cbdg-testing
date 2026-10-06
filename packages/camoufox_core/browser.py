@@ -200,11 +200,14 @@ async def human_delay(min_ms: int = 400, max_ms: int = 1200):
     delay = random.uniform(min_ms / 1000.0, max_ms / 1000.0)
     await asyncio.sleep(delay)
 
-async def human_type(page: Page, selector: str, text: str, min_delay_ms: int = 50, max_delay_ms: int = 120):
-    element = await page.wait_for_selector(selector, timeout=15000)
+async def human_type(page: Page, selector: str, text: str, min_delay_ms: int = 50, max_delay_ms: int = 120, timeout: int = 30000):
+    element = await page.wait_for_selector(selector, timeout=timeout)
     if not element:
         raise RuntimeError(f"Element not found for typing: {selector}")
-    await element.click()
+    try:
+        await element.click(no_wait_after=True, timeout=10000)
+    except Exception:
+        await element.click(force=True, no_wait_after=True, timeout=5000)
     await human_delay(250, 500)
     # Clear existing text if any
     await element.fill("")
