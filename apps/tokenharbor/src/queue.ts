@@ -53,6 +53,82 @@ export class SmartProxyPool {
     return null;
   }
 
+  public async getNextLiveProxy(
+    targetUrl = "https://tokenharbor.ai/login?mode=signup",
+    timeoutMs = 6000,
+    batchSize = 15,
+  ): Promise<string | null> {
+    if (this.reuseProxy && this.goodProxies.length > 0) {
+      const p = this.goodProxies.shift()!;
+      this.goodProxies.push(p);
+      return p;
+    }
+
+    while (true) {
+      if (this.goodProxies.length > 0) {
+        const p = this.goodProxies.shift()!;
+        if (this.reuseProxy) this.goodProxies.push(p);
+        return p;
+      }
+
+      const candidates: string[] = [];
+      while (this.freshProxies.length > 0 && candidates.length < batchSize) {
+        const p = this.freshProxies.shift()!;
+        const addr = this.addressOf(p);
+        if (!this.badAddresses.has(addr)) {
+          candidates.push(p);
+        }
+      }
+
+      if (candidates.length === 0) {
+        if (this.goodProxies.length > 0) {
+          const p = this.goodProxies.shift()!;
+          if (this.reuseProxy) this.goodProxies.push(p);
+          return p;
+        }
+        return null;
+      }
+
+      const probeResults = await Promise.all(
+        candidates.map(async (cand) => {
+          const t0 = Date.now();
+          try {
+            const resp = await fetch(targetUrl, {
+              proxy: cand.includes("://") ? cand : `http://${cand}`,
+              signal: AbortSignal.timeout(timeoutMs),
+            });
+            const dt = ((Date.now() - t0) / 1000).toFixed(2);
+            return { proxy: cand, ok: resp.status === 200, status: resp.status, dt };
+          } catch (e: any) {
+            const dt = ((Date.now() - t0) / 1000).toFixed(2);
+            return { proxy: cand, ok: false, status: e.name || "timeout", dt };
+          }
+        }),
+      );
+
+      const good: string[] = [];
+      for (const r of probeResults) {
+        if (r.ok) {
+          good.push(r.proxy);
+        } else {
+          this.badAddresses.add(this.addressOf(r.proxy));
+        }
+      }
+
+      if (good.length > 0) {
+        const chosen = good[0];
+        if (good.length > 1) {
+          for (let i = 1; i < good.length; i++) {
+            if (!this.goodProxies.includes(good[i])) {
+              this.goodProxies.push(good[i]);
+            }
+          }
+        }
+        return chosen;
+      }
+    }
+  }
+
   public markResult(proxyStr: string | null, success: boolean) {
     if (!proxyStr) return;
     const addr = this.addressOf(proxyStr);
@@ -165,14 +241,14 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
 
       let proxy: string | null = null;
       if (proxyPool) {
-        proxy = proxyPool.getNextProxy();
+        proxy = await proxyPool.getNextLiveProxy();
         if (proxy === null) {
           log("warn", `worker #${workerId}: all proxies have been exhausted or blacklisted. No usable proxies left.`);
           if (account) accountQueue.unshift(account);
           break;
         }
         const reuseTag = proxyPool.goodProxies.includes(proxy) ? " [reused good IP]" : "";
-        log("info", `worker #${workerId} selected proxy: ${proxy}${reuseTag} (fresh: ${proxyPool.freshCount}, good: ${proxyPool.goodCount})`);
+        log("info", `worker #${workerId} selected verified proxy: ${proxy}${reuseTag} (fresh: ${proxyPool.freshCount}, good: ${proxyPool.goodCount})`);
       }
 
       const res = await runTokenHarborAccount(account, proxy, store, results, cfg);

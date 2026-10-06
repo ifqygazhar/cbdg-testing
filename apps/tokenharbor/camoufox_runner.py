@@ -8,14 +8,16 @@ verifies email, enables free models, creates API keys, and saves tokens.
 import argparse
 import asyncio
 from collections import deque, defaultdict
+import concurrent.futures
 import html
 import os
 import random
 import re
 import sys
 import time
-from typing import Optional, List, Set
+from typing import Optional, List, Set, Tuple, Union
 from urllib.parse import urlparse, parse_qs, unquote
+import requests
 
 # Ensure repo root is on sys.path so packages.camoufox_core can be imported
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -49,17 +51,85 @@ DEFAULT_SIGNUP_URL = "https://tokenharbor.ai/login?mode=signup"
 DASHBOARD_URL = "https://tokenharbor.ai/dashboard"
 API_KEYS_URL = "https://tokenharbor.ai/dashboard/api-keys"
 
+def check_proxy_single_sync(
+    proxy: Proxy,
+    target_url: str = DEFAULT_SIGNUP_URL,
+    timeout_sec: float = 6.0,
+) -> Tuple[Proxy, bool, Union[int, str], float]:
+    """
+    Directly probes a proxy against TokenHarbor before opening the browser.
+    Returns (proxy, is_ok, status_or_reason, latency_seconds).
+    is_ok is True ONLY if the server returns HTTP 200.
+    """
+    t0 = time.time()
+    try:
+        parsed = urlparse(proxy.server)
+        scheme = parsed.scheme or "http"
+        host_port = parsed.netloc or parsed.path
+        if proxy.username and proxy.password:
+            proxy_url = f"{scheme}://{proxy.username}:{proxy.password}@{host_port}"
+        else:
+            proxy_url = f"{scheme}://{host_port}"
+
+        proxies = {
+            "http": proxy_url,
+            "https": proxy_url,
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+        resp = requests.get(
+            target_url,
+            proxies=proxies,
+            headers=headers,
+            timeout=timeout_sec,
+            allow_redirects=True,
+        )
+        elapsed = round(time.time() - t0, 2)
+        if resp.status_code == 200:
+            return proxy, True, 200, elapsed
+        return proxy, False, f"HTTP_{resp.status_code}", elapsed
+    except requests.exceptions.ConnectTimeout:
+        return proxy, False, "connect_timeout", round(time.time() - t0, 2)
+    except requests.exceptions.ReadTimeout:
+        return proxy, False, "read_timeout", round(time.time() - t0, 2)
+    except requests.exceptions.Timeout:
+        return proxy, False, "timeout", round(time.time() - t0, 2)
+    except requests.exceptions.ProxyError:
+        return proxy, False, "proxy_error", round(time.time() - t0, 2)
+    except requests.exceptions.SSLError:
+        return proxy, False, "ssl_error", round(time.time() - t0, 2)
+    except requests.exceptions.ConnectionError:
+        return proxy, False, "connection_refused", round(time.time() - t0, 2)
+    except Exception as e:
+        return proxy, False, type(e).__name__, round(time.time() - t0, 2)
+
+def check_proxy_batch_sync(
+    candidates: List[Proxy],
+    target_url: str = DEFAULT_SIGNUP_URL,
+    timeout_sec: float = 6.0,
+    max_workers: int = 15,
+) -> List[Tuple[Proxy, bool, Union[int, str], float]]:
+    workers = min(max_workers, max(1, len(candidates)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(check_proxy_single_sync, p, target_url, timeout_sec) for p in candidates]
+        return [f.result() for f in futures]
+
 class SmartProxyPool:
     """Manages proxy allocation with intelligent failure handling and success reuse.
     - Bad/rejected proxies are permanently discarded.
     - Successful proxies are preserved in a reusable pool and recycled when fresh proxies run out.
-    - Every new attempt receives a distinct IP from the pool.
+    - Proactively probes candidate proxies against TokenHarbor before opening the browser.
+      Any proxy that times out or returns non-200 is skipped immediately without launching Camoufox.
     """
     def __init__(self, proxies: List[Proxy], reuse_proxy: bool = False):
         self.fresh_proxies: deque[Proxy] = deque(proxies)
         self.good_proxies: List[Proxy] = []
         self.bad_addresses: Set[str] = set()
         self.reuse_proxy = reuse_proxy
+        self.lock = asyncio.Lock()
 
     @staticmethod
     def address_of(proxy: Proxy) -> str:
@@ -69,26 +139,114 @@ class SmartProxyPool:
             return proxy.server
 
     def get_next_proxy(self) -> Optional[Proxy]:
-        # If reuse_proxy is active and we have proven good proxies, reuse good proxies first
+        """Synchronous retrieval without pre-check (for backwards compatibility)."""
         if self.reuse_proxy and self.good_proxies:
             p = self.good_proxies.pop(0)
             self.good_proxies.append(p)
             return p
 
-        # 1. Prefer fresh proxy with clean IP
         while self.fresh_proxies:
             p = self.fresh_proxies.popleft()
             addr = self.address_of(p)
             if addr not in self.bad_addresses:
                 return p
 
-        # 2. If fresh proxies exhausted, reuse from verified good proxies
         if self.good_proxies:
             p = self.good_proxies.pop(0)
             self.good_proxies.append(p)
             return p
 
         return None
+
+    async def get_next_live_proxy(
+        self,
+        target_url: str = DEFAULT_SIGNUP_URL,
+        timeout_sec: float = 6.0,
+        logger = None,
+        batch_size: int = 15,
+        enable_precheck: bool = True,
+    ) -> Optional[Proxy]:
+        """
+        Asynchronously retrieves the next proxy that is guaranteed to return HTTP 200 on TokenHarbor.
+        Candidate fresh proxies are tested concurrently in batches of `batch_size`.
+        Any proxy that times out or returns non-200 is immediately skipped and discarded.
+        """
+        if not enable_precheck:
+            async with self.lock:
+                return self.get_next_proxy()
+
+        # 1. If reuse_proxy is active and we have proven good proxies, reuse good proxy immediately
+        async with self.lock:
+            if self.reuse_proxy and self.good_proxies:
+                p = self.good_proxies.pop(0)
+                self.good_proxies.append(p)
+                return p
+
+        # 2. Loop through fresh proxies in parallel batches until an HTTP 200 proxy is found
+        while True:
+            candidates: List[Proxy] = []
+            async with self.lock:
+                # If good_proxies has accumulated candidates from other batch probes, consume them
+                if self.good_proxies:
+                    p = self.good_proxies.pop(0)
+                    if self.reuse_proxy:
+                        self.good_proxies.append(p)
+                    return p
+
+                while self.fresh_proxies and len(candidates) < batch_size:
+                    cand = self.fresh_proxies.popleft()
+                    addr = self.address_of(cand)
+                    if addr not in self.bad_addresses:
+                        candidates.append(cand)
+
+                if not candidates:
+                    # Fresh proxies exhausted
+                    if self.good_proxies:
+                        p = self.good_proxies.pop(0)
+                        if self.reuse_proxy:
+                            self.good_proxies.append(p)
+                        return p
+                    return None
+
+            # Probe the candidate batch concurrently
+            if logger:
+                logger.info(
+                    f"🔍 Pre-checking batch of {len(candidates)} candidate proxies against TokenHarbor (HTTP 200, timeout={timeout_sec}s)... "
+                    f"(Fresh remaining: {len(self.fresh_proxies)}, Good pool: {len(self.good_proxies)})"
+                )
+
+            results = await asyncio.to_thread(
+                check_proxy_batch_sync,
+                candidates,
+                target_url,
+                timeout_sec,
+            )
+
+            good_candidates: List[Proxy] = []
+            bad_count = 0
+
+            for cand, ok, status_or_reason, latency in results:
+                addr = self.address_of(cand)
+                if ok:
+                    good_candidates.append(cand)
+                    if logger:
+                        logger.info(f"✅ Proxy pre-check PASSED: {cand.server} ({addr}) -> HTTP 200 in {latency}s")
+                else:
+                    async with self.lock:
+                        self.bad_addresses.add(addr)
+                    bad_count += 1
+
+            if bad_count > 0 and logger:
+                logger.info(f"⏭️ Discarded {bad_count} dead/non-200 proxies from batch.")
+
+            if good_candidates:
+                selected = good_candidates[0]
+                if len(good_candidates) > 1:
+                    async with self.lock:
+                        for extra in good_candidates[1:]:
+                            if extra not in self.good_proxies:
+                                self.good_proxies.append(extra)
+                return selected
 
     def mark_result(self, proxy: Optional[Proxy], success: bool, reason: str = ""):
         if not proxy:
@@ -1037,6 +1195,8 @@ async def main_async():
     parser.add_argument("--dry-run", action="store_true", help="Validate config without launching browser")
     parser.add_argument("--screenshot-dir", default="screenshots-tokenharbor", help="Directory for failure screenshots")
     parser.add_argument("--reuse-proxy", action="store_true", default=os.getenv("PROXY_REUSE", "0") in ("1", "true", "yes"), help="Prioritize/reuse verified good proxies")
+    parser.add_argument("--proxy-timeout", type=float, default=float(os.getenv("PROXY_PRECHECK_TIMEOUT", "6.0")), help="Timeout in seconds for proxy TokenHarbor HTTP 200 pre-check (default: 6.0s)")
+    parser.add_argument("--skip-proxy-precheck", action="store_true", default=os.getenv("SKIP_PROXY_PRECHECK", "0") in ("1", "true", "yes"), help="Skip proxy pre-check before browser launch")
     args = parser.parse_args()
 
     # Resolve proxies file
@@ -1151,30 +1311,37 @@ async def main_async():
                         account = account_queue.popleft()
                         in_flight += 1
 
-                        if not args.no_proxy and proxies:
-                            proxy = proxy_pool.get_next_proxy()
-                            if proxy is None:
-                                logger.warn(
-                                    f"Worker #{worker_id}: All proxies ({len(proxies)}) have been exhausted or blacklisted. No usable proxies left."
-                                )
-                                account_queue.appendleft(account)
-                                in_flight -= 1
-                                break
-                            proxy_addr = proxy_pool.address_of(proxy)
-                            reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
-                            logger.info(
-                                f"Worker #{worker_id} selected proxy: {proxy.server} ({proxy_addr}){reuse_tag}. "
-                                f"(Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})"
-                            )
-                        else:
-                            proxy = None
-
-                        processed += 1
-
                 if account is None:
                     # In-flight workers might re-queue an account
                     await asyncio.sleep(1.0)
                     continue
+
+                if not args.no_proxy and proxies:
+                    proxy = await proxy_pool.get_next_live_proxy(
+                        target_url=DEFAULT_SIGNUP_URL,
+                        timeout_sec=args.proxy_timeout,
+                        logger=logger,
+                        enable_precheck=(not args.skip_proxy_precheck),
+                    )
+                    if proxy is None:
+                        logger.warn(
+                            f"Worker #{worker_id}: All proxies ({len(proxies)}) have been exhausted or blacklisted. No usable proxies left."
+                        )
+                        async with lock:
+                            account_queue.appendleft(account)
+                            in_flight -= 1
+                        break
+                    proxy_addr = proxy_pool.address_of(proxy)
+                    reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
+                    logger.info(
+                        f"Worker #{worker_id} selected verified proxy: {proxy.server} ({proxy_addr}){reuse_tag}. "
+                        f"(Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})"
+                    )
+                else:
+                    proxy = None
+
+                async with lock:
+                    processed += 1
 
                 acc_logger = create_logger(f"w{worker_id}:{account.email}")
                 will_retry_if_failed = (
@@ -1266,17 +1433,23 @@ async def main_async():
                 if success_count >= count or processed >= max_total_attempts:
                     break
 
-                if not args.no_proxy and proxies:
-                    proxy = proxy_pool.get_next_proxy()
-                    if proxy is None:
-                        logger.warn(f"Worker #{worker_id}: All proxies ({len(proxies)}) have been exhausted or blacklisted. No usable proxies left.")
-                        break
-                    proxy_addr = proxy_pool.address_of(proxy)
-                    reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
-                    logger.info(f"Worker #{worker_id} selected proxy: {proxy.server} ({proxy_addr}){reuse_tag}. (Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})")
-                else:
-                    proxy = None
+            if not args.no_proxy and proxies:
+                proxy = await proxy_pool.get_next_live_proxy(
+                    target_url=DEFAULT_SIGNUP_URL,
+                    timeout_sec=args.proxy_timeout,
+                    logger=logger,
+                    enable_precheck=(not args.skip_proxy_precheck),
+                )
+                if proxy is None:
+                    logger.warn(f"Worker #{worker_id}: All proxies ({len(proxies)}) have been exhausted or blacklisted. No usable proxies left.")
+                    break
+                proxy_addr = proxy_pool.address_of(proxy)
+                reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
+                logger.info(f"Worker #{worker_id} selected verified proxy: {proxy.server} ({proxy_addr}){reuse_tag}. (Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})")
+            else:
+                proxy = None
 
+            async with lock:
                 processed += 1
 
             # Generate fresh TempMail account outside lock

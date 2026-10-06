@@ -133,4 +133,17 @@ describe("SmartProxyPool (tokenharbor)", () => {
     const p2 = pool.getNextProxy();
     expect(p2).toBe("http://1.1.1.1:8080");
   });
+
+  it("getNextLiveProxy skips dead proxies and returns null when all fail", async () => {
+    const { SmartProxyPool } = require("./queue.js");
+    const proxies = [
+      "http://127.0.0.1:1", // guaranteed connection refused / dead
+      "http://127.0.0.1:2",
+    ];
+    const pool = new SmartProxyPool(proxies, false);
+
+    const live = await pool.getNextLiveProxy("https://tokenharbor.ai/login?mode=signup", 200);
+    expect(live).toBeNull();
+    expect(pool.badAddresses.has("127.0.0.1")).toBe(true);
+  });
 });

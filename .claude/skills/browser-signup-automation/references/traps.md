@@ -295,4 +295,19 @@ if "google.com/url" in raw_url:
    ```
 3. Extend the authentication polling loop in `perform_google_oauth` to `max(45, min(timeout_sec, 90))` instead of fixed 35s.
 
+---
+
+## Dead / Unreachable Proxy Pre-Check (HTTP 200 Probe)
+
+**Symptom.** The automation runner repeatedly launches browser instances that timeout after 30-90s on dead or non-responsive public proxies from `proxy.txt` / `proxy-live.txt`.
+
+**Cause.** Public proxy lists degrade quickly; proxies may refuse SSL handshakes, fail HTTP CONNECT tunneling, or be blocked by cloud providers (Cloudflare/Vercel) returning 403/502. Launching a heavy browser process per dead proxy wastes 30-90s each time.
+
+**Fix.** Before passing any proxy to the browser engine, proactively probe the proxy directly against the target platform endpoint (e.g. `https://tokenharbor.ai/login?mode=signup`) with a lightweight HTTP request and a short timeout (5-6s):
+1. Test in concurrent batches (e.g. 15 proxies at a time).
+2. If the response status is NOT HTTP 200 or connection times out / raises an error, immediately discard the proxy and blacklist its IP.
+3. Only launch the browser once an HTTP 200 OK verified proxy is obtained.
+4. Preserve verified working proxies in a reusable pool (`goodProxies`).
+
+
 
