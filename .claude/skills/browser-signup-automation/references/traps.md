@@ -267,3 +267,32 @@ if "google.com/url" in raw_url:
     clean_url = qs.get("q", [raw_url])[0]
 ```
 
+---
+
+## Slow Proxy Timeout & `ElementHandle.click: Timeout exceeded waiting for scheduled navigations to finish`
+
+**Symptom.** When running automation with proxies, the browser window abruptly closes midway, with log errors:
+- `Page.goto: Timeout 35000ms exceeded.`
+- `ElementHandle.click: Timeout 35000ms exceeded. waiting for scheduled navigations to finish`
+
+**Cause.**
+1. Free/public proxies often have high network latency (30-60s) for TLS negotiation and asset hydration. A hardcoded default timeout of 30-35s causes premature timeouts.
+2. In Playwright, `element.click()` waits for scheduled page navigations to complete by default (`no_wait_after=False`). When clicking SSO buttons like "Continue with Google", the cross-domain redirect across slow proxies exceeds Playwright's click timeout, throwing an exception and closing the browser.
+
+**Fix.**
+1. When proxies are active, increase default and navigation timeouts dynamically:
+   ```python
+   timeout_ms = 90000 if proxy else 45000
+   page.set_default_timeout(timeout_ms)
+   page.set_default_navigation_timeout(timeout_ms)
+   ```
+2. For all buttons that initiate external redirection or cross-domain navigations (e.g. Google SSO button, login form submit), pass `no_wait_after=True` and fallback to Javascript `evaluate`:
+   ```python
+   try:
+       await sso_btn.click(no_wait_after=True, timeout=15000)
+   except Exception:
+       await page.evaluate("() => document.querySelector('button[aria-label=\"Continue with Google\"]').click()")
+   ```
+3. Extend the authentication polling loop in `perform_google_oauth` to `max(45, min(timeout_sec, 90))` instead of fixed 35s.
+
+
