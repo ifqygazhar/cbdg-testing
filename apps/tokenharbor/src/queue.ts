@@ -10,9 +10,11 @@ export class SmartProxyPool {
   private freshProxies: string[];
   public goodProxies: string[] = [];
   public badAddresses = new Set<string>();
+  public reuseProxy: boolean;
 
-  constructor(proxies: string[]) {
+  constructor(proxies: string[], reuseProxy = false) {
     this.freshProxies = [...proxies];
+    this.reuseProxy = reuseProxy;
   }
 
   public addressOf(proxyStr: string): string {
@@ -25,6 +27,13 @@ export class SmartProxyPool {
   }
 
   public getNextProxy(): string | null {
+    // If reuseProxy is enabled and good proxies exist, reuse good proxy first
+    if (this.reuseProxy && this.goodProxies.length > 0) {
+      const p = this.goodProxies.shift()!;
+      this.goodProxies.push(p);
+      return p;
+    }
+
     // 1. Fresh proxy that hasn't failed
     while (this.freshProxies.length > 0) {
       const p = this.freshProxies.shift()!;
@@ -84,7 +93,7 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
 
   log("info", "seeds loaded", { accounts: rawAccounts.length, proxies: proxies.length });
 
-  const proxyPool = cfg.useProxy && proxies.length > 0 ? new SmartProxyPool(proxies) : null;
+  const proxyPool = cfg.useProxy && proxies.length > 0 ? new SmartProxyPool(proxies, cfg.reuseProxy) : null;
 
   let todoAccounts: Account[] = [];
   if (rawAccounts.length > 0) {
@@ -133,7 +142,10 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
   }
   log("info", "processing plan", { targetSuccess: targetCount, useProxy: cfg.useProxy, proxyCount: proxies.length });
 
-  let accountCursor = 0;
+  const accountQueue = [...todoAccounts];
+  const attemptsPerAccount = new Map<string, number>();
+  const MAX_PROXY_ATTEMPTS = proxyPool ? 3 : 1;
+
   let successCount = 0;
   let processedAttempts = 0;
   const maxAttempts = proxyPool ? Math.max(targetCount * 4, proxies.length * 2, 10) : targetCount;
@@ -145,8 +157,8 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
 
       let account: Account | null = null;
       if (rawAccounts.length > 0) {
-        if (accountCursor >= todoAccounts.length) break;
-        account = todoAccounts[accountCursor++];
+        if (accountQueue.length === 0) break;
+        account = accountQueue.shift()!;
       }
 
       processedAttempts++;
@@ -156,8 +168,11 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
         proxy = proxyPool.getNextProxy();
         if (proxy === null) {
           log("warn", `worker #${workerId}: all proxies have been exhausted or blacklisted. No usable proxies left.`);
+          if (account) accountQueue.unshift(account);
           break;
         }
+        const reuseTag = proxyPool.goodProxies.includes(proxy) ? " [reused good IP]" : "";
+        log("info", `worker #${workerId} selected proxy: ${proxy}${reuseTag} (fresh: ${proxyPool.freshCount}, good: ${proxyPool.goodCount})`);
       }
 
       const res = await runTokenHarborAccount(account, proxy, store, results, cfg);
@@ -173,6 +188,20 @@ export async function processQueue(cfg: TokenHarborConfig, store: JsonlStore): P
       if (res.success) {
         successCount++;
         log("info", `progress: ${successCount}/${targetCount} accounts succeeded.`);
+      } else if (account) {
+        const att = (attemptsPerAccount.get(account.email) || 0) + 1;
+        attemptsPerAccount.set(account.email, att);
+        if (proxyPool && proxyPool.hasProxies && att < MAX_PROXY_ATTEMPTS && successCount < targetCount) {
+          log(
+            "info",
+            `worker #${workerId}: proxy failed for ${account.email}. Skipping bad proxy and re-queuing account with fresh proxy (attempt ${att + 1}/${MAX_PROXY_ATTEMPTS})...`,
+          );
+          accountQueue.push(account);
+        } else {
+          if (proxyPool && att >= MAX_PROXY_ATTEMPTS) {
+            log("warn", `worker #${workerId}: account ${account.email} exhausted all ${MAX_PROXY_ATTEMPTS} proxy attempts. Marked as failed.`);
+          }
+        }
       }
 
       if (successCount < targetCount) {

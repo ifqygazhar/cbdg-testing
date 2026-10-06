@@ -113,4 +113,24 @@ describe("SmartProxyPool (tokenharbor)", () => {
     const p6 = pool.getNextProxy();
     expect(p6).toBeNull();
   });
+
+  it("immediately prioritizes good proxies when reuseProxy is true", () => {
+    const { SmartProxyPool } = require("./queue.js");
+    const proxies = [
+      "http://1.1.1.1:8080",
+      "http://2.2.2.2:8080",
+      "http://3.3.3.3:8080",
+    ];
+    const pool = new SmartProxyPool(proxies, true);
+
+    const p1 = pool.getNextProxy();
+    expect(p1).toBe("http://1.1.1.1:8080");
+
+    // Marked good
+    pool.markResult(p1, true);
+
+    // Next request MUST reuse good proxy p1 (1.1.1.1) rather than taking fresh 2.2.2.2
+    const p2 = pool.getNextProxy();
+    expect(p2).toBe("http://1.1.1.1:8080");
+  });
 });

@@ -7,7 +7,7 @@ verifies email, enables free models, creates API keys, and saves tokens.
 
 import argparse
 import asyncio
-from collections import deque
+from collections import deque, defaultdict
 import html
 import os
 import random
@@ -55,10 +55,11 @@ class SmartProxyPool:
     - Successful proxies are preserved in a reusable pool and recycled when fresh proxies run out.
     - Every new attempt receives a distinct IP from the pool.
     """
-    def __init__(self, proxies: List[Proxy]):
+    def __init__(self, proxies: List[Proxy], reuse_proxy: bool = False):
         self.fresh_proxies: deque[Proxy] = deque(proxies)
         self.good_proxies: List[Proxy] = []
         self.bad_addresses: Set[str] = set()
+        self.reuse_proxy = reuse_proxy
 
     @staticmethod
     def address_of(proxy: Proxy) -> str:
@@ -68,6 +69,12 @@ class SmartProxyPool:
             return proxy.server
 
     def get_next_proxy(self) -> Optional[Proxy]:
+        # If reuse_proxy is active and we have proven good proxies, reuse good proxies first
+        if self.reuse_proxy and self.good_proxies:
+            p = self.good_proxies.pop(0)
+            self.good_proxies.append(p)
+            return p
+
         # 1. Prefer fresh proxy with clean IP
         while self.fresh_proxies:
             p = self.fresh_proxies.popleft()
@@ -508,6 +515,7 @@ async def run_single_google_account(
     screenshot_dir: str,
     logger,
     pace: str = "human",
+    mark_failed_on_error: bool = True,
 ) -> bool:
     email = account.email
     password = account.password
@@ -696,7 +704,8 @@ async def run_single_google_account(
     except Exception as e:
         logger.error(f"failed: {e}")
         store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e)})
-        results.mark_failed(email, password, str(e))
+        if mark_failed_on_error:
+            results.mark_failed(email, password, str(e))
         return False
 
 async def run_single_account(
@@ -998,6 +1007,7 @@ async def main_async():
     parser.add_argument("--pace", choices=["fast", "human", "careful"], default=os.getenv("PACE", "human"), help="Cadence pace")
     parser.add_argument("--dry-run", action="store_true", help="Validate config without launching browser")
     parser.add_argument("--screenshot-dir", default="screenshots-tokenharbor", help="Directory for failure screenshots")
+    parser.add_argument("--reuse-proxy", action="store_true", default=os.getenv("PROXY_REUSE", "0") in ("1", "true", "yes"), help="Prioritize/reuse verified good proxies")
     args = parser.parse_args()
 
     # Resolve proxies file
@@ -1014,7 +1024,7 @@ async def main_async():
         key_files.append(args.output_file)
 
     proxies = load_proxies(proxy_file) if (proxy_file and not args.no_proxy) else []
-    proxy_pool = SmartProxyPool(proxies) if proxies else None
+    proxy_pool = SmartProxyPool(proxies, reuse_proxy=args.reuse_proxy) if proxies else None
 
     store = JsonlStore(args.state_file)
     results = ResultWriter(
@@ -1083,28 +1093,66 @@ async def main_async():
             logger.info(f"dry-run: next account(s) to process: {[a.email for a in eligible_accounts[:target_count]]}")
             return
 
+        account_queue = deque(eligible_accounts)
+        attempts_per_account = defaultdict(int)
+        MAX_PROXY_ATTEMPTS = 3 if proxy_pool else 1
+        max_total_attempts = max(target_count * 4, len(proxies) * 2, 15) if proxy_pool else (len(eligible_accounts) * 2)
+
         processed = 0
         success_count = 0
-        account_idx = 0
+        in_flight = 0
         lock = asyncio.Lock()
 
         async def google_worker(worker_id: int):
-            nonlocal processed, success_count, account_idx
+            nonlocal processed, success_count, in_flight
             while True:
                 account = None
                 proxy = None
                 async with lock:
-                    if success_count >= target_count or processed >= target_count or account_idx >= len(eligible_accounts):
+                    if success_count >= target_count:
+                        break
+                    if processed >= max_total_attempts:
+                        logger.warn(f"Worker #{worker_id}: Max attempt limit reached ({processed}/{max_total_attempts}).")
                         break
 
-                    account = eligible_accounts[account_idx]
-                    account_idx += 1
+                    if not account_queue:
+                        if in_flight == 0:
+                            break
+                    else:
+                        account = account_queue.popleft()
+                        in_flight += 1
 
-                    if not args.no_proxy and proxies:
-                        proxy = proxy_pool.get_next_proxy() if proxy_pool else None
-                    processed += 1
+                        if not args.no_proxy and proxies:
+                            proxy = proxy_pool.get_next_proxy()
+                            if proxy is None:
+                                logger.warn(
+                                    f"Worker #{worker_id}: All proxies ({len(proxies)}) have been exhausted or blacklisted. No usable proxies left."
+                                )
+                                account_queue.appendleft(account)
+                                in_flight -= 1
+                                break
+                            proxy_addr = proxy_pool.address_of(proxy)
+                            reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
+                            logger.info(
+                                f"Worker #{worker_id} selected proxy: {proxy.server} ({proxy_addr}){reuse_tag}. "
+                                f"(Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})"
+                            )
+                        else:
+                            proxy = None
+
+                        processed += 1
+
+                if account is None:
+                    # In-flight workers might re-queue an account
+                    await asyncio.sleep(1.0)
+                    continue
 
                 acc_logger = create_logger(f"w{worker_id}:{account.email}")
+                will_retry_if_failed = (
+                    proxy_pool is not None
+                    and proxy_pool.has_proxies
+                    and attempts_per_account[account.email] < MAX_PROXY_ATTEMPTS - 1
+                )
                 ok = await run_single_google_account(
                     account=account,
                     proxy=proxy,
@@ -1114,27 +1162,56 @@ async def main_async():
                     screenshot_dir=args.screenshot_dir,
                     logger=acc_logger,
                     pace=args.pace,
+                    mark_failed_on_error=(not will_retry_if_failed),
                 )
 
                 async with lock:
+                    in_flight -= 1
                     if proxy_pool and proxy:
-                        proxy_pool.mark_result(proxy, ok)
+                        if ok:
+                            proxy_pool.mark_result(proxy, success=True)
+                            logger.info(f"Worker #{worker_id}: Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
+                        else:
+                            proxy_pool.mark_result(proxy, success=False)
+                            logger.warn(f"Worker #{worker_id}: Proxy {proxy.server} failed/rejected. Discarded and will not be reused.")
+
                     if ok:
                         success_count += 1
                         logger.info(f"Progress: {success_count}/{target_count} accounts completed successfully.")
+                    else:
+                        attempts_per_account[account.email] += 1
+                        current_att = attempts_per_account[account.email]
+                        can_retry_with_diff_proxy = (
+                            proxy_pool is not None
+                            and proxy_pool.has_proxies
+                            and current_att < MAX_PROXY_ATTEMPTS
+                            and success_count < target_count
+                        )
+                        if can_retry_with_diff_proxy:
+                            logger.info(
+                                f"Worker #{worker_id}: Proxy failed for {account.email}. "
+                                f"Skipping bad proxy and re-queuing account to retry with fresh/different proxy (attempt {current_att + 1}/{MAX_PROXY_ATTEMPTS})..."
+                            )
+                            account_queue.append(account)
+                        else:
+                            if proxy_pool and current_att >= MAX_PROXY_ATTEMPTS:
+                                logger.warn(f"Worker #{worker_id}: Account {account.email} exhausted all {MAX_PROXY_ATTEMPTS} proxy attempts. Marked as failed.")
+                            results.mark_failed(account.email, account.password, "Proxy/automation failure")
 
                 if success_count < target_count:
                     if ok and args.delay > 0:
+                        logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
                         await asyncio.sleep(args.delay)
                     elif not ok:
-                        await asyncio.sleep(min(3.0, float(args.delay)))
+                        logger.info(f"Worker #{worker_id} switching immediately to next proxy / account...")
+                        await asyncio.sleep(1.5)
 
         if worker_count > 1:
             await asyncio.gather(*(google_worker(i + 1) for i in range(worker_count)))
         else:
             await google_worker(1)
 
-        logger.info(f"TokenHarbor Camoufox Google batch finished: {success_count}/{processed} succeeded.")
+        logger.info(f"TokenHarbor Camoufox Google batch finished: {success_count}/{target_count} target achieved ({processed} total attempts).")
         return
 
     # ── TEMPMAIL FLOW ───────────────────────────────────────────────────────
