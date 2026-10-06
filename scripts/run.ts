@@ -5,6 +5,8 @@
 // Everything it can do is also reachable by typing the flags directly; the
 // command it is about to run is printed so you can copy it next time.
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { select, confirm, askNumber, askText, releaseStdin, ui, Cancelled } from "./prompt.js";
 import {
   APP_ENTRY,
@@ -145,8 +147,39 @@ async function askPlan(): Promise<RunPlan> {
     { value: "careful", label: "careful", hint: "lebih pelan dari manusia, buat risk engine galak" },
   ]);
 
+  let reEnableFree = false;
+  if (app === "tokenharbor") {
+    let badCount = 0;
+    const badPath = resolve(process.cwd(), "akun-bad-tokenharbor.txt");
+    if (existsSync(badPath)) {
+      badCount = readFileSync(badPath, "utf-8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !l.startsWith("#")).length;
+    }
+
+    const harborAction = await select<"signup" | "reenable">(
+      "Pilih tindakan untuk TokenHarbor?",
+      [
+        {
+          value: "signup",
+          label: "Pendaftaran Akun Baru (Signup)",
+          hint: "Daftar akun baru via Google OAuth atau TempMail",
+        },
+        {
+          value: "reenable",
+          label: "Re-enable Free Models (Aktifkan Ulang)",
+          hint: `Login & klik enable free models di dashboard (${badCount} akun di akun-bad-tokenharbor.txt)`,
+        },
+      ],
+      0,
+    );
+    if (harborAction === "reenable") {
+      reEnableFree = true;
+    }
+  }
+
   let authMethod: "google" | "tempmail" | undefined;
-  if (app === "fastrouter" || app === "tokenharbor") {
+  if (!reEnableFree && (app === "fastrouter" || app === "tokenharbor")) {
     authMethod = await select<"tempmail" | "google">(
       `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : "FastRouter"}?`,
       [
@@ -167,7 +200,21 @@ async function askPlan(): Promise<RunPlan> {
 
   let domain: string | undefined;
   let limit: number | undefined;
-  if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter") && authMethod === "tempmail")) {
+  if (reEnableFree) {
+    const badPath = resolve(process.cwd(), "akun-bad-tokenharbor.txt");
+    let badCount = 0;
+    if (existsSync(badPath)) {
+      badCount = readFileSync(badPath, "utf-8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !l.startsWith("#")).length;
+    }
+    const defaultLimit = badCount > 0 ? badCount : 1;
+    limit = await askNumber(
+      `Berapa banyak akun yang ingin diaktifkan ulang? (${badCount} akun tersisa di akun-bad-tokenharbor.txt)`,
+      defaultLimit,
+      " akun",
+    );
+  } else if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter") && authMethod === "tempmail")) {
     domain = await select<string>("Domain TempMail?", [
       { value: "ifqy.net", label: "ifqy.net", hint: "domain utama TempMail-Pro (default)" },
       { value: "meongtopup.my.id", label: "meongtopup.my.id", hint: "domain alternatif 1" },
@@ -202,11 +249,11 @@ async function askPlan(): Promise<RunPlan> {
 
   const delaySec = await askNumber("Jeda antar akun", 60, " detik");
   const workers = await askNumber("Jumlah worker paralel", 1);
-  const retryFailed = await confirm("Ulangi akun yang tercatat gagal?", false);
+  const retryFailed = reEnableFree ? false : await confirm("Ulangi akun yang tercatat gagal?", false);
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, engine, authMethod, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain };
+  return { app, mode, engine, authMethod, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain, reEnableFree };
 }
 
 function review(plan: RunPlan): void {
@@ -223,6 +270,7 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
   }
   const rows: Array<[string, string]> = [
     ["app", plan.app],
+    ...(plan.reEnableFree ? ([["tindakan", "Re-enable Free Models (akun-bad-tokenharbor.txt)"]] as Array<[string, string]>) : []),
     ...(plan.engine
       ? ([
           [
@@ -267,7 +315,9 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
       ? ([
           [
             "target",
-            plan.authMethod === "google"
+            plan.reEnableFree
+              ? `${plan.limit} akun (dari akun-bad-tokenharbor.txt)`
+              : plan.authMethod === "google"
               ? `${plan.limit} akun (dari sisa akun yang belum dibuat)`
               : `${plan.limit} akun`,
           ],

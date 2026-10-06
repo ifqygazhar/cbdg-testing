@@ -907,6 +907,19 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number, config
       console.log(`  ${c.dim(`... dan ${bad.length - 10} akun/key gagal lainnya (lihat ${config.outputBad})`)}`);
     }
     console.log(c.dim("─".repeat(70)));
+
+    const freeModelsDisabledCount = bad.filter((item) =>
+      item.message.toLowerCase().includes("free models are turned off") ||
+      item.message.toLowerCase().includes("free_models_disabled")
+    ).length;
+    if (freeModelsDisabledCount > 0) {
+      console.log(
+        `\n${c.bold(c.cyan("💡 TIP TOKENHARBOR:"))} Terdeteksi ${c.bold(c.yellow(freeModelsDisabledCount))} akun dengan Free Models nonaktif.`
+      );
+      console.log(
+        `   Aktifkan kembali otomatis dengan: ${c.bold(c.green("bun run tokenharbor -- --re-enable-free"))} atau via ${c.bold(c.green("bun run start"))} (pilih Re-enable Free Models)!`
+      );
+    }
   }
 }
 

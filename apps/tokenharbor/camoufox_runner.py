@@ -48,6 +48,7 @@ API_KEY_RE = re.compile(r"thk_(?:live_)?[A-Za-z0-9_\-]{20,}")
 VERIFY_LINK_RE = re.compile(r"https?://(?:www\.)?tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-\.%]+", re.IGNORECASE)
 
 DEFAULT_SIGNUP_URL = "https://tokenharbor.ai/login?mode=signup"
+DEFAULT_LOGIN_URL = "https://tokenharbor.ai/login"
 DASHBOARD_URL = "https://tokenharbor.ai/dashboard"
 API_KEYS_URL = "https://tokenharbor.ai/dashboard/api-keys"
 
@@ -449,6 +450,71 @@ async def handle_enable_free_models_modal(page, logger=None, timeout_sec: int = 
         if logger:
             logger.warn(f"error while handling Enable free models modal: {e}")
         return False
+
+async def ensure_free_models_enabled(page, logger=None, timeout_sec: int = 8) -> bool:
+    """
+    Ensures free models are enabled:
+    1. Checks for the modal popup on current page.
+    2. If not found or after dismissal, checks for toggle switch in DOM.
+    """
+    handled_modal = await handle_enable_free_models_modal(page, logger=logger, timeout_sec=timeout_sec)
+    await dismiss_cookie_banner(page, logger=logger)
+
+    # Check for inline switch toggle if present on dashboard
+    try:
+        switch_btn = await page.query_selector(
+            'button[role="switch"][aria-label*="free model" i], button[role="switch"]:has-text("Enable free models")'
+        )
+        if switch_btn:
+            aria_checked = await switch_btn.get_attribute("aria-checked")
+            if aria_checked != "true":
+                if logger:
+                    logger.info("Found toggle switch 'Enable free models' in state OFF (checked=false), clicking to toggle ON...")
+                try:
+                    await switch_btn.click(timeout=3000)
+                except Exception:
+                    await switch_btn.click(force=True, timeout=2000)
+                await human_delay(1000, 2000)
+                return True
+    except Exception as e:
+        if logger:
+            logger.warn(f"Note checking toggle switch: {e}")
+
+    return handled_modal
+
+def verify_tokenharbor_key_api(api_key: str, timeout_sec: float = 8.0) -> Tuple[bool, int, str]:
+    """
+    Directly tests an API key against TokenHarbor /v1/chat/completions with deepseek-v4-flash:free.
+    Returns (is_valid, http_status, message).
+    is_valid is True only if status is 200.
+    """
+    if not api_key:
+        return False, 0, "no_key"
+    try:
+        resp = requests.post(
+            "https://tokenharbor.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "deepseek-v4-flash:free",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 5,
+            },
+            timeout=timeout_sec,
+        )
+        if resp.status_code == 200:
+            return True, 200, "ok"
+        try:
+            data = resp.json()
+            err_msg = data.get("error", {}).get("message", f"HTTP_{resp.status_code}")
+        except Exception:
+            err_msg = f"HTTP_{resp.status_code}"
+        return False, resp.status_code, err_msg
+    except requests.exceptions.RequestException as e:
+        return False, 0, str(e)
+
 
 
 async def retrieve_verification_link_from_gmail(context, email: str, logger, timeout_sec: int = 90) -> Optional[str]:
@@ -1139,6 +1205,261 @@ async def run_single_account(
         results.mark_failed(email, password, str(e))
         return False
 
+class ReenableStore:
+    def __init__(
+        self,
+        bad_file: str = "akun-bad-tokenharbor.txt",
+        good_file: str = "akun-good-tokenharbor.txt",
+        good_key_file: str = "apikey-good-tokenharbor.txt",
+    ):
+        self.bad_file = bad_file
+        self.good_file = good_file
+        self.good_key_file = good_key_file
+        self.lock = asyncio.Lock()
+
+    def load_accounts(self) -> List[Tuple[str, str, Optional[str], str]]:
+        """
+        Loads accounts from bad_file.
+        Returns list of (email, password, api_key, raw_line).
+        """
+        if not os.path.exists(self.bad_file):
+            return []
+        accounts = []
+        seen = set()
+        with open(self.bad_file, "r", encoding="utf-8") as f:
+            for line in f:
+                raw = line.strip()
+                if not raw or raw.startswith("#"):
+                    continue
+                parts = raw.split(":")
+                if len(parts) >= 3:
+                    email = parts[0].strip()
+                    if parts[-1].strip().startswith("thk_") or len(parts[-1].strip()) >= 30:
+                        api_key = parts[-1].strip()
+                        password = ":".join(parts[1:-1]).strip()
+                    else:
+                        password = parts[1].strip()
+                        api_key = parts[2].strip()
+                elif len(parts) == 2:
+                    email = parts[0].strip()
+                    password = parts[1].strip()
+                    api_key = None
+                else:
+                    continue
+
+                if email.lower() not in seen:
+                    seen.add(email.lower())
+                    accounts.append((email, password, api_key, raw))
+        return accounts
+
+    async def mark_success(self, email: str, password: str, api_key: str):
+        async with self.lock:
+            # 1. Append to good_file if not already present
+            good_line = f"{email}:{password}:{api_key}\n"
+            existing_good = set()
+            if os.path.exists(self.good_file):
+                with open(self.good_file, "r", encoding="utf-8") as f:
+                    for l in f:
+                        parts = l.strip().split(":")
+                        if parts:
+                            existing_good.add(parts[0].lower().strip())
+            if email.lower() not in existing_good:
+                with open(self.good_file, "a", encoding="utf-8") as f:
+                    f.write(good_line)
+
+            # 2. Append to good_key_file if not already present
+            existing_keys = set()
+            if os.path.exists(self.good_key_file):
+                with open(self.good_key_file, "r", encoding="utf-8") as f:
+                    for l in f:
+                        k = l.strip()
+                        if k:
+                            existing_keys.add(k)
+            if api_key and api_key not in existing_keys:
+                with open(self.good_key_file, "a", encoding="utf-8") as f:
+                    f.write(f"{api_key}\n")
+
+            # 3. Remove from bad_file
+            if os.path.exists(self.bad_file):
+                with open(self.bad_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                remaining_lines = []
+                for l in lines:
+                    raw = l.strip()
+                    if not raw or raw.startswith("#"):
+                        remaining_lines.append(l)
+                        continue
+                    parts = raw.split(":")
+                    if parts and parts[0].lower().strip() == email.lower():
+                        continue  # remove this account
+                    remaining_lines.append(l)
+                with open(self.bad_file, "w", encoding="utf-8") as f:
+                    f.writelines(remaining_lines)
+
+async def run_single_reenable_account(
+    email: str,
+    password: str,
+    api_key: Optional[str],
+    proxy: Optional[Proxy],
+    reenable_store: ReenableStore,
+    store: JsonlStore,
+    headed: bool,
+    screenshot_dir: str,
+    logger,
+    pace: str = "human",
+) -> Tuple[bool, Optional[str]]:
+    # Step 1: Pre-check via API if api_key already present (instant, no browser needed)
+    if api_key:
+        is_valid, status, msg = verify_tokenharbor_key_api(api_key, timeout_sec=6.0)
+        if is_valid:
+            logger.info(f"API key untuk {email} SUDAH VALID / AKTIF di TokenHarbor (HTTP 200)! Tidak perlu browser.")
+            await reenable_store.mark_success(email, password, api_key)
+            store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "reenabled": True})
+            return True, api_key
+        else:
+            logger.info(f"Pre-check API key {email} -> HTTP {status} ({msg}). Melanjutkan proses login browser...")
+
+    os.makedirs(screenshot_dir, exist_ok=True)
+    delay_mult = 1.4 if pace == "careful" else (0.85 if pace == "fast" else 1.0)
+    browser_ctx = None
+    try:
+        browser_ctx = await launch_camoufox(
+            headless=not headed,
+            proxy=proxy,
+            geoip=True,
+        )
+
+        async with browser_ctx as browser:
+            context = await browser.new_context(ignore_https_errors=True)
+            page = await context.new_page()
+            timeout_ms = 90000 if proxy else 45000
+            page.set_default_timeout(timeout_ms)
+            page.set_default_navigation_timeout(timeout_ms)
+
+            fp = await get_browser_fingerprint_info(page)
+            if fp:
+                logger.info(f"🛡️ Camoufox Fingerprint: OS={fp.get('platform')} | Screen={fp.get('screen')} | Viewport={fp.get('viewport')} | Cores={fp.get('cores')} | UA={fp.get('ua')}")
+
+            # 1. Navigasi ke https://tokenharbor.ai/login
+            logger.info(f"navigating to {DEFAULT_LOGIN_URL}")
+            await page.goto(DEFAULT_LOGIN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+            await human_delay(int(1500 * delay_mult), int(2500 * delay_mult))
+            await recover_if_something_snapped(page, target_url=DEFAULT_LOGIN_URL, logger=logger)
+            await dismiss_cookie_banner(page, logger=logger)
+
+            # Jika belum di /dashboard, lakukan form login
+            if "/dashboard" not in page.url:
+                login_tab = await page.query_selector('button[data-analytics="login-tab-signin"], button:has-text("Sign in")')
+                if login_tab:
+                    try:
+                        await login_tab.click()
+                        await human_delay(300, 600)
+                    except Exception:
+                        pass
+
+                # Input email
+                email_input = await page.wait_for_selector('input[name="email"], input[type="email"]', timeout=25000)
+                if not email_input:
+                    raise RuntimeError("Field email tidak ditemukan di halaman login")
+                await email_input.fill("")
+                await human_type(page, 'input[name="email"], input[type="email"]', email, min_delay_ms=int(45 * delay_mult), max_delay_ms=int(110 * delay_mult))
+                await human_delay(400, 800)
+
+                # Input password
+                pwd_input = await page.wait_for_selector('input[name="password"], input[type="password"]', timeout=15000)
+                if not pwd_input:
+                    raise RuntimeError("Field password tidak ditemukan di halaman login")
+                await pwd_input.fill("")
+                await human_type(page, 'input[name="password"], input[type="password"]', password, min_delay_ms=int(50 * delay_mult), max_delay_ms=int(115 * delay_mult))
+                await human_delay(600, 1200)
+
+                # Turnstile
+                await resolve_turnstile_if_present(page, timeout_sec=10)
+
+                # Tombol Sign in
+                signin_btn = await page.wait_for_selector(
+                    'button[type="submit"][data-analytics="login-signin"], button[data-analytics="login-signin"], button[type="submit"]:has-text("Sign in")',
+                    timeout=15000,
+                )
+                if not signin_btn:
+                    raise RuntimeError("Tombol submit Sign in tidak ditemukan")
+
+                logger.info("clicking 'Sign in' button...")
+                try:
+                    await signin_btn.click(timeout=10000)
+                except Exception:
+                    await signin_btn.click(force=True, timeout=5000)
+
+                # Tunggu redirect ke /dashboard
+                logger.info("waiting for navigation to /dashboard...")
+                redirected = False
+                for _ in range(25):
+                    if "/dashboard" in page.url:
+                        redirected = True
+                        break
+                    err = await page.evaluate("""() => {
+                        const el = document.querySelector('[role="alert"], .alert-danger, .text-danger, .text-red-500, .text-rose-500');
+                        return el ? el.textContent : null;
+                    }""")
+                    if err and any(w in err.lower() for w in ["invalid", "incorrect", "not found", "banned", "disabled"]):
+                        raise RuntimeError(f"Login ditolak oleh TokenHarbor: {err.strip()}")
+                    await asyncio.sleep(1)
+
+                if not redirected and "/dashboard" not in page.url:
+                    logger.info("attempting manual navigation to /dashboard...")
+                    await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                    await human_delay(1500, 2500)
+
+            # 2. Tangani modal dan toggle Enable free models di /dashboard
+            logger.info("waiting for dashboard content to finish loading...")
+            try:
+                await page.wait_for_selector("text=LOADING", state="hidden", timeout=15000)
+            except Exception:
+                pass
+            await human_delay(1500, 2500)
+
+            logger.info("checking Enable free models consent modal on dashboard...")
+            await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+            await ensure_free_models_enabled(page, logger=logger, timeout_sec=10)
+            await dismiss_cookie_banner(page, logger=logger)
+
+            await human_delay(2000, 3000)
+
+            # 3. Post-check API key
+            active_key = api_key
+            is_valid = False
+            if active_key:
+                is_valid, status, msg = verify_tokenharbor_key_api(active_key, timeout_sec=8.0)
+                if is_valid:
+                    logger.info(f"API key lama ({active_key[:12]}...) BERHASIL DIAKTIFKAN KEMBALI! Live API HTTP 200 OK.")
+
+            if not is_valid:
+                logger.info("API key lama masih belum aktif atau belum ada, membuat API key baru di dashboard/api-keys...")
+                try:
+                    new_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
+                    if new_key:
+                        is_valid, status, msg = verify_tokenharbor_key_api(new_key, timeout_sec=8.0)
+                        if is_valid:
+                            logger.info(f"API key baru ({new_key[:12]}...) BERHASIL DIBUAT & DIAKTIFKAN! Live API HTTP 200 OK.")
+                            active_key = new_key
+                        else:
+                            logger.warn(f"API key baru dibuat tapi status live API masih HTTP {status} ({msg})")
+                            active_key = new_key
+                except Exception as e:
+                    logger.warn(f"Gagal membuat API key baru: {e}")
+
+            if is_valid and active_key:
+                await reenable_store.mark_success(email, password, active_key)
+                store.upsert({"email": email, "status": FlowState.DONE, "apiKey": active_key, "reenabled": True})
+                return True, active_key
+            else:
+                raise RuntimeError(f"Gagal mengaktifkan free models untuk {email} (API check failed)")
+
+    except Exception as e:
+        logger.error(f"failed re-enabling free models for {email}: {e}")
+        store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e), "reenable_attempt": True})
+        return False, None
+
 def get_completed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str) -> Set[str]:
     """
     Returns the unified set of all email addresses that have successfully completed TokenHarbor registration
@@ -1197,6 +1518,7 @@ async def main_async():
     parser.add_argument("--reuse-proxy", action="store_true", default=os.getenv("PROXY_REUSE", "0") in ("1", "true", "yes"), help="Prioritize/reuse verified good proxies")
     parser.add_argument("--proxy-timeout", type=float, default=float(os.getenv("PROXY_PRECHECK_TIMEOUT", "6.0")), help="Timeout in seconds for proxy TokenHarbor HTTP 200 pre-check (default: 6.0s)")
     parser.add_argument("--skip-proxy-precheck", action="store_true", default=os.getenv("SKIP_PROXY_PRECHECK", "0") in ("1", "true", "yes"), help="Skip proxy pre-check before browser launch")
+    parser.add_argument("--re-enable-free", action="store_true", help="Re-enable free models for accounts in akun-bad-tokenharbor.txt")
     args = parser.parse_args()
 
     # Resolve proxies file
@@ -1224,6 +1546,103 @@ async def main_async():
 
     logger = create_logger()
     logger.info(f"TokenHarbor Camoufox runner started (auth={args.auth}, pace={args.pace}, workers={args.workers}). Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
+
+    # ── RE-ENABLE FREE MODELS FLOW ──────────────────────────────────────────
+    if args.re_enable_free:
+        bad_file = args.accounts_file if args.accounts_file else "akun-bad-tokenharbor.txt"
+        if not os.path.exists(bad_file):
+            logger.error(f"File {bad_file} tidak ditemukan. Tidak ada akun untuk di-re-enable!")
+            return
+
+        reenable_store = ReenableStore(
+            bad_file=bad_file,
+            good_file="akun-good-tokenharbor.txt",
+            good_key_file="apikey-good-tokenharbor.txt",
+        )
+        todo_accounts = reenable_store.load_accounts()
+        if not todo_accounts:
+            logger.info(f"Tidak ada akun tersisa di {bad_file}. Semua akun sudah berhasil!")
+            return
+
+        target_count = min(args.limit, len(todo_accounts)) if args.limit > 0 else len(todo_accounts)
+        worker_count = max(1, min(args.workers, target_count))
+        logger.info(
+            f"TokenHarbor Re-enable Free Models started: {len(todo_accounts)} akun di {bad_file}, "
+            f"target: {target_count}, workers: {worker_count}, proxy: {'direct' if args.no_proxy or not proxies else len(proxies)}"
+        )
+
+        if args.dry_run:
+            logger.info(f"dry-run: Akun yang akan di-re-enable: {[a[0] for a in todo_accounts[:target_count]]}")
+            return
+
+        account_queue = deque(todo_accounts[:target_count])
+        processed = 0
+        success_count = 0
+        lock = asyncio.Lock()
+
+        async def reenable_worker(worker_id: int):
+            nonlocal processed, success_count
+            while True:
+                item = None
+                proxy = None
+                async with lock:
+                    if success_count >= target_count or not account_queue:
+                        break
+                    item = account_queue.popleft()
+                    processed += 1
+
+                email, password, api_key, raw_line = item
+                acc_logger = create_logger(f"w{worker_id}:{email}")
+
+                if not args.no_proxy and proxies:
+                    proxy = await proxy_pool.get_next_live_proxy(
+                        target_url=DEFAULT_LOGIN_URL,
+                        timeout_sec=args.proxy_timeout,
+                        logger=logger,
+                        enable_precheck=(not args.skip_proxy_precheck),
+                    )
+                    if proxy is None:
+                        logger.warn(f"Worker #{worker_id}: All proxies ({len(proxies)}) have been exhausted or blacklisted.")
+                        break
+
+                ok, active_key = await run_single_reenable_account(
+                    email=email,
+                    password=password,
+                    api_key=api_key,
+                    proxy=proxy,
+                    reenable_store=reenable_store,
+                    store=store,
+                    headed=args.headed,
+                    screenshot_dir=args.screenshot_dir,
+                    logger=acc_logger,
+                    pace=args.pace,
+                )
+
+                async with lock:
+                    if proxy_pool and proxy:
+                        if ok:
+                            proxy_pool.mark_result(proxy, success=True)
+                        else:
+                            proxy_pool.mark_result(proxy, success=False)
+
+                    if ok:
+                        success_count += 1
+                        logger.info(f"Progress Re-enable: {success_count}/{target_count} akun sukses ({processed}/{target_count} diproses)")
+
+                if success_count < target_count and account_queue:
+                    if ok and args.delay > 0:
+                        logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
+                        await asyncio.sleep(args.delay)
+                    elif not ok:
+                        await asyncio.sleep(1.5)
+
+        if worker_count > 1:
+            await asyncio.gather(*(reenable_worker(i + 1) for i in range(worker_count)))
+        else:
+            await reenable_worker(1)
+
+        logger.info(f"TokenHarbor Re-enable Free Models selesai: {success_count}/{target_count} target akun berhasil diaktifkan ({processed} total diproses).")
+        return
 
     # ── GOOGLE OAUTH FLOW ───────────────────────────────────────────────────
     if args.auth == "google":

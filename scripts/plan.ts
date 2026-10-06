@@ -49,6 +49,8 @@ export interface RunPlan {
   domain?: string;
   proxyTarget?: string;
   proxyAppend?: boolean;
+  reEnableFree?: boolean;
+  accountsFile?: string;
 }
 
 
@@ -111,8 +113,14 @@ export function buildArgs(plan: RunPlan): string[] {
   }
   if (plan.workers > 1) args.push("-w", String(plan.workers));
   if (plan.delaySec > 0) args.push("--delay", String(plan.delaySec));
-  if (plan.authMethod) args.push("--auth", plan.authMethod);
-  if (plan.domain) args.push("--domain", plan.domain);
+  if (plan.reEnableFree) {
+    args.push("--re-enable-free");
+    if (plan.accountsFile) args.push("--accounts-file", plan.accountsFile);
+  } else {
+    if (plan.authMethod) args.push("--auth", plan.authMethod);
+    if (plan.domain) args.push("--domain", plan.domain);
+    if (plan.accountsFile) args.push("--accounts-file", plan.accountsFile);
+  }
   if (plan.limit !== undefined && plan.limit > 0) {
     if (plan.authMethod === "google") {
       const rem = getRemainingAccountsForApp(plan.app);

@@ -25,6 +25,7 @@ interface Args {
   domain?: string;
   auth?: string;
   accountsFile?: string;
+  reEnableFree?: boolean;
 }
 
 /** Pure: merge parsed CLI flags into an env object (CLI wins over env file). */
@@ -44,6 +45,7 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.domain !== undefined) env.TEMPMAIL_DOMAIN = args.domain;
   if (args.auth !== undefined) env.TOKENHARBOR_AUTH = args.auth;
   if (args.accountsFile !== undefined) env.SEED_ACCOUNTS = args.accountsFile;
+  if (args.reEnableFree !== undefined) env.TOKENHARBOR_RE_ENABLE_FREE = args.reEnableFree ? "1" : "0";
   return env;
 }
 
@@ -78,10 +80,12 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--domain") args.domain = next();
     else if (a === "--auth") args.auth = next();
     else if (a === "--accounts-file") args.accountsFile = next();
+    else if (a === "--re-enable-free" || a === "--reenable-free" || a === "--reenable") args.reEnableFree = true;
     else if (a === "--help" || a === "-h") {
       console.log(
         `Usage: bun run tokenharbor -- [--engine bun|python] [--auth tempmail|google] [--accounts-file F] [--headless] [--headed] [-w N] [--dry-run]\n` +
-          `                           [--delay SEC] [--limit N] [--fast | --careful | --pace fast|human|careful]\n\n` +
+          `                           [--delay SEC] [--limit N] [--fast | --careful | --pace fast|human|careful] [--re-enable-free]\n\n` +
+          `  --re-enable-free    login akun & aktifkan ulang free models di dashboard (dari akun-bad-tokenharbor.txt)\n` +
           `  --engine E  pilih engine browser: 'bun' (Chromium/Puppeteer) atau 'python' (Camoufox/Firefox)\n` +
           `  --auth A    metode autentikasi: 'tempmail' (default) atau 'google' (Google OAuth via gsuite.txt)\n` +
           `  --camoufox  alias untuk --engine python (Camoufox hardware anti-detect engine)\n` +
@@ -106,8 +110,8 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
   const cfg = loadConfig(env);
   ensureDirs(cfg);
 
-  // If python engine requested, delegate to Python Camoufox runner
-  if (shouldUsePythonEngine(args.engine ?? env.BROWSER_ENGINE)) {
+  // If python engine requested or re-enable-free mode active, delegate to Python Camoufox runner
+  if (args.reEnableFree || shouldUsePythonEngine(args.engine ?? env.BROWSER_ENGINE)) {
     const runnerPath = path.resolve(import.meta.dir, "../camoufox_runner.py");
     await spawnPythonRunner(runnerPath, {
       headed: args.headless === false,
@@ -120,9 +124,10 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       domain: args.domain ?? cfg.tempMailDomain,
       pace: args.pace ?? (typeof cfg.pace === "object" ? (cfg.pace as any).name : cfg.pace),
       auth: args.auth ?? cfg.authMethod,
-      accountsFile: args.accountsFile ?? cfg.seedAccounts,
+      accountsFile: args.accountsFile ?? (args.reEnableFree ? "akun-bad-tokenharbor.txt" : cfg.seedAccounts),
       dryRun: args.dryRun,
       workers: args.workers ?? cfg.workers,
+      reEnableFree: args.reEnableFree,
     });
     return;
   }
