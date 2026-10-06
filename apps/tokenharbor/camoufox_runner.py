@@ -175,6 +175,114 @@ async def handle_finish_and_start_chatting(page, logger) -> bool:
         await asyncio.sleep(0.5)
     return False
 
+async def dismiss_cookie_banner(page, logger=None) -> bool:
+    """Dismisses cookie / analytics banner if present on screen."""
+    try:
+        cookie_btn = await page.query_selector(
+            'button:has-text("Accept analytics"), button:has-text("Essential only"), button.btn-float-primary:has-text("Accept analytics")'
+        )
+        if cookie_btn and await cookie_btn.is_visible():
+            if logger:
+                logger.info("dismissing cookie consent banner...")
+            try:
+                await cookie_btn.click(timeout=2000)
+            except Exception:
+                await cookie_btn.click(force=True, timeout=2000)
+            await asyncio.sleep(0.5)
+            return True
+    except Exception:
+        pass
+    return False
+
+async def handle_enable_free_models_modal(page, logger=None, timeout_sec: int = 5) -> bool:
+    """
+    Detects and accepts the 'Enable free models?' modal dialog if present on dashboard.
+    Ensures the dialog and backdrop are completely dismissed before proceeding.
+    If the dialog is not present (e.g. account already enabled free models), returns cleanly.
+    """
+    try:
+        free_btn = None
+        try:
+            free_btn = await page.wait_for_selector(
+                'button[data-analytics="freemodel-consent-enable"], button:has-text("Enable free models")',
+                timeout=timeout_sec * 1000,
+                state="visible",
+            )
+        except Exception:
+            free_btn = None
+
+        if not free_btn:
+            modal_h2 = await page.query_selector('h2:has-text("Enable free models")')
+            if not modal_h2:
+                if logger:
+                    logger.info("no 'Enable free models?' modal popup detected (already enabled or not prompted).")
+                return False
+
+        if logger:
+            logger.info("detected 'Enable free models?' modal popup, clicking 'Enable free models' button...")
+
+        clicked = False
+        if free_btn:
+            try:
+                await free_btn.click(timeout=3000)
+                clicked = True
+            except Exception:
+                try:
+                    await free_btn.click(force=True, timeout=2000)
+                    clicked = True
+                except Exception:
+                    pass
+
+        if not clicked:
+            await page.evaluate("""() => {
+                const btn = document.querySelector('button[data-analytics="freemodel-consent-enable"]') ||
+                            Array.from(document.querySelectorAll('button')).find(b => (b.textContent || '').trim() === 'Enable free models');
+                if (btn) btn.click();
+            }""")
+
+        # Wait for the modal / button to completely close / detach
+        try:
+            await page.wait_for_selector(
+                'button[data-analytics="freemodel-consent-enable"], h2:has-text("Enable free models")',
+                state="hidden",
+                timeout=6000,
+            )
+        except Exception:
+            is_still_open = await page.evaluate("""() => {
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                };
+                const btn = document.querySelector('button[data-analytics="freemodel-consent-enable"]');
+                const h2 = Array.from(document.querySelectorAll('h2')).find(b => (b.textContent || '').includes('Enable free models'));
+                return isVisible(btn) || isVisible(h2);
+            }""")
+            if is_still_open:
+                if logger:
+                    logger.warn("modal still open after click, attempting force JS click...")
+                await page.evaluate("""() => {
+                    const btn = document.querySelector('button[data-analytics="freemodel-consent-enable"]') ||
+                                Array.from(document.querySelectorAll('button')).find(b => (b.textContent || '').trim() === 'Enable free models');
+                    if (btn) btn.click();
+                }""")
+                await asyncio.sleep(1.0)
+
+        await human_delay(1000, 2000)
+        await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+
+        if logger:
+            logger.info("Enable free models consent accepted and popup dismissed.")
+        return True
+
+    except Exception as e:
+        if logger:
+            logger.warn(f"error while handling Enable free models modal: {e}")
+        return False
+
+
 async def retrieve_verification_link_from_gmail(context, email: str, logger, timeout_sec: int = 65) -> Optional[str]:
     """
     Opens Gmail web (mail.google.com) in a new tab within the existing authenticated context,
@@ -439,13 +547,7 @@ async def run_single_google_account(
             await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
 
             # Dismiss analytics/cookie banner if present
-            try:
-                cookie_btn = await page.query_selector('button:has-text("Accept analytics"), button:has-text("Essential only")')
-                if cookie_btn:
-                    await cookie_btn.click()
-                    await human_delay(500, 1000)
-            except Exception:
-                pass
+            await dismiss_cookie_banner(page, logger=logger)
 
             if "/dashboard" not in page.url:
                 # ── 2. Click Continue with Google ──────────────────────────
@@ -511,40 +613,18 @@ async def run_single_google_account(
             await human_delay(2000, 3000)
 
             # ── 6. Enable Free Models (Idempotent) ──────────────────────────
-            logger.info("checking Enable free models consent...")
+            logger.info("checking Enable free models consent modal...")
             await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
-            is_already_enabled = await page.evaluate("""() => {
-                const text = document.body.innerText || '';
-                return text.includes("Free allowance") || 
-                       text.includes("Starts with your first free request");
-            }""")
-            if is_already_enabled:
-                logger.info("Free models already enabled on this account.")
-            else:
-                try:
-                    free_btn = await page.wait_for_selector(
-                        'button[data-analytics="freemodel-consent-enable"], button:has-text("Enable free models")',
-                        timeout=4000,
-                    )
-                    if free_btn:
-                        logger.info("clicking Enable free models button...")
-                        await free_btn.click()
-                        await human_delay(1000, 2000)
-                except Exception:
-                    pass
-
-            # Dismiss cookie banner if present
-            try:
-                cookie_btn = await page.query_selector('button:has-text("Accept analytics"), button:has-text("Essential only")')
-                if cookie_btn:
-                    await cookie_btn.click()
-                    await human_delay(500, 1000)
-            except Exception:
-                pass
+            await handle_enable_free_models_modal(page, logger=logger, timeout_sec=5)
+            await dismiss_cookie_banner(page, logger=logger)
 
             # ── 7. Email Verification via Gmail (Idempotent) ───────────────
             store.upsert({"email": email, "status": FlowState.TRIGGER_VERIFY})
             await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+
+            # Guarantee that free models modal and cookie banner are completely cleared before touching verification banner
+            await handle_enable_free_models_modal(page, logger=logger, timeout_sec=2)
+            await dismiss_cookie_banner(page, logger=logger)
 
             # Check if email verification banner is present
             needs_verification = await page.evaluate("""() => {
@@ -561,6 +641,10 @@ async def run_single_google_account(
                 verify_clicked = False
                 for _ in range(5):
                     try:
+                        # Ensure no overlay or late popup is blocking
+                        await handle_enable_free_models_modal(page, logger=logger, timeout_sec=1)
+                        await dismiss_cookie_banner(page)
+
                         verify_btn = await page.query_selector(
                             'button.btn-float-primary:has-text("Verify email"), button:has-text("Verify email"), button:has-text("Send verification email"), button:has-text("Resend email")'
                         )
@@ -568,7 +652,10 @@ async def run_single_google_account(
                             btn_txt = (await verify_btn.text_content() or "").strip()
                             if "email sent" not in btn_txt.lower():
                                 logger.info(f"clicking '{btn_txt}' button to trigger verification email...")
-                                await verify_btn.click()
+                                try:
+                                    await verify_btn.click(timeout=3000)
+                                except Exception:
+                                    await verify_btn.click(force=True, timeout=2000)
                                 verify_clicked = True
                                 await human_delay(2000, 3500)
                                 await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
@@ -797,33 +884,28 @@ async def run_single_account(
             await human_delay(2000, 3500)
 
             # ── 3. Enable Free Models ───────────────────────────────────────
-            logger.info("checking Enable free models consent...")
+            logger.info("checking Enable free models consent modal...")
             await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
-            try:
-                free_btn = await page.wait_for_selector(
-                    'button[data-analytics="freemodel-consent-enable"], button:has-text("Enable free models")',
-                    timeout=5000,
-                )
-                if free_btn:
-                    logger.info("clicking Enable free models button...")
-                    await free_btn.click()
-                    await human_delay(1000, 2000)
-                    await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
-            except Exception:
-                pass
+            await handle_enable_free_models_modal(page, logger=logger, timeout_sec=5)
+            await dismiss_cookie_banner(page, logger=logger)
 
             # ── 4. Trigger Email Verification ───────────────────────────────
             store.upsert({"email": email, "status": FlowState.TRIGGER_VERIFY})
             logger.info("checking Verify email banner on dashboard...")
             await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+            await handle_enable_free_models_modal(page, logger=logger, timeout_sec=2)
+            await dismiss_cookie_banner(page, logger=logger)
             try:
                 verify_btn = await page.wait_for_selector(
-                    'button:has-text("Verify email")',
+                    'button.btn-float-primary:has-text("Verify email"), button:has-text("Verify email"), button:has-text("Send verification email")',
                     timeout=8000,
                 )
                 if verify_btn:
                     logger.info("clicking Verify email button...")
-                    await verify_btn.click()
+                    try:
+                        await verify_btn.click(timeout=3000)
+                    except Exception:
+                        await verify_btn.click(force=True, timeout=2000)
                     await human_delay(1500, 2500)
                     await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
             except Exception:

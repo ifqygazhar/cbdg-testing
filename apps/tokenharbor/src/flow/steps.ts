@@ -245,12 +245,13 @@ export async function stepSignUp(
 export async function stepEnableFreeModels(page: Page, log: ULog): Promise<void> {
   log("info", "checking free models consent banner");
   await recoverIfSomethingSnapped(page, DASHBOARD_URL, log);
+  await dismissCookieBanners(page, log);
   try {
-    const btn = await dom.waitForAnySelector(page, [SELECTORS.enableFreeModelsConsent], 4000);
+    const btn = await dom.waitForAnySelector(page, [SELECTORS.enableFreeModelsConsent], 5000);
     if (btn) {
       log("info", "clicking Enable free models button");
-      await btn.click();
-      await utils.sleep(1000);
+      await btn.click().catch(() => btn.click({ force: true }));
+      await utils.sleep(1500);
       await recoverIfSomethingSnapped(page, DASHBOARD_URL, log);
     }
   } catch {
@@ -262,10 +263,13 @@ export async function stepEnableFreeModels(page: Page, log: ULog): Promise<void>
 export async function stepTriggerVerification(page: Page, log: ULog): Promise<void> {
   log("info", "checking verify email banner");
   await recoverIfSomethingSnapped(page, DASHBOARD_URL, log);
+  // Guarantee free models modal and cookie banners are cleared before clicking verify button
+  await stepEnableFreeModels(page, log);
+  await dismissCookieBanners(page, log);
   const verifyBtn = await dom.waitForAnySelector(page, [SELECTORS.verifyEmailBannerButton], 8000);
   if (verifyBtn) {
     log("info", "clicking Verify email button to send verification link");
-    await verifyBtn.click();
+    await verifyBtn.click().catch(() => verifyBtn.click({ force: true }));
     await utils.sleep(2000);
     await recoverIfSomethingSnapped(page, DASHBOARD_URL, log);
   } else {
