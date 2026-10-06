@@ -5,7 +5,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, isAbsolute } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // High-fidelity terminal colors and styles without external dependencies
@@ -82,10 +82,11 @@ interface CliConfig {
 
 function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim" | "tokenharbor"): string {
   if (provider === "tokenharbor") {
+    if (existsSync(resolve(process.cwd(), "apikey-unli.txt"))) return "apikey-unli.txt";
     if (existsSync(resolve(process.cwd(), "akun-result-tokenharbor.txt"))) return "akun-result-tokenharbor.txt";
     if (existsSync(resolve(process.cwd(), "apikey-tokenharbor.txt"))) return "apikey-tokenharbor.txt";
     if (existsSync(resolve(process.cwd(), "tokenharbor-dataset/apikey-tokenharbor.txt"))) return "tokenharbor-dataset/apikey-tokenharbor.txt";
-    return "akun-result-tokenharbor.txt";
+    return "apikey-unli.txt";
   }
   if (provider === "fastrouter") {
     if (existsSync(resolve(process.cwd(), "apikey-fastrouter.txt"))) return "apikey-fastrouter.txt";
@@ -115,6 +116,188 @@ function resolveDefaultProxiesFile(): string {
   if (existsSync(resolve(process.cwd(), "proxy.txt"))) return "proxy.txt";
   if (existsSync(resolve(process.cwd(), "proxies.txt"))) return "proxies.txt";
   return "proxy-live.txt";
+}
+
+interface CandidateFile {
+  path: string;
+  label: string;
+  badge: string;
+  desc: string;
+  count: number;
+}
+
+function countLinesInFile(filePath: string): number {
+  try {
+    const resolved = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
+    if (!existsSync(resolved)) return 0;
+    const content = readFileSync(resolved, "utf-8");
+    return content.split(/[\r\n]+/).filter((l) => l.trim().length > 0 && !l.trim().startsWith("#")).length;
+  } catch {
+    return 0;
+  }
+}
+
+function getCandidateKeysFiles(provider?: string): CandidateFile[] {
+  const candidates: CandidateFile[] = [];
+  const checked = new Set<string>();
+
+  const checkAndAdd = (filePath: string, label: string, desc: string) => {
+    const resolved = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
+    if (checked.has(resolved)) return;
+    checked.add(resolved);
+
+    if (existsSync(resolved)) {
+      const count = countLinesInFile(resolved);
+      if (count > 0) {
+        candidates.push({
+          path: filePath,
+          label: `${label} (${count.toLocaleString()} baris)`,
+          badge: c.bgBlue(`${count.toLocaleString()} entri`),
+          desc,
+          count,
+        });
+      }
+    }
+  };
+
+  if (provider === "tokenharbor") {
+    checkAndAdd("apikey-unli.txt", "apikey-unli.txt", "1.300+ plain keys (otomatis cari email di database)");
+    checkAndAdd("akun-result-tokenharbor.txt", "akun-result-tokenharbor.txt", "Hasil pendaftaran TokenHarbor lengkap (email:password:key)");
+    checkAndAdd("akun-bad-tokenharbor.txt", "akun-bad-tokenharbor.txt", "Akun terindikasi gagal / Free Models disabled");
+    checkAndAdd("akun-good-tokenharbor.txt", "akun-good-tokenharbor.txt", "Akun TokenHarbor yang sudah terverifikasi aktif");
+    checkAndAdd("apikey-good-tokenharbor.txt", "apikey-good-tokenharbor.txt", "Daftar plain API key terverifikasi aktif");
+    checkAndAdd("apikey-tokenharbor.txt", "apikey-tokenharbor.txt", "Daftar API key TokenHarbor standar");
+    checkAndAdd("tokenharbor-dataset/apikey-tokenharbor.txt", "tokenharbor-dataset/apikey-tokenharbor.txt", "Dataset TokenHarbor");
+  } else if (provider === "fastrouter") {
+    checkAndAdd("apikey-fastrouter.txt", "apikey-fastrouter.txt", "Daftar API key FastRouter");
+    checkAndAdd("apikey-fastrouter", "apikey-fastrouter", "File key FastRouter");
+  } else if (provider === "crusoe") {
+    checkAndAdd("apikey.txt", "apikey.txt", "Daftar API key Crusoe Cloud");
+    checkAndAdd("keys.txt", "keys.txt", "Daftar keys");
+  } else if (provider === "entrim") {
+    checkAndAdd("apikey-entrim.txt", "apikey-entrim.txt", "Daftar API key Entrim AI");
+    checkAndAdd("apikey.txt", "apikey.txt", "Daftar API key");
+  }
+
+  // File umum
+  checkAndAdd("apikey-unli.txt", "apikey-unli.txt", "Daftar API key unli");
+  checkAndAdd("apikey.txt", "apikey.txt", "File apikey.txt umum");
+
+  return candidates;
+}
+
+interface AccountInfo {
+  email: string;
+  password?: string;
+  source: string;
+}
+
+let cachedLookupMap: Map<string, AccountInfo> | null = null;
+
+function buildAccountLookupMap(): Map<string, AccountInfo> {
+  if (cachedLookupMap) return cachedLookupMap;
+
+  const lookup = new Map<string, AccountInfo>();
+  const cwd = process.cwd();
+
+  // 1. Scan semua file akun teks potensial
+  const candidateTextFiles = [
+    "akun-result-tokenharbor.txt",
+    "akun-good-tokenharbor.txt",
+    "akun-bad-tokenharbor.txt",
+    "akun-failed-tokenharbor.txt",
+    "tokenharbor-dataset/link.txt",
+    "akun-result.txt",
+    "akun-failed.txt",
+    "akun-result-fastrouter.txt",
+  ];
+
+  for (const relPath of candidateTextFiles) {
+    const fullPath = resolve(cwd, relPath);
+    if (!existsSync(fullPath)) continue;
+    try {
+      const content = readFileSync(fullPath, "utf-8");
+      const lines = content.split(/[\r\n]+/);
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const parts = trimmed.split(":");
+        if (parts.length >= 3) {
+          const email = parts[0].trim();
+          const last = parts[parts.length - 1].trim();
+          const pwd = parts.slice(1, parts.length - 1).join(":").trim();
+          if (last.startsWith("thk_") || last.startsWith("sk-") || last.length >= 25) {
+            if (!lookup.has(last)) {
+              lookup.set(last, { email, password: pwd, source: relPath });
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Scan file JSONL state (state.jsonl, state-tokenharbor.jsonl, dll)
+  const candidateJsonlFiles = [
+    "state.jsonl",
+    "state-tokenharbor.jsonl",
+    "state-fastrouter.jsonl",
+    "state-crusoe.jsonl",
+  ];
+  for (const relPath of candidateJsonlFiles) {
+    const fullPath = resolve(cwd, relPath);
+    if (!existsSync(fullPath)) continue;
+    try {
+      const content = readFileSync(fullPath, "utf-8");
+      const lines = content.split(/[\r\n]+/);
+      for (const line of lines) {
+        if (!line.includes("apiKey") || !line.includes("email")) continue;
+        try {
+          const record = JSON.parse(line);
+          const k = record.apiKey?.trim();
+          const e = record.email?.trim();
+          const p = record.password?.trim() || "torabikA1###########";
+          if (k && e && !lookup.has(k)) {
+            lookup.set(k, { email: e, password: p, source: relPath });
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  cachedLookupMap = lookup;
+  return lookup;
+}
+
+function enrichKeysWithAccountData(keys: KeyEntry[]): {
+  matched: number;
+  unmatched: number;
+  sourcesUsed: string[];
+} {
+  const missingEmailCount = keys.filter((k) => !k.email).length;
+  if (missingEmailCount === 0) {
+    return { matched: 0, unmatched: 0, sourcesUsed: [] };
+  }
+
+  const lookup = buildAccountLookupMap();
+  let matched = 0;
+  const sources = new Set<string>();
+
+  for (const entry of keys) {
+    if (!entry.email && lookup.has(entry.key)) {
+      const acc = lookup.get(entry.key)!;
+      entry.email = acc.email;
+      entry.password = acc.password || "torabikA1###########";
+      entry.rawLine = `${entry.email}:${entry.password}:${entry.key}`;
+      sources.add(acc.source);
+      matched++;
+    }
+  }
+
+  return {
+    matched,
+    unmatched: missingEmailCount - matched,
+    sourcesUsed: Array.from(sources),
+  };
 }
 
 function printBanner() {
@@ -455,7 +638,7 @@ function parseLineToKeyEntry(line: string): KeyEntry | null {
 
 function loadKeysFromFile(filePath: string): KeyEntry[] {
   if (!filePath) return [];
-  const resolved = resolve(process.cwd(), filePath);
+  const resolved = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
   if (!existsSync(resolved)) {
     return [];
   }
@@ -935,16 +1118,27 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
       `${c.green("✔")} ${c.bold(valid.length)} Akun/Key aktif (GOOD) disimpan ke: ${c.bold(c.cyan(config.outputValid))}`
     );
 
-    // Jika format input adalah akun (email:password:key), simpan juga file plain keys murni jika outputValid bukan valid_keys.txt
+    // Simpan juga file plain keys murni jika target adalah TokenHarbor atau ada format akun
     const hasAccountInfo = valid.some((r) => !!r.entry.email);
+    const isTokenHarbor =
+      config.baseUrl.includes("tokenharbor") ||
+      config.outputValid.includes("tokenharbor") ||
+      config.keysFile.includes("tokenharbor");
+
     if (hasAccountInfo && config.outputValid !== "valid_keys.txt") {
       const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
-      const plainKeyFile = config.keysFile.includes("tokenharbor")
+      const plainKeyFile = isTokenHarbor
         ? "apikey-good-tokenharbor.txt"
         : "valid_keys.txt";
       writeFileSync(plainKeyFile, plainKeys, "utf-8");
       console.log(
         `${c.green("✔")} ${c.bold(valid.length)} Plain API key valid juga disimpan ke: ${c.bold(c.cyan(plainKeyFile))}`
+      );
+    } else if (isTokenHarbor && config.outputValid !== "apikey-good-tokenharbor.txt") {
+      const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
+      writeFileSync("apikey-good-tokenharbor.txt", plainKeys, "utf-8");
+      console.log(
+        `${c.green("✔")} ${c.bold(valid.length)} Plain API key valid juga disimpan ke: ${c.bold(c.cyan("apikey-good-tokenharbor.txt"))}`
       );
     }
   }
@@ -1117,6 +1311,51 @@ async function main() {
       }
       if (providerChoice.outputBad && !cliArgs.outputBad) {
         config.outputBad = providerChoice.outputBad;
+      }
+    }
+
+    // 1b. Pilih File Sumber API Key / Akun Target (jika tidak ditentukan via flag --keys)
+    if (!cliArgs.keysFile) {
+      const providerKey = config.baseUrl.includes("tokenharbor")
+        ? "tokenharbor"
+        : config.baseUrl.includes("fastrouter")
+        ? "fastrouter"
+        : config.baseUrl.includes("crusoe")
+        ? "crusoe"
+        : config.baseUrl.includes("entrim")
+        ? "entrim"
+        : "other";
+
+      const candidateFiles = getCandidateKeysFiles(providerKey);
+      const fileMenuItems: MenuItem<string>[] = candidateFiles.map((cFile) => ({
+        label: cFile.label,
+        badge: cFile.badge,
+        desc: cFile.desc,
+        value: cFile.path,
+      }));
+
+      fileMenuItems.push({
+        label: "Ketik Path File Kustom (Manual)...",
+        desc: "Masukkan path file lokal lain (bisa absolut misal /home/azhar/... atau nama file)",
+        value: "__custom_path__",
+      });
+
+      const defaultFileIdx = candidateFiles.findIndex((f) => f.path === config.keysFile);
+
+      const chosenFile = await selectMenu<string>(
+        "Pilih File Sumber API Key / Akun Target",
+        fileMenuItems,
+        defaultFileIdx >= 0 ? defaultFileIdx : 0
+      );
+
+      if (chosenFile === "__custom_path__") {
+        const manualFile = await promptInput(
+          "Masukkan path file API Key (bisa absolut atau relatif)",
+          config.keysFile || "apikey-unli.txt"
+        );
+        config.keysFile = manualFile.trim();
+      } else {
+        config.keysFile = chosenFile;
       }
     }
 
@@ -1307,6 +1546,20 @@ swiftcedar749@huzt.my.id:torabikA1###########:thk_live_FTu1P_w16ctoHILbjdRg8mpY8
       );
       process.exit(0);
     }
+  }
+
+  // Auto-enrich kredensial akun jika key berupa plain API key (mencari email:password dari database lokal)
+  const enrichmentStats = enrichKeysWithAccountData(keys);
+  if (enrichmentStats.matched > 0) {
+    console.log(
+      `${c.green("✔")} Auto-enrichment: ${c.bold(enrichmentStats.matched.toString())} key berhasil dicocokkan dengan kredensial akun (${enrichmentStats.sourcesUsed.join(", ")}).`
+    );
+    if (enrichmentStats.unmatched > 0) {
+      console.log(
+        `   ${c.dim("ℹ")} ${enrichmentStats.unmatched} key tidak ditemukan di database akun lokal (diuji sebagai plain key).`
+      );
+    }
+    console.log();
   }
 
   // Auto-deteksi format key jika flag --url tidak ditentukan secara eksplisit
