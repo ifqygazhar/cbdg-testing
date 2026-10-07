@@ -47,14 +47,27 @@ async function askPlan(): Promise<RunPlan> {
   const app = await select<AppName>("Mau jalankan yang mana?", [
     { value: "webshare", label: "webshare", hint: "daftar via Google → panen proxy gratis ke proxy.txt" },
     { value: "proxy-check", label: "cek proxy", hint: "proxy.txt → uji hidup/mati → proxy-live.txt" },
+    { value: "key-checker", label: "cek apikey", hint: "uji status valid / kuota / rate limit API key berbagai provider" },
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
     { value: "fastrouter", label: "fastrouter", hint: "daftar FastRouter → kredit $1 + API key ke apikey-fastrouter" },
     { value: "cbdg", label: "cbdg", hint: "daftar CodeBuddy → kredit new-user (+ VCC opsional)" },
     { value: "tokenharbor", label: "tokenharbor", hint: "daftar TokenHarbor (TempMail / GSuite) → API key ke apikey-tokenharbor.txt" },
     { value: "groqcloud", label: "groqcloud", hint: "daftar GroqCloud (TempMail + Turnstile) → API key ke apikey-groqcloud.txt" },
+    { value: "llm7io", label: "llm7io", hint: "daftar LLM7.io (TempMail / GSuite) → API key ke apikey-llm7io.txt" },
   ]);
 
   if (IS_TOOL[app]) {
+    if (app === "key-checker") {
+      return {
+        app,
+        pace: "human",
+        headless: false,
+        retryFailed: false,
+        dryRun: false,
+        delaySec: 0,
+        workers: 1,
+      };
+    }
     const targetSite = await select<string>("Uji untuk target website apa?", [
       { value: "", label: "Umum (semua situs)", hint: "uji liveness & IP echo via ipv4.webshare.io (default)" },
       { value: "https://console.groq.com", label: "GroqCloud", hint: "uji liveness + akses langsung ke console.groq.com" },
@@ -101,7 +114,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;
@@ -179,9 +192,9 @@ async function askPlan(): Promise<RunPlan> {
   }
 
   let authMethod: "google" | "tempmail" | undefined;
-  if (!reEnableFree && (app === "fastrouter" || app === "tokenharbor")) {
+  if (!reEnableFree && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io")) {
     authMethod = await select<"tempmail" | "google">(
-      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : "FastRouter"}?`,
+      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : "FastRouter"}?`,
       [
         {
           value: "google",
@@ -191,10 +204,10 @@ async function askPlan(): Promise<RunPlan> {
         {
           value: "tempmail",
           label: "TempMail (TempMail-Pro)",
-          hint: "otomatis buat email & verif link",
+          hint: "otomatis buat email & verif link / OTP",
         },
       ],
-      seeds.accounts > 0 ? 0 : 1,
+      seeds.accounts > 0 && app !== "llm7io" ? 0 : 1,
     );
   }
 
@@ -214,7 +227,7 @@ async function askPlan(): Promise<RunPlan> {
       defaultLimit,
       " akun",
     );
-  } else if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter") && authMethod === "tempmail")) {
+  } else if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io") && authMethod === "tempmail")) {
     domain = await select<string>("Domain TempMail?", [
       { value: "ifqy.net", label: "ifqy.net", hint: "domain utama TempMail-Pro (default)" },
       { value: "meongtopup.my.id", label: "meongtopup.my.id", hint: "domain alternatif 1" },
@@ -225,7 +238,7 @@ async function askPlan(): Promise<RunPlan> {
       domain = await askText("Masukkan domain email kustom", "ifqy.net");
     }
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
-  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
+  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
     const rem = getRemainingAccountsForApp(app);
     if (rem.completed > 0) {
       console.log(

@@ -60,7 +60,7 @@ describe("buildArgs", () => {
     expect(loud).toContain("--headless");
     expect(loud).toEqual(expect.arrayContaining(["-w", "3", "--retry-failed", "--dry-run", "--limit", "5"]));
   });
-  it("fastrouter, crusoe, tokenharbor, and groqcloud get the engine switch when python chosen", () => {
+  it("fastrouter, crusoe, tokenharbor, groqcloud, and llm7io get the engine switch when python chosen", () => {
     const frPython = buildArgs({ ...base, app: "fastrouter", engine: "python" });
     expect(frPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     const crusoePython = buildArgs({ ...base, app: "crusoe", engine: "python" });
@@ -69,6 +69,8 @@ describe("buildArgs", () => {
     expect(thPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     const gqPython = buildArgs({ ...base, app: "groqcloud", engine: "python" });
     expect(gqPython).toEqual(expect.arrayContaining(["--engine", "python"]));
+    const llm7Python = buildArgs({ ...base, app: "llm7io", engine: "python" });
+    expect(llm7Python).toEqual(expect.arrayContaining(["--engine", "python"]));
     // bun engine is default so no flag needed
     const frBun = buildArgs({ ...base, app: "fastrouter", engine: "bun" });
     expect(frBun).not.toContain("--engine");
@@ -76,6 +78,8 @@ describe("buildArgs", () => {
     expect(thBun).not.toContain("--engine");
     const gqBun = buildArgs({ ...base, app: "groqcloud", engine: "bun" });
     expect(gqBun).not.toContain("--engine");
+    const llm7Bun = buildArgs({ ...base, app: "llm7io", engine: "bun" });
+    expect(llm7Bun).not.toContain("--engine");
     // cbdg doesn't support camoufox engine
     const cbdg = buildArgs({ ...base, app: "cbdg", engine: "python" });
     expect(cbdg).not.toContain("--engine");
@@ -250,7 +254,7 @@ describe("seeds + warnings", () => {
     expect(w.join(" ")).toContain("0 detik");
   });
   it("proxy-capable list is exactly the apps that read the proxy file", () => {
-    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud"]);
+    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io"]);
   });
 });
 
@@ -275,6 +279,24 @@ describe("proxy-check as a menu action", () => {
       "proxy.txt kosong — jalankan webshare dulu.",
     ]);
     expect(warningsFor(plan, { accounts: 0, proxies: 3, live: 0, liveAddresses: 0, cards: 0 })).toEqual([]);
+  });
+});
+
+describe("key-checker as a menu action", () => {
+  const plan: RunPlan = { ...base, app: "key-checker", mode: undefined, useProxy: undefined };
+
+  it("takes no run-shaping flags", () => {
+    expect(buildArgs(plan)).toEqual([]);
+    expect(commandLine(plan)).toBe("bun run key-checker");
+  });
+  it("is flagged as a tool, not an account run", () => {
+    expect(IS_TOOL["key-checker"]).toBe(true);
+  });
+  it("has APP_ENTRY file on disk", async () => {
+    expect(await Bun.file(APP_ENTRY["key-checker"]).exists()).toBe(true);
+  });
+  it("has no seed warnings", () => {
+    expect(warningsFor(plan, { accounts: 0, proxies: 0, live: 0, liveAddresses: 0, cards: 0 })).toEqual([]);
   });
 });
 

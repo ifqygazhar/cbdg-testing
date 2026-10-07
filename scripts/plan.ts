@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "proxy-check";
+export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "proxy-check" | "key-checker";
 
 /** Maintenance actions have no accounts, pace or proxy of their own. */
 export const IS_TOOL: Record<AppName, boolean> = {
@@ -14,13 +14,15 @@ export const IS_TOOL: Record<AppName, boolean> = {
   fastrouter: false,
   tokenharbor: false,
   groqcloud: false,
+  llm7io: false,
   "proxy-check": true,
+  "key-checker": true,
 };
 export type Pace = "fast" | "human" | "careful";
 export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
 
-export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "tokenharbor", "groqcloud"];
+export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "tokenharbor", "groqcloud", "llm7io"];
 
 export interface RunPlan {
   app: AppName;
@@ -61,11 +63,13 @@ export const APP_ENTRY: Record<AppName, string> = {
   fastrouter: "apps/fastrouter/src/cli.ts",
   tokenharbor: "apps/tokenharbor/src/cli.ts",
   groqcloud: "apps/groqcloud/src/cli.ts",
+  llm7io: "apps/llm7io/src/cli.ts",
   "proxy-check": "scripts/proxy-check.ts",
+  "key-checker": "entrim_crusoe_key_checker_cli.ts",
 };
 
 /** Apps whose accounts can be spread over the harvested proxies. */
-export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud"];
+export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io"];
 
 /**
  * Whether Google's sign-in will bypass the proxy on this run. Defaults on; the
@@ -93,6 +97,7 @@ export function buildArgs(plan: RunPlan): string[] {
   // The checker takes no run-shaping flags: it reads proxy.txt and writes
   // proxy-live.txt with its own defaults. Optional target & append flags can be passed.
   if (IS_TOOL[plan.app]) {
+    if (plan.app === "key-checker") return [];
     const toolArgs: string[] = [];
     if (plan.proxyTarget) toolArgs.push("--target", plan.proxyTarget);
     if (plan.proxyAppend) toolArgs.push("--append");
@@ -209,7 +214,9 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd()): Set
     cbdg: ["akun-result.txt"],
     webshare: ["akun-result-webshare.txt"],
     groqcloud: ["akun-result-groqcloud.txt"],
+    llm7io: ["akun-result-llm7io.txt", "apikey-llm7io.txt"],
     "proxy-check": [],
+    "key-checker": [],
   };
 
   const stateFiles: Record<AppName, string[]> = {
@@ -219,7 +226,9 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd()): Set
     cbdg: ["state.jsonl"],
     webshare: ["state-webshare.jsonl"],
     groqcloud: ["state-groqcloud.jsonl", "state.jsonl"],
+    llm7io: ["state-llm7io.jsonl", "state.jsonl"],
     "proxy-check": [],
+    "key-checker": [],
   };
 
   for (const rf of resultFiles[app] ?? []) {
@@ -297,13 +306,15 @@ export function readSeeds(cwd = process.cwd()): SeedInfo {
  */
 export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
   const out: string[] = [];
-  if (plan.app === "proxy-check") {
-    if (seeds.proxies === 0) out.push("proxy.txt kosong — jalankan webshare dulu.");
+  if (IS_TOOL[plan.app]) {
+    if (plan.app === "proxy-check" && seeds.proxies === 0) {
+      out.push("proxy.txt kosong — jalankan webshare dulu.");
+    }
     return out;
   }
   const isTempMail =
     plan.app === "groqcloud" ||
-    ((plan.app === "tokenharbor" || plan.app === "fastrouter") && plan.authMethod !== "google");
+    ((plan.app === "tokenharbor" || plan.app === "fastrouter" || plan.app === "llm7io") && plan.authMethod !== "google");
   if (!isTempMail && seeds.accounts === 0) {
     out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
   }

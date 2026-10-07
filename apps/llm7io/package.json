@@ -1,0 +1,11 @@
+{
+  "name": "@ifqy/llm7io-signup",
+  "version": "0.1.0",
+  "description": "LLM7.io signup automation (TempMail / Google OAuth + Turnstile + API key generation) on Python + Camoufox & Bun",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ifqy/google-oauth": "workspace:*",
+    "puppeteer-core": "^23.0.0"
+  }
+}

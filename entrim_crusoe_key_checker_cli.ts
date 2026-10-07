@@ -81,7 +81,12 @@ interface CliConfig {
   limit?: number;
 }
 
-function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim" | "tokenharbor"): string {
+function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim" | "tokenharbor" | "llm7io"): string {
+  if (provider === "llm7io") {
+    if (existsSync(resolve(process.cwd(), "apikey-llm7io.txt"))) return "apikey-llm7io.txt";
+    if (existsSync(resolve(process.cwd(), "akun-result-llm7io.txt"))) return "akun-result-llm7io.txt";
+    return "apikey-llm7io.txt";
+  }
   if (provider === "tokenharbor") {
     if (existsSync(resolve(process.cwd(), "apikey-unli.txt"))) return "apikey-unli.txt";
     if (existsSync(resolve(process.cwd(), "akun-result-tokenharbor.txt"))) return "akun-result-tokenharbor.txt";
@@ -104,7 +109,8 @@ function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim" | 
     if (existsSync(resolve(process.cwd(), "apikey.txt"))) return "apikey.txt";
     return "apikey.txt";
   }
-  // Fallback umum: prioritaskan akun-result-tokenharbor.txt jika ada, apikey.txt, apikey-fastrouter.txt
+  // Fallback umum: prioritaskan apikey-llm7io.txt jika ada, akun-result-tokenharbor.txt, apikey.txt, apikey-fastrouter.txt
+  if (existsSync(resolve(process.cwd(), "apikey-llm7io.txt"))) return "apikey-llm7io.txt";
   if (existsSync(resolve(process.cwd(), "akun-result-tokenharbor.txt"))) return "akun-result-tokenharbor.txt";
   if (existsSync(resolve(process.cwd(), "apikey.txt"))) return "apikey.txt";
   if (existsSync(resolve(process.cwd(), "apikey-fastrouter.txt"))) return "apikey-fastrouter.txt";
@@ -161,7 +167,13 @@ function getCandidateKeysFiles(provider?: string): CandidateFile[] {
     }
   };
 
-  if (provider === "tokenharbor") {
+  if (provider === "llm7io") {
+    checkAndAdd("apikey-llm7io.txt", "apikey-llm7io.txt", "Daftar API key LLM7.io");
+    checkAndAdd("akun-result-llm7io.txt", "akun-result-llm7io.txt", "Hasil pendaftaran LLM7.io lengkap (email:password:key)");
+    checkAndAdd("akun-bad-llm7io.txt", "akun-bad-llm7io.txt", "Akun terindikasi gagal / invalid");
+    checkAndAdd("akun-good-llm7io.txt", "akun-good-llm7io.txt", "Akun LLM7.io terverifikasi aktif");
+    checkAndAdd("apikey-good-llm7io.txt", "apikey-good-llm7io.txt", "Daftar plain API key terverifikasi aktif");
+  } else if (provider === "tokenharbor") {
     checkAndAdd("apikey-unli.txt", "apikey-unli.txt", "1.300+ plain keys (otomatis cari email di database)");
     checkAndAdd("apikey-ratelimit.txt", "apikey-ratelimit.txt", "Key terkena Rate Limit (siap dites ulang)");
     checkAndAdd("akun-ratelimit-tokenharbor.txt", "akun-ratelimit-tokenharbor.txt", "Akun terkena Rate Limit (email:password:key)");
@@ -183,6 +195,7 @@ function getCandidateKeysFiles(provider?: string): CandidateFile[] {
   }
 
   // File umum
+  checkAndAdd("apikey-llm7io.txt", "apikey-llm7io.txt", "File apikey LLM7.io");
   checkAndAdd("apikey-unli.txt", "apikey-unli.txt", "Daftar API key unli");
   checkAndAdd("apikey-ratelimit.txt", "apikey-ratelimit.txt", "File key terkena Rate Limit");
   checkAndAdd("apikey.txt", "apikey.txt", "File apikey.txt umum");
@@ -206,6 +219,8 @@ function buildAccountLookupMap(): Map<string, AccountInfo> {
 
   // 1. Scan semua file akun teks potensial
   const candidateTextFiles = [
+    "akun-result-llm7io.txt",
+    "akun-good-llm7io.txt",
     "akun-result-tokenharbor.txt",
     "akun-good-tokenharbor.txt",
     "akun-bad-tokenharbor.txt",
@@ -244,6 +259,7 @@ function buildAccountLookupMap(): Map<string, AccountInfo> {
 
   // 2. Scan file JSONL state (state.jsonl, state-tokenharbor.jsonl, dll)
   const candidateJsonlFiles = [
+    "state-llm7io.jsonl",
     "state.jsonl",
     "state-tokenharbor.jsonl",
     "state-fastrouter.jsonl",
@@ -459,7 +475,14 @@ function parseArguments(): Partial<CliConfig> {
     const arg = args[i];
     const next = args[i + 1];
 
-    if (arg === "--fastrouter" || arg === "--fr") {
+    if (arg === "--llm7io" || arg === "--llm7") {
+      config.baseUrl = "https://api.llm7.io/v1";
+      config.targetModel = "DeepSeek-V4.1-Flash";
+      config.mode = "chat";
+      if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("llm7io");
+      if (!config.outputValid) config.outputValid = "apikey-llm7io.txt";
+      if (!config.outputBad) config.outputBad = "akun-bad-llm7io.txt";
+    } else if (arg === "--fastrouter" || arg === "--fr") {
       config.baseUrl = "https://api.fastrouter.ai/api/v1";
       config.targetModel = "openai/gpt-4o-mini";
       config.mode = "chat";
@@ -541,6 +564,7 @@ ${c.bold("PENGGUNAAN:")}
   bun run entrim_crusoe_key_checker_cli.ts [OPSI...]    ${c.dim("(Mode CLI Langsung)")}
 
 ${c.bold("OPSI:")}
+  --llm7io, --llm7         Preset LLM7.io AI (https://api.llm7.io/v1 • DeepSeek-V4.1-Flash)
   --tokenharbor, --th      Preset TokenHarbor AI (https://tokenharbor.ai/v1 • deepseek-v4-flash:free)
   --fastrouter, --fr       Preset otomatis untuk FastRouter AI (https://api.fastrouter.ai/api/v1)
   --crusoe                 Preset otomatis untuk Crusoe Cloud Inference
@@ -548,7 +572,7 @@ ${c.bold("OPSI:")}
   -k, --keys <file>        File path daftar API key / akun (email:password:apikey)
   -p, --proxy [file]       Gunakan proxy pool (Opsional, Default: proxy-live.txt)
   --no-proxy, --direct     Koneksi langsung tanpa proxy (Default)
-  -u, --url <url>          Base URL API (Default: TokenHarbor / Crusoe)
+  -u, --url <url>          Base URL API (Default: TokenHarbor / Crusoe / LLM7.io)
   -m, --model <id>         Model target ping (Default: deepseek-v4-flash:free / Deepseek-V4-Flash)
   --mode <mode>            Metode cek: "smart" (rekomendasi), "chat", "models"
   -c, --concurrency <num>  Jumlah worker simultan (Default: 5)
@@ -679,7 +703,7 @@ async function verifyKey(
   const key = entry.key;
   const cleanBase = config.baseUrl.replace(/\/+$/, "");
   const startTime = performance.now();
-  const isFastRouter = cleanBase.includes("fastrouter") || key.startsWith("sk-v1-");
+  const isPublicModelsEndpoint = cleanBase.includes("fastrouter") || cleanBase.includes("llm7") || key.startsWith("sk-v1-");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
@@ -694,9 +718,9 @@ async function verifyKey(
 
   try {
     // 1. TAHAP SMART / MODELS (Cek /models terlebih dahulu: instan, akurat, hemat kuota)
-    // CATATAN: FastRouter memiliki endpoint public /models yang selalu mengembalikan HTTP 200 tanpa auth.
-    // Oleh karena itu, FastRouter dilewati dari tahap /models dan langsung diuji via /chat/completions.
-    if (!isFastRouter && (config.mode === "smart" || config.mode === "models")) {
+    // CATATAN: FastRouter & LLM7.io memiliki endpoint public /models yang selalu mengembalikan HTTP 200 tanpa auth.
+    // Oleh karena itu, dilewati dari tahap /models dan langsung diuji via /chat/completions.
+    if (!isPublicModelsEndpoint && (config.mode === "smart" || config.mode === "models")) {
       try {
         const modelsResp = await fetch(`${cleanBase}/models`, {
           ...fetchOptions,
@@ -883,8 +907,8 @@ async function verifyKey(
     }
 
     if (response.status === 404) {
-      // Model not found - periksa apakah key sebenarnya valid via /models (HANYA jika bukan FastRouter)
-      if (!isFastRouter) {
+      // Model not found - periksa apakah key sebenarnya valid via /models (HANYA jika bukan FastRouter & LLM7.io)
+      if (!isPublicModelsEndpoint) {
         try {
           const checkModels = await fetch(`${cleanBase}/models`, {
             ...fetchOptions,
@@ -1185,6 +1209,11 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
     config.outputValid.includes("tokenharbor") ||
     config.keysFile.includes("tokenharbor");
 
+  const isLlm7 =
+    config.baseUrl.includes("llm7") ||
+    config.outputValid.includes("llm7") ||
+    config.keysFile.includes("llm7");
+
   // 1. Simpan Good / Valid results
   if (valid.length > 0) {
     const validLines = valid.map((r) => r.entry.rawLine).join("\n") + "\n";
@@ -1193,13 +1222,15 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
       `${c.green("✔")} ${c.bold(valid.length)} Akun/Key aktif (GOOD) disimpan ke: ${c.bold(c.cyan(config.outputValid))}`
     );
 
-    // Simpan juga file plain keys murni jika target adalah TokenHarbor atau ada format akun
+    // Simpan juga file plain keys murni jika target adalah TokenHarbor / LLM7 atau ada format akun
     const hasAccountInfo = valid.some((r) => !!r.entry.email);
 
     if (hasAccountInfo && config.outputValid !== "valid_keys.txt") {
       const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
       const plainKeyFile = isTokenHarbor
         ? "apikey-good-tokenharbor.txt"
+        : isLlm7
+        ? "apikey-good-llm7io.txt"
         : "valid_keys.txt";
       writeFileSync(plainKeyFile, plainKeys, "utf-8");
       console.log(
@@ -1210,6 +1241,12 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
       writeFileSync("apikey-good-tokenharbor.txt", plainKeys, "utf-8");
       console.log(
         `${c.green("✔")} ${c.bold(valid.length)} Plain API key valid juga disimpan ke: ${c.bold(c.cyan("apikey-good-tokenharbor.txt"))}`
+      );
+    } else if (isLlm7 && config.outputValid !== "apikey-good-llm7io.txt") {
+      const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
+      writeFileSync("apikey-good-llm7io.txt", plainKeys, "utf-8");
+      console.log(
+        `${c.green("✔")} ${c.bold(valid.length)} Plain API key valid juga disimpan ke: ${c.bold(c.cyan("apikey-good-llm7io.txt"))}`
       );
     }
   }
@@ -1266,7 +1303,7 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
   );
 }
 
-async function main() {
+export async function main() {
   printBanner();
 
   const cliArgs = parseArguments();
@@ -1310,6 +1347,19 @@ async function main() {
     const providerChoice = await selectMenu<ProviderPreset | "custom">(
       "Pilih Target Provider API",
       [
+        {
+          label: "LLM7.io AI",
+          badge: c.bgGreen("DeepSeek V4.1"),
+          desc: "https://api.llm7.io/v1 • Model: DeepSeek-V4.1-Flash",
+          value: {
+            url: "https://api.llm7.io/v1",
+            model: "DeepSeek-V4.1-Flash",
+            mode: "chat",
+            defaultKeysFile: resolveDefaultKeysFile("llm7io"),
+            outputValid: "apikey-llm7io.txt",
+            outputBad: "akun-bad-llm7io.txt",
+          },
+        },
         {
           label: "TokenHarbor AI",
           badge: c.bgGreen("Free Models"),
@@ -1415,7 +1465,9 @@ async function main() {
 
     // 1b. Pilih File Sumber API Key / Akun Target (jika tidak ditentukan via flag --keys)
     if (!cliArgs.keysFile) {
-      const providerKey = config.baseUrl.includes("tokenharbor")
+      const providerKey = config.baseUrl.includes("llm7")
+        ? "llm7io"
+        : config.baseUrl.includes("tokenharbor")
         ? "tokenharbor"
         : config.baseUrl.includes("fastrouter")
         ? "fastrouter"
@@ -1459,7 +1511,7 @@ async function main() {
     }
 
     // 2. Pilih Mode Uji
-    const defaultModeIndex = config.baseUrl.includes("fastrouter") ? 1 : 0;
+    const defaultModeIndex = (config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7")) ? 1 : 0;
     config.mode = await selectMenu<"smart" | "chat" | "models">(
       "Pilih Metode Pengujian",
       [
@@ -1471,13 +1523,13 @@ async function main() {
         },
         {
           label: "Direct Chat Ping (/chat/completions)",
-          badge: config.baseUrl.includes("fastrouter") ? c.bgGreen("Wajib FastRouter") : undefined,
+          badge: (config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7")) ? c.bgGreen("Wajib FastRouter/LLM7") : undefined,
           desc: "Kirim pesan 1-kata untuk verifikasi inferensi live secara langsung",
           value: "chat",
         },
         {
           label: "Quick Auth Saja (/models)",
-          desc: "Hanya cek validitas token tanpa mengonsumsi kuota inferensi (tidak untuk FastRouter)",
+          desc: "Hanya cek validitas token tanpa mengonsumsi kuota inferensi (tidak untuk FastRouter & LLM7.io)",
           value: "models",
         },
       ],
@@ -1667,8 +1719,20 @@ swiftcedar749@huzt.my.id:torabikA1###########:thk_live_FTu1P_w16ctoHILbjdRg8mpY8
       (k) => k.key.startsWith("thk_") || k.key.startsWith("thk_live_") || k.rawLine.includes("tokenharbor")
     );
     const hasFastRouterKeys = keys.some((k) => k.key.startsWith("sk-v1-"));
+    const hasLlm7Keys = keys.some(
+      (k) => k.rawLine.includes("llm7") || (k.key.length > 100 && k.key.endsWith("="))
+    );
 
-    if (hasTokenHarborKeys && !config.baseUrl.includes("tokenharbor")) {
+    if (hasLlm7Keys && !config.baseUrl.includes("llm7")) {
+      console.log(
+        `${c.cyan("ℹ")} Format key LLM7.io terdeteksi! Mengalihkan target otomatis ke ${c.bold(c.green("LLM7.io AI"))} (${c.yellow("DeepSeek-V4.1-Flash")})\n`
+      );
+      config.baseUrl = "https://api.llm7.io/v1";
+      config.targetModel = "DeepSeek-V4.1-Flash";
+      config.mode = "chat";
+      if (!cliArgs.outputValid) config.outputValid = "apikey-llm7io.txt";
+      if (!cliArgs.outputBad) config.outputBad = "akun-bad-llm7io.txt";
+    } else if (hasTokenHarborKeys && !config.baseUrl.includes("tokenharbor")) {
       console.log(
         `${c.cyan("ℹ")} Format TokenHarbor (${c.bold("thk_live_...")}) terdeteksi! Mengalihkan target otomatis ke ${c.bold(c.green("TokenHarbor AI"))} (${c.yellow("deepseek-v4-flash:free")})\n`
       );
@@ -1735,7 +1799,9 @@ swiftcedar749@huzt.my.id:torabikA1###########:thk_live_FTu1P_w16ctoHILbjdRg8mpY8
 }
 
 // Eksekusi Program Utama
-main().catch((err) => {
-  console.error(c.red(`Fatal Error: ${err.message}`));
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error(c.red(`Fatal Error: ${err.message}`));
+    process.exit(1);
+  });
+}

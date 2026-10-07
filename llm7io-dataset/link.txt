@@ -1,0 +1,12 @@
+signup : https://dash.llm7.io/ memakai email dari temp mail pro, namun tetap sediakan alternative sign up pakai gsuite (google oauth)
+
+setelah paste email dan continue with email maka ada otp ke email, tombol verify email akan muncul kalau sudah di paste otp nya
+
+jika sudah berhasil daftar maka akan masuk ke dashboard, url nya masih sama namun konten nya berbeda
+
+jika sudah di dashboard masuk ke halaman apikey : https://dash.llm7.io/#/api-keys 
+
+klik tombol add apikey, untuk token name nya isi bebas, dan expired nya set ke 5 tahun
+
+stelah klik tombol create, nanti akan muncul apikey nya, copy dan simpan ke file apikey-llm7io.txt
+
