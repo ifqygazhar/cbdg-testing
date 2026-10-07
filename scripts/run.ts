@@ -70,6 +70,7 @@ async function askPlan(): Promise<RunPlan> {
     }
     const targetSite = await select<string>("Uji untuk target website apa?", [
       { value: "", label: "Umum (semua situs)", hint: "uji liveness & IP echo via ipv4.webshare.io (default)" },
+      { value: "https://dash.llm7.io", label: "LLM7.io", hint: "uji liveness + akses langsung ke dash.llm7.io" },
       { value: "https://console.groq.com", label: "GroqCloud", hint: "uji liveness + akses langsung ke console.groq.com" },
       { value: "https://tokenharbor.ai", label: "TokenHarbor", hint: "uji liveness + akses langsung ke tokenharbor.ai" },
       { value: "https://fastrouter.ai", label: "FastRouter", hint: "uji liveness + akses langsung ke fastrouter.ai" },

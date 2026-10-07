@@ -141,7 +141,7 @@ async function checkOne(entry: ProxyEntry, opts: CheckOptions, ourIp: string | n
         headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
         tls: { rejectUnauthorized: false },
       });
-      if (!res.ok && res.status >= 400 && res.status !== 401 && res.status !== 403) {
+      if (!res.ok || res.status !== 200) {
         return { entry, alive: false, ms: Date.now() - started, reason: `target HTTP ${res.status}` };
       }
     }

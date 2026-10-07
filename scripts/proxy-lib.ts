@@ -344,6 +344,11 @@ export async function checkSocks(
       return { entry, alive: false, ms, reason: status ? `HTTP ${status}` : "jawaban tidak valid" };
     }
 
+    if (ourIp === null) {
+      // Checking target website directly (not IP echo endpoint): HTTP 200 is proof of liveness
+      return { entry, alive: status === 200, ms, reason: status === 200 ? undefined : `target HTTP ${status}` };
+    }
+
     const exitIp = readExitIp(body);
     const verdict = judge(exitIp, ourIp);
     return { entry, alive: verdict.alive, ms, exitIp: exitIp ?? undefined, reason: verdict.reason };
