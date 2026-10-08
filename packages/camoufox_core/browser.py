@@ -154,12 +154,34 @@ async def launch_camoufox(
         if not bypass and google_direct:
             env_hosts = os.getenv("GOOGLE_DIRECT_HOSTS", "")
             hosts_list = [h.strip() for h in re.split(r"[;,\s]+", env_hosts) if h.strip()]
-            default_bypass = ["accounts.google.com", "ssl.gstatic.com", "www.gstatic.com", "mail.google.com", "gmail.com"]
+            default_bypass = [
+                "accounts.google.com",
+                "accounts.youtube.com",
+                "google.com",
+                "www.google.com",
+                "ssl.gstatic.com",
+                "www.gstatic.com",
+                "gstatic.com",
+                "fonts.gstatic.com",
+                "apis.google.com",
+                "play.google.com",
+                "myaccount.google.com",
+                "mail.google.com",
+                "gmail.com",
+                "googleusercontent.com",
+                "lh3.googleusercontent.com",
+                "*.google.com",
+                "*.gstatic.com",
+                "*.googleusercontent.com",
+            ]
             combined = list(dict.fromkeys(hosts_list + default_bypass))
             bypass = ",".join(combined)
 
         if bypass:
             proxy_dict["bypass"] = bypass
+            user_prefs = launch_kwargs.get("firefox_user_prefs", {}) or {}
+            user_prefs["network.proxy.no_proxies_on"] = bypass
+            launch_kwargs["firefox_user_prefs"] = user_prefs
 
         launch_kwargs["proxy"] = proxy_dict
         if geoip:
@@ -181,7 +203,10 @@ async def launch_camoufox(
                     pass
 
                 if host and re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$", host):
-                    launch_kwargs["geoip"] = host
+                    if host.startswith(("127.", "10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")):
+                        launch_kwargs["geoip"] = False
+                    else:
+                        launch_kwargs["geoip"] = host
                 else:
                     launch_kwargs["geoip"] = False
 
@@ -194,6 +219,9 @@ async def launch_camoufox(
                 f"Playwright & Firefox tidak mendukung autentikasi SOCKS5 secara native. "
                 f"Solusi: Aktifkan IP Whitelist di provider proxy (agar proxy bisa diakses tanpa user/pass) atau gunakan format HTTP proxy."
             ) from e
+        if "ip not found in database" in str(e).lower() and launch_kwargs.get("geoip"):
+            launch_kwargs["geoip"] = False
+            return AsyncCamoufox(**launch_kwargs)
         raise
 
 async def human_delay(min_ms: int = 400, max_ms: int = 1200):

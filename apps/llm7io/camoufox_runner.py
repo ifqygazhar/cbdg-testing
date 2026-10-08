@@ -7,7 +7,7 @@ solves Cloudflare Turnstile, generates 5-year API keys, and saves tokens to apik
 
 import argparse
 import asyncio
-from collections import deque
+from collections import deque, defaultdict
 from datetime import datetime, timedelta
 import concurrent.futures
 import os
@@ -313,13 +313,15 @@ async def run_single_account(
         async with browser_ctx as browser:
             context = await browser.new_context(ignore_https_errors=True)
             page = await context.new_page()
-            page.set_default_timeout(35000)
+            timeout_ms = 90000 if proxy else 45000
+            page.set_default_timeout(timeout_ms)
+            page.set_default_navigation_timeout(timeout_ms)
 
             # Log active anonymous fingerprint
             fp = await get_browser_fingerprint_info(page)
             if fp:
                 logger.info(
-                    f"🛡️ Camoufox Fingerprint: OS={fp.get('platform')} | Screen={fp.get('screen')} | UA={fp.get('ua')}"
+                    f"🛡️ Camoufox Fingerprint: OS={fp.get('platform')} | Screen={fp.get('screen')} | Viewport={fp.get('viewport')} | Cores={fp.get('cores')} | UA={fp.get('ua')}"
                 )
 
             # ── 1. Navigate to LLM7.io ───────────────────────────────────────
@@ -908,8 +910,6 @@ async def run_single_account(
             except Exception:
                 pass
         return False
-    finally:
-        kill_descendant_processes()
 
 
 async def main():
@@ -1020,111 +1020,244 @@ async def main():
             logger.info("all Google accounts already completed!")
             return
 
-        target_count = args.limit if args.limit > 0 else len(pending_accounts)
-        items_to_run = pending_accounts[:target_count]
+        target_count = min(args.limit, len(pending_accounts)) if args.limit > 0 else len(pending_accounts)
+        worker_count = max(1, min(args.workers, target_count, len(pending_accounts)))
+        logger.info(
+            f"Account queue stats: total={len(accounts)}, completed={len(accounts) - len(pending_accounts)}, "
+            f"todo={len(pending_accounts)}, target={target_count}, workers={worker_count}, retry_failed={args.retry_failed}"
+        )
 
-        for idx, acc in enumerate(items_to_run, 1):
-            proxy = None
-            if proxy_pool:
-                proxy = await proxy_pool.get_next_live_proxy(
-                    target_url=API_PING_URL,
-                    timeout_sec=args.proxy_timeout,
-                    logger=logger,
-                    batch_size=15,
-                    enable_precheck=not args.skip_proxy_precheck,
-                )
-                if not proxy and not args.no_proxy:
-                    logger.error("❌ All candidate proxies are exhausted/dead (none returned HTTP 200). Aborting.")
-                    break
-
-            logger.info(f"[{idx}/{len(items_to_run)}] processing {acc.email}")
-
-            success = await run_single_account(
-                email=acc.email,
-                password=acc.password,
-                recovery_email=acc.recovery_email,
-                auth_method="google",
-                proxy=proxy,
-                store=store,
-                results=results,
-                temp_mail=temp_mail,
-                headed=headed,
-                screenshot_dir=screenshot_dir,
-                logger=logger,
-                pace=args.pace,
-            )
-
-            if proxy_pool and proxy:
-                proxy_pool.mark_result(proxy, success)
-
-            if idx < len(items_to_run) and args.delay > 0:
-                logger.info(f"waiting {args.delay}s delay before next account...")
-                await asyncio.sleep(args.delay)
-
-    else:
-        # TempMail batch loop
-        target_count = args.limit if args.limit > 0 else 1
-        logger.info(f"starting TempMail generation for {target_count} account(s)...")
+        account_queue = deque(pending_accounts[:target_count])
+        attempts_per_account = defaultdict(int)
+        MAX_PROXY_ATTEMPTS = 3 if proxy_pool else 1
+        max_total_attempts = max(target_count * 4, len(proxies) * 2, 15) if proxy_pool else (len(pending_accounts) * 2)
 
         processed = 0
         success_count = 0
+        in_flight = 0
+        lock = asyncio.Lock()
 
-        while processed < target_count:
-            # 1. Acquire verified live proxy FIRST before creating disposable email
-            proxy = None
-            if proxy_pool:
-                proxy = await proxy_pool.get_next_live_proxy(
-                    target_url=API_PING_URL,
-                    timeout_sec=args.proxy_timeout,
-                    logger=logger,
-                    batch_size=15,
-                    enable_precheck=not args.skip_proxy_precheck,
+        async def google_worker(worker_id: int):
+            nonlocal processed, success_count, in_flight
+            while True:
+                account = None
+                proxy = None
+                async with lock:
+                    if success_count >= target_count:
+                        break
+                    if processed >= max_total_attempts:
+                        logger.warn(f"Worker #{worker_id}: Max attempt limit reached ({processed}/{max_total_attempts}).")
+                        break
+
+                    if not account_queue:
+                        if in_flight == 0:
+                            break
+                    else:
+                        account = account_queue.popleft()
+                        in_flight += 1
+
+                if account is None:
+                    # In-flight workers might re-queue an account
+                    await asyncio.sleep(1.0)
+                    continue
+
+                if proxy_pool:
+                    proxy = await proxy_pool.get_next_live_proxy(
+                        target_url=API_PING_URL,
+                        timeout_sec=args.proxy_timeout,
+                        logger=logger,
+                        batch_size=15,
+                        enable_precheck=not args.skip_proxy_precheck,
+                    )
+                    if proxy is None and not args.no_proxy:
+                        logger.warn(
+                            f"Worker #{worker_id}: All candidate proxies in pool are exhausted/dead. No usable proxies left."
+                        )
+                        async with lock:
+                            account_queue.appendleft(account)
+                            in_flight -= 1
+                        break
+                    proxy_addr = proxy_pool.address_of(proxy) if proxy else "direct"
+                    reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
+                    logger.info(
+                        f"Worker #{worker_id} selected verified proxy: {proxy.server if proxy else 'direct'} ({proxy_addr}){reuse_tag}. "
+                        f"(Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})"
+                    )
+                else:
+                    proxy = None
+
+                async with lock:
+                    processed += 1
+
+                acc_logger = create_logger(f"w{worker_id}:{account.email}")
+                logger.info(f"Worker #{worker_id} starting account {account.email} (auth=google)")
+
+                ok = await run_single_account(
+                    email=account.email,
+                    password=account.password,
+                    recovery_email=account.recovery_email,
+                    auth_method="google",
+                    proxy=proxy,
+                    store=store,
+                    results=results,
+                    temp_mail=temp_mail,
+                    headed=headed,
+                    screenshot_dir=screenshot_dir,
+                    logger=acc_logger,
+                    pace=args.pace,
                 )
-                if not proxy and not args.no_proxy:
-                    logger.error("❌ All candidate proxies in pool are exhausted/dead (none returned HTTP 200). Stopping.")
-                    break
 
-            processed += 1
-            logger.info(f"[{processed}/{target_count}] creating disposable TempMail address...")
+                async with lock:
+                    in_flight -= 1
+                    if proxy_pool and proxy:
+                        if ok:
+                            proxy_pool.mark_result(proxy, success=True)
+                            logger.info(f"Worker #{worker_id}: Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
+                        else:
+                            proxy_pool.mark_result(proxy, success=False)
+                            logger.warn(f"Worker #{worker_id}: Proxy {proxy.server} failed/rejected. Discarded and will not be reused.")
 
-            try:
-                temp_acc = temp_mail.create_email(domain=args.domain)
-                email = temp_acc.get("email")
-                if not email:
-                    raise RuntimeError("TempMail did not return email address")
-            except Exception as e:
-                logger.error(f"failed to generate TempMail: {e}")
-                if processed < target_count:
-                    await asyncio.sleep(args.delay)
-                continue
+                    if ok:
+                        success_count += 1
+                        logger.info(f"Progress: {success_count}/{target_count} accounts completed successfully.")
+                    else:
+                        attempts_per_account[account.email] += 1
+                        current_att = attempts_per_account[account.email]
+                        can_retry_with_diff_proxy = (
+                            proxy_pool is not None
+                            and proxy_pool.has_proxies
+                            and current_att < MAX_PROXY_ATTEMPTS
+                            and success_count < target_count
+                        )
+                        if can_retry_with_diff_proxy:
+                            logger.info(
+                                f"Worker #{worker_id}: Proxy failed for {account.email}. "
+                                f"Skipping bad proxy and re-queuing account to retry with fresh proxy (attempt {current_att + 1}/{MAX_PROXY_ATTEMPTS})..."
+                            )
+                            account_queue.append(account)
+                        else:
+                            if proxy_pool and current_att >= MAX_PROXY_ATTEMPTS:
+                                logger.warn(f"Worker #{worker_id}: Account {account.email} exhausted all {MAX_PROXY_ATTEMPTS} proxy attempts.")
+                            results.mark_failed(account.email, account.password or "", "Proxy/automation failure")
 
-            success = await run_single_account(
-                email=email,
-                password=None,
-                recovery_email=None,
-                auth_method="tempmail",
-                proxy=proxy,
-                store=store,
-                results=results,
-                temp_mail=temp_mail,
-                headed=headed,
-                screenshot_dir=screenshot_dir,
-                logger=logger,
-                pace=args.pace,
-            )
+                if success_count < target_count:
+                    if ok and args.delay > 0:
+                        logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
+                        await asyncio.sleep(args.delay)
+                    elif not ok:
+                        logger.info(f"Worker #{worker_id} switching immediately to next account...")
+                        await asyncio.sleep(1.5)
 
-            if success:
-                success_count += 1
+        if worker_count > 1:
+            await asyncio.gather(*(google_worker(i + 1) for i in range(worker_count)))
+        else:
+            await google_worker(1)
 
-            if proxy_pool and proxy:
-                proxy_pool.mark_result(proxy, success)
+        logger.info(f"LLM7.io Google batch finished: {success_count}/{target_count} target achieved ({processed} total attempts).")
+        return
 
-            if processed < target_count and args.delay > 0:
-                logger.info(f"waiting {args.delay}s delay before next account...")
-                await asyncio.sleep(args.delay)
+    else:
+        # TempMail batch loop with concurrent workers
+        target_count = args.limit if args.limit > 0 else 1
+        worker_count = max(1, min(args.workers, target_count))
+        logger.info(f"starting TempMail generation for {target_count} account(s) with {worker_count} parallel worker(s)...")
+
+        processed = 0
+        success_count = 0
+        max_total_attempts = max(target_count * 4, len(proxies) * 2, 10) if proxies else target_count
+        lock = asyncio.Lock()
+
+        async def tempmail_worker(worker_id: int):
+            nonlocal processed, success_count
+            while True:
+                proxy = None
+                async with lock:
+                    if success_count >= target_count or processed >= max_total_attempts:
+                        break
+
+                if proxy_pool:
+                    proxy = await proxy_pool.get_next_live_proxy(
+                        target_url=API_PING_URL,
+                        timeout_sec=args.proxy_timeout,
+                        logger=logger,
+                        batch_size=15,
+                        enable_precheck=not args.skip_proxy_precheck,
+                    )
+                    if proxy is None and not args.no_proxy:
+                        logger.warn(f"Worker #{worker_id}: All candidate proxies in pool are exhausted/dead. No usable proxies left.")
+                        break
+                    proxy_addr = proxy_pool.address_of(proxy) if proxy else "direct"
+                    reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
+                    logger.info(
+                        f"Worker #{worker_id} selected verified proxy: {proxy.server if proxy else 'direct'} ({proxy_addr}){reuse_tag}. "
+                        f"(Fresh remaining: {len(proxy_pool.fresh_proxies)}, Good pool: {len(proxy_pool.good_proxies)})"
+                    )
+                else:
+                    proxy = None
+
+                async with lock:
+                    processed += 1
+
+                # Generate fresh TempMail account outside lock
+                try:
+                    temp_acc = temp_mail.create_email(domain=args.domain)
+                    email = temp_acc.get("email")
+                    if not email:
+                        raise RuntimeError("TempMail did not return email address")
+                except Exception as e:
+                    logger.error(f"Worker #{worker_id} failed to generate TempMail: {e}")
+                    await asyncio.sleep(2)
+                    continue
+
+                acc_logger = create_logger(f"w{worker_id}:{email}")
+                logger.info(f"Worker #{worker_id} starting registration for {email} (auth=tempmail)")
+
+                ok = await run_single_account(
+                    email=email,
+                    password=None,
+                    recovery_email=None,
+                    auth_method="tempmail",
+                    proxy=proxy,
+                    store=store,
+                    results=results,
+                    temp_mail=temp_mail,
+                    headed=headed,
+                    screenshot_dir=screenshot_dir,
+                    logger=acc_logger,
+                    pace=args.pace,
+                )
+
+                async with lock:
+                    if proxy_pool and proxy:
+                        if ok:
+                            proxy_pool.mark_result(proxy, success=True)
+                            logger.info(f"Worker #{worker_id}: Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
+                        else:
+                            proxy_pool.mark_result(proxy, success=False)
+                            logger.warn(f"Worker #{worker_id}: Proxy {proxy.server} failed/rejected. Discarded and will not be reused.")
+
+                    if ok:
+                        success_count += 1
+                        logger.info(f"Progress: {success_count}/{target_count} accounts completed successfully.")
+
+                if success_count < target_count:
+                    if ok and args.delay > 0:
+                        logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
+                        await asyncio.sleep(args.delay)
+                    elif not ok:
+                        logger.info(f"Worker #{worker_id} switching immediately to next account with a fresh/different IP...")
+                        await asyncio.sleep(1.5)
+
+        if worker_count > 1:
+            await asyncio.gather(*(tempmail_worker(i + 1) for i in range(worker_count)))
+        else:
+            await tempmail_worker(1)
 
         logger.info(f"all finished! Successfully generated {success_count}/{target_count} accounts/keys.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        kill_descendant_processes()
