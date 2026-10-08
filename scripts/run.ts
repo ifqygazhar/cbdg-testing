@@ -162,6 +162,7 @@ async function askPlan(): Promise<RunPlan> {
   ]);
 
   let reEnableFree = false;
+  let reverifyEmail = false;
   if (app === "tokenharbor") {
     let badCount = 0;
     const badPath = resolve(process.cwd(), "akun-bad-tokenharbor.txt");
@@ -171,7 +172,20 @@ async function askPlan(): Promise<RunPlan> {
         .filter((l) => l.trim() && !l.startsWith("#")).length;
     }
 
-    const harborAction = await select<"signup" | "reenable">(
+    let needVerifCount = 0;
+    const needVerifKeyPath = resolve(process.cwd(), "apikey-need-verif-tokenharbor.txt");
+    const needVerifAccPath = resolve(process.cwd(), "akun-need-verif-tokenharbor.txt");
+    if (existsSync(needVerifKeyPath)) {
+      needVerifCount = readFileSync(needVerifKeyPath, "utf-8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !l.startsWith("#")).length;
+    } else if (existsSync(needVerifAccPath)) {
+      needVerifCount = readFileSync(needVerifAccPath, "utf-8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !l.startsWith("#")).length;
+    }
+
+    const harborAction = await select<"signup" | "reenable" | "reverify">(
       "Pilih tindakan untuk TokenHarbor?",
       [
         {
@@ -184,16 +198,23 @@ async function askPlan(): Promise<RunPlan> {
           label: "Re-enable Free Models (Aktifkan Ulang)",
           hint: `Login & klik enable free models di dashboard (${badCount} akun di akun-bad-tokenharbor.txt)`,
         },
+        {
+          value: "reverify",
+          label: "Re-verifikasi Email (Verifikasi Ulang Akun/Key)",
+          hint: `Login & minta kirim ulang email verifikasi di dashboard (${needVerifCount} akun di apikey-need-verif-tokenharbor.txt)`,
+        },
       ],
       0,
     );
     if (harborAction === "reenable") {
       reEnableFree = true;
+    } else if (harborAction === "reverify") {
+      reverifyEmail = true;
     }
   }
 
   let authMethod: "google" | "tempmail" | undefined;
-  if (!reEnableFree && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io")) {
+  if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io")) {
     authMethod = await select<"tempmail" | "google">(
       `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : "FastRouter"}?`,
       [
@@ -225,6 +246,25 @@ async function askPlan(): Promise<RunPlan> {
     const defaultLimit = badCount > 0 ? badCount : 1;
     limit = await askNumber(
       `Berapa banyak akun yang ingin diaktifkan ulang? (${badCount} akun tersisa di akun-bad-tokenharbor.txt)`,
+      defaultLimit,
+      " akun",
+    );
+  } else if (reverifyEmail) {
+    let needVerifCount = 0;
+    const needVerifKeyPath = resolve(process.cwd(), "apikey-need-verif-tokenharbor.txt");
+    const needVerifAccPath = resolve(process.cwd(), "akun-need-verif-tokenharbor.txt");
+    if (existsSync(needVerifKeyPath)) {
+      needVerifCount = readFileSync(needVerifKeyPath, "utf-8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !l.startsWith("#")).length;
+    } else if (existsSync(needVerifAccPath)) {
+      needVerifCount = readFileSync(needVerifAccPath, "utf-8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !l.startsWith("#")).length;
+    }
+    const defaultLimit = needVerifCount > 0 ? needVerifCount : 1;
+    limit = await askNumber(
+      `Berapa banyak akun yang ingin diverifikasi ulang? (${needVerifCount} akun tersisa di apikey-need-verif-tokenharbor.txt)`,
       defaultLimit,
       " akun",
     );
@@ -275,11 +315,11 @@ async function askPlan(): Promise<RunPlan> {
 
   const delaySec = await askNumber("Jeda antar akun", 60, " detik");
   const workers = await askNumber("Jumlah worker paralel", 1);
-  const retryFailed = reEnableFree ? false : await confirm("Ulangi akun yang tercatat gagal?", false);
+  const retryFailed = (reEnableFree || reverifyEmail) ? false : await confirm("Ulangi akun yang tercatat gagal?", false);
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, engine, authMethod, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain, reEnableFree };
+  return { app, mode, engine, authMethod, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain, reEnableFree, reverifyEmail };
 }
 
 function review(plan: RunPlan): void {
@@ -296,6 +336,7 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
   }
   const rows: Array<[string, string]> = [
     ["app", plan.app],
+    ...(plan.reverifyEmail ? ([["tindakan", "Re-verifikasi Email (apikey-need-verif-tokenharbor.txt)"]] as Array<[string, string]>) : []),
     ...(plan.reEnableFree ? ([["tindakan", "Re-enable Free Models (akun-bad-tokenharbor.txt)"]] as Array<[string, string]>) : []),
     ...(plan.engine
       ? ([
@@ -341,7 +382,9 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
       ? ([
           [
             "target",
-            plan.reEnableFree
+            plan.reverifyEmail
+              ? `${plan.limit} akun (dari apikey-need-verif-tokenharbor.txt)`
+              : plan.reEnableFree
               ? `${plan.limit} akun (dari akun-bad-tokenharbor.txt)`
               : plan.authMethod === "google"
               ? `${plan.limit} akun (dari sisa akun yang belum dibuat)`

@@ -57,7 +57,7 @@ interface KeyEntry {
 interface KeyCheckResult {
   key: string;
   entry: KeyEntry;
-  status: "VALID" | "QUOTA" | "INVALID" | "ERROR";
+  status: "VALID" | "QUOTA" | "INVALID" | "ERROR" | "NEED_VERIF";
   httpStatus: number | null;
   latencyMs: number;
   message: string;
@@ -175,6 +175,8 @@ function getCandidateKeysFiles(provider?: string): CandidateFile[] {
     checkAndAdd("apikey-good-llm7io.txt", "apikey-good-llm7io.txt", "Daftar plain API key terverifikasi aktif");
   } else if (provider === "tokenharbor") {
     checkAndAdd("apikey-unli.txt", "apikey-unli.txt", "1.300+ plain keys (otomatis cari email di database)");
+    checkAndAdd("apikey-need-verif-tokenharbor.txt", "apikey-need-verif-tokenharbor.txt", "Key perlu verifikasi email (siap re-verifikasi)");
+    checkAndAdd("akun-need-verif-tokenharbor.txt", "akun-need-verif-tokenharbor.txt", "Akun perlu verifikasi email (email:password:key)");
     checkAndAdd("apikey-ratelimit.txt", "apikey-ratelimit.txt", "Key terkena Rate Limit (siap dites ulang)");
     checkAndAdd("akun-ratelimit-tokenharbor.txt", "akun-ratelimit-tokenharbor.txt", "Akun terkena Rate Limit (email:password:key)");
     checkAndAdd("akun-result-tokenharbor.txt", "akun-result-tokenharbor.txt", "Hasil pendaftaran TokenHarbor lengkap (email:password:key)");
@@ -223,6 +225,8 @@ function buildAccountLookupMap(): Map<string, AccountInfo> {
     "akun-good-llm7io.txt",
     "akun-result-tokenharbor.txt",
     "akun-good-tokenharbor.txt",
+    "akun-need-verif-tokenharbor.txt",
+    "apikey-need-verif-tokenharbor.txt",
     "akun-bad-tokenharbor.txt",
     "akun-failed-tokenharbor.txt",
     "akun-ratelimit-tokenharbor.txt",
@@ -884,11 +888,27 @@ async function verifyKey(
         errJson?.error?.message ||
         (Array.isArray(errJson?.errors) ? errJson.errors[0] : null) ||
         "Unauthorized / Invalid API Key";
-      if (msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("too many requests")) {
+      const lowerMsg = msg.toLowerCase();
+      if (lowerMsg.includes("rate limit") || lowerMsg.includes("too many requests")) {
         return {
           key,
           entry,
           status: "QUOTA",
+          httpStatus: response.status,
+          latencyMs,
+          message: msg,
+          proxyUsed: proxyUrl,
+        };
+      }
+      if (
+        lowerMsg.includes("verify your email") ||
+        lowerMsg.includes("email_verification_required") ||
+        lowerMsg.includes("confirmation link")
+      ) {
+        return {
+          key,
+          entry,
+          status: "NEED_VERIF",
           httpStatus: response.status,
           latencyMs,
           message: msg,
@@ -1050,6 +1070,10 @@ async function runConcurrentChecker(
           badge = c.bgGreen("✓ ACTIVE");
           detailMsg = c.green(res.message);
           break;
+        case "NEED_VERIF":
+          badge = c.bgPurple("✉ VERIF ");
+          detailMsg = c.magenta(res.message);
+          break;
         case "QUOTA":
           badge = c.bgYellow("! QUOTA ");
           detailMsg = c.yellow(res.message);
@@ -1100,10 +1124,11 @@ function isRateLimitResult(r: KeyCheckResult): boolean {
 function printSummary(results: KeyCheckResult[], totalDurationMs: number, config: CliConfig) {
   const total = results.length;
   const valid = results.filter((r) => r.status === "VALID");
+  const needVerif = results.filter((r) => r.status === "NEED_VERIF");
   const quota = results.filter(isRateLimitResult);
   const invalid = results.filter((r) => r.status === "INVALID");
   const error = results.filter((r) => r.status === "ERROR");
-  const bad = results.filter((r) => r.status !== "VALID" && !isRateLimitResult(r));
+  const bad = results.filter((r) => r.status !== "VALID" && r.status !== "NEED_VERIF" && !isRateLimitResult(r));
 
   const validPct = total > 0 ? ((valid.length / total) * 100).toFixed(1) : "0.0";
   const durationSec = (totalDurationMs / 1000).toFixed(2);
@@ -1131,7 +1156,10 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number, config
     `║  ${c.yellow("▲ Rate Limit / Quota")} : ${c.bold(c.yellow(quota.length.toString().padEnd(6)))}  ║  Rasio Keberhasilan: ${c.bold(c.green(`${validPct}%`.padEnd(9)))} ║`
   );
   console.log(
-    `║  ${c.red("✕ Mati (Invalid 401)")}: ${c.bold(c.red(invalid.length.toString().padEnd(6)))}  ║  Gagal Koneksi    : ${c.gray(error.length.toString().padEnd(10))} ║`
+    `║  ${c.magenta("✉ Perlu Verif Email")} : ${c.bold(c.magenta(needVerif.length.toString().padEnd(6)))}  ║  ${c.red("✕ Mati (Invalid 401)")}: ${c.bold(c.red(invalid.length.toString().padEnd(10)))} ║`
+  );
+  console.log(
+    `║  Gagal Koneksi       : ${c.gray(error.length.toString().padEnd(6))}  ║                                    ║`
   );
   console.log(
     `${c.bold(c.white("╚═══════════════════════════════════════════════════════════════════════════╝"))}`
@@ -1149,6 +1177,27 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number, config
       console.log(`  ${c.dim(`... dan ${valid.length - 15} lainnya (lihat ${config.outputValid})`)}`);
     }
     console.log(c.dim("─".repeat(70)));
+  }
+
+  // Daftar Key / Akun Perlu Verifikasi Email
+  if (needVerif.length > 0) {
+    console.log(`\n${c.bold(c.magenta("✉ DAFTAR KEY PERLU VERIFIKASI EMAIL (NEED_VERIF):"))}`);
+    console.log(c.dim("─".repeat(70)));
+    needVerif.slice(0, 10).forEach((item, i) => {
+      const emailHint = item.entry.email ? c.dim(` (${item.entry.email})`) : "";
+      console.log(`  ${c.magenta((i + 1).toString().padStart(2, "0") + ".")} ${c.magenta(item.key)}${emailHint} ── ${c.dim(item.message)}`);
+    });
+    if (needVerif.length > 10) {
+      console.log(`  ${c.dim(`... dan ${needVerif.length - 10} key lainnya (lihat apikey-need-verif-tokenharbor.txt)`)}`);
+    }
+    console.log(c.dim("─".repeat(70)));
+
+    console.log(
+      `\n${c.bold(c.cyan("💡 TIP VERIFIKASI EMAIL TOKENHARBOR:"))} Terdeteksi ${c.bold(c.magenta(needVerif.length.toString()))} akun perlu verifikasi link email.`
+    );
+    console.log(
+      `   Verifikasi otomatis via fitur re-enable:\n   ${c.bold(c.green("bun run tokenharbor -- --reverify-email"))} atau via ${c.bold(c.green("bun run start"))} (pilih Re-verifikasi Email)!`
+    );
   }
 
   // Daftar Key / Akun Terkena Rate Limit (QUOTA)
@@ -1201,8 +1250,9 @@ function printSummary(results: KeyCheckResult[], totalDurationMs: number, config
 
 function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
   const valid = results.filter((r) => r.status === "VALID");
+  const needVerif = results.filter((r) => r.status === "NEED_VERIF");
   const rateLimited = results.filter(isRateLimitResult);
-  const bad = results.filter((r) => r.status !== "VALID" && !isRateLimitResult(r));
+  const bad = results.filter((r) => r.status !== "VALID" && r.status !== "NEED_VERIF" && !isRateLimitResult(r));
 
   const isTokenHarbor =
     config.baseUrl.includes("tokenharbor") ||
@@ -1273,7 +1323,29 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
     }
   }
 
-  // 3. Simpan Bad / Invalid results (format email:password:apikey jika ada akunnya, atau plain key jika tidak)
+  // 3. Simpan Need Verification results ke apikey-need-verif-tokenharbor.txt & akun-need-verif-tokenharbor.txt
+  if (needVerif.length > 0) {
+    const needVerifKeyFile = "apikey-need-verif-tokenharbor.txt";
+    const needVerifAccountFile = "akun-need-verif-tokenharbor.txt";
+
+    // Simpan format email:password:apikey jika ada, atau plain key jika tidak
+    const keyLines = needVerif.map((r) => r.entry.rawLine || r.key).join("\n") + "\n";
+    writeFileSync(needVerifKeyFile, keyLines, "utf-8");
+    console.log(
+      `${c.magenta("✉")} ${c.bold(needVerif.length)} Key perlu verifikasi email dipisahkan ke: ${c.bold(c.magenta(needVerifKeyFile))}`
+    );
+
+    const hasAccountInfo = needVerif.some((r) => !!r.entry.email);
+    if (hasAccountInfo) {
+      const accountLines = needVerif.map((r) => r.entry.rawLine).join("\n") + "\n";
+      writeFileSync(needVerifAccountFile, accountLines, "utf-8");
+      console.log(
+        `${c.magenta("✉")} ${c.bold(needVerif.length)} Akun perlu verifikasi email (lengkap) juga disimpan ke: ${c.bold(c.magenta(needVerifAccountFile))}`
+      );
+    }
+  }
+
+  // 4. Simpan Bad / Invalid results (format email:password:apikey jika ada akunnya, atau plain key jika tidak)
   if (bad.length > 0 && config.outputBad) {
     const badLines = bad.map((r) => r.entry.rawLine).join("\n") + "\n";
     writeFileSync(config.outputBad, badLines, "utf-8");
@@ -1281,6 +1353,7 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
       `${c.red("✕")} ${c.bold(bad.length)} Akun/Key mati / invalid (BAD) dipisahkan ke: ${c.bold(c.red(config.outputBad))}`
     );
   }
+
 
   // 3. Simpan CSV detail
   const hasAccountInfo = results.some((r) => !!r.entry.email);

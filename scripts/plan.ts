@@ -52,6 +52,7 @@ export interface RunPlan {
   proxyTarget?: string;
   proxyAppend?: boolean;
   reEnableFree?: boolean;
+  reverifyEmail?: boolean;
   accountsFile?: string;
 }
 
@@ -118,7 +119,10 @@ export function buildArgs(plan: RunPlan): string[] {
   }
   if (plan.workers > 1) args.push("-w", String(plan.workers));
   if (plan.delaySec > 0) args.push("--delay", String(plan.delaySec));
-  if (plan.reEnableFree) {
+  if (plan.reverifyEmail) {
+    args.push("--reverify-email");
+    if (plan.accountsFile) args.push("--accounts-file", plan.accountsFile);
+  } else if (plan.reEnableFree) {
     args.push("--re-enable-free");
     if (plan.accountsFile) args.push("--accounts-file", plan.accountsFile);
   } else {
@@ -315,7 +319,7 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
   const isTempMail =
     plan.app === "groqcloud" ||
     ((plan.app === "tokenharbor" || plan.app === "fastrouter" || plan.app === "llm7io") && plan.authMethod !== "google");
-  if (!isTempMail && seeds.accounts === 0) {
+  if (!isTempMail && !plan.reEnableFree && !plan.reverifyEmail && seeds.accounts === 0) {
     out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
   }
   if (plan.authMethod === "google") {

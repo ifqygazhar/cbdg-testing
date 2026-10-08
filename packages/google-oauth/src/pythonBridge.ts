@@ -52,6 +52,7 @@ export interface PythonRunnerOptions {
   auth?: string;
   password?: string;
   reEnableFree?: boolean;
+  reverifyEmail?: boolean;
   extraArgs?: string[];
 }
 
@@ -119,6 +120,7 @@ export function spawnPythonRunner(runnerPath: string, opts: PythonRunnerOptions)
   if (opts.auth) args.push("--auth", opts.auth);
   if (opts.password) args.push("--password", opts.password);
   if (opts.reEnableFree) args.push("--re-enable-free");
+  if (opts.reverifyEmail) args.push("--reverify-email");
   if (opts.extraArgs) args.push(...opts.extraArgs);
   if (opts.workers && opts.workers > 1) args.push("--workers", String(opts.workers));
 

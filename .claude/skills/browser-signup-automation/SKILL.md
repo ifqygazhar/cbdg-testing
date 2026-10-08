@@ -95,6 +95,15 @@ Hashed CSS classes (e.g. `.css-c4xhxe`, `.btn-v3-blue`) change with every platfo
 - **Never exit early in popup OAuth**: When an IdP flow opens in a popup window, `context.pages` holds both the parent app and the Google popup. The OAuth resolver must NEVER return the parent page while `accounts.google.com` remains in any open page URL. Only return once all Google pages have closed or redirected away.
 - **Scroll & DOM Click for Terms of Service**: In Google v3 signin speedbumps (`/speedbump/workspacetermsofservice`), the "I understand" button (`button[jsname="LgbsSe"]`) sits at the bottom of the scrollable terms container. Always trigger it using DOM `evaluate` with `scrollIntoView({ behavior: 'instant', block: 'center' })` and `.click()`, backed by Playwright locator click fallbacks across multiple languages (`I understand`, `Saya mengerti`, `I agree`, `Saya setuju`, `Accept`).
 
+### Rule 6: Proxy Rotation & Queue Deferral on Cloudflare Turnstile
+- **Abort Immediately on Flagged Proxy**: Dirty datacenter IPs trigger Cloudflare Turnstile challenges immediately. Solving Turnstile through Playwright/Camoufox on flagged IPs often hangs, loops, or burns Google accounts. If Turnstile is detected on a proxy, raise `TurnstileDetectedException` immediately.
+- **Queue Deferral (Process Other Accounts First)**: Discard/blacklist the bad proxy, push the current account to the back of the queue (`account_queue.append(account)`), and do NOT burn the account's attempt budget. Immediately proceed to the next account in the queue.
+- **Fresh Randomized Fingerprint per Attempt**: Ensure every launch draws a brand-new, randomized hardware and browser fingerprint (`randomize_fingerprint=True`, OS, screen window, and humanize speed).
+
+### Rule 7: Email Re-Verification & Activation Flow
+- **Segregate Pending Verifications**: When API key check returns HTTP 403 (`Verify your email address to use the API...`), do not classify it as dead/bad. Separate into `apikey-need-verif-<app>.txt` and `akun-need-verif-<app>.txt`.
+- **Re-Verification Runner Mode**: Implement `--reverify-email` in the runner. The flow must support logging in via Google OAuth (if GSuite account) or password form (if TempMail), clicking the verification/resend button on the dashboard, polling Gmail / TempMail for the link, visiting the link, and confirming HTTP 200 API status before moving the account to `akun-good-<app>.txt`.
+
 ---
 
 ## 5. Integrating New Apps into the Master Runner

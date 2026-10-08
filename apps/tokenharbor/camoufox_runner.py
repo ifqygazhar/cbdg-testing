@@ -43,6 +43,28 @@ from packages.camoufox_core import (
     resolve_turnstile_if_present,
     perform_google_oauth,
 )
+from packages.camoufox_core.turnstile import find_turnstile_target
+
+class TurnstileDetectedException(Exception):
+    """Raised when Cloudflare Turnstile captcha is detected when using proxy."""
+    pass
+
+async def is_turnstile_detected(page) -> bool:
+    """Checks if Cloudflare Turnstile widget or challenge iframe is currently present."""
+    try:
+        target = await find_turnstile_target(page)
+        if target:
+            return True
+        if await page.locator("iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile']").count() > 0:
+            return True
+        content = (await page.content() or "").lower()
+        if "challenges.cloudflare.com" in content and ("cf-turnstile" in content or "turnstile" in content):
+            return True
+        if "just a moment..." in content and "cloudflare" in content:
+            return True
+    except Exception:
+        pass
+    return False
 
 API_KEY_RE = re.compile(r"thk_(?:live_)?[A-Za-z0-9_\-]{20,}")
 VERIFY_LINK_RE = re.compile(r"https?://(?:www\.)?tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-\.%]+", re.IGNORECASE)
@@ -833,6 +855,11 @@ async def run_single_google_account(
             await dismiss_cookie_banner(page, logger=logger)
 
             if "/dashboard" not in page.url:
+                # Cek apakah landing page terblokir Turnstile (jika pakai proxy)
+                if proxy and await is_turnstile_detected(page):
+                    logger.warn(f"Cloudflare Turnstile captcha terdeteksi di landing page dengan proxy {proxy.server}! Langsung ganti proxy...")
+                    raise TurnstileDetectedException(f"Turnstile detected on landing via proxy {proxy.server}")
+
                 # ── 2. Click Continue with Google ──────────────────────────
                 store.upsert({"email": email, "status": FlowState.SIGNUP})
                 google_btn = await page.wait_for_selector(
@@ -854,16 +881,25 @@ async def run_single_google_account(
                     }""")
                 await human_delay(1500, 2500)
 
-                # Resolve Turnstile if presented before redirecting to Google
-                solved = await resolve_turnstile_if_present(page, timeout_sec=25, logger=logger)
-                if solved:
-                    await human_delay(1500, 2500)
-                    try:
-                        if "accounts.google.com" not in page.url and await page.locator('button:has-text("Continue with Google")').count() > 0:
-                            logger.info("Turnstile solved, ensuring SSO button clicked...")
-                            await page.locator('button:has-text("Continue with Google")').first.click(no_wait_after=True, timeout=5000)
-                    except Exception:
-                        pass
+                # Deteksi Turnstile saat proses SSO Google (jika pakai proxy langsung ganti proxy)
+                if proxy:
+                    for _ in range(8):
+                        if "accounts.google.com" in page.url or "/dashboard" in page.url:
+                            break
+                        if await is_turnstile_detected(page):
+                            logger.warn(f"Cloudflare Turnstile captcha terdeteksi saat Google SSO dengan proxy {proxy.server}! Langsung ganti proxy...")
+                            raise TurnstileDetectedException(f"Turnstile detected before Google OAuth via proxy {proxy.server}")
+                        await asyncio.sleep(0.5)
+                else:
+                    solved = await resolve_turnstile_if_present(page, timeout_sec=25, logger=logger)
+                    if solved:
+                        await human_delay(1500, 2500)
+                        try:
+                            if "accounts.google.com" not in page.url and await page.locator('button:has-text("Continue with Google")').count() > 0:
+                                logger.info("Turnstile solved, ensuring SSO button clicked...")
+                                await page.locator('button:has-text("Continue with Google")').first.click(no_wait_after=True, timeout=5000)
+                        except Exception:
+                            pass
 
                 # ── 3. Google OAuth Flow ───────────────────────────────────
                 post_auth_page = await perform_google_oauth(
@@ -877,8 +913,17 @@ async def run_single_google_account(
                 page = post_auth_page
                 await human_delay(2000, 3500)
 
-                # Resolve Turnstile if present on callback
-                await resolve_turnstile_if_present(page, timeout_sec=15, logger=logger)
+                # Deteksi Turnstile pada callback OAuth TokenHarbor
+                if proxy:
+                    for _ in range(8):
+                        if "/dashboard" in page.url:
+                            break
+                        if await is_turnstile_detected(page):
+                            logger.warn(f"Cloudflare Turnstile captcha terdeteksi di callback TokenHarbor dengan proxy {proxy.server}! Langsung ganti proxy...")
+                            raise TurnstileDetectedException(f"Turnstile detected on callback via proxy {proxy.server}")
+                        await asyncio.sleep(0.5)
+                else:
+                    await resolve_turnstile_if_present(page, timeout_sec=15, logger=logger)
 
                 # ── 4. Handle "One more step" / Finish and start chatting ───
                 await handle_finish_and_start_chatting(page, logger)
@@ -1000,6 +1045,9 @@ async def run_single_google_account(
             results.mark_success(email, password, api_key)
             return True
 
+    except TurnstileDetectedException as e:
+        logger.warn(f"Cloudflare Turnstile terdeteksi saat proses akun {email}: {e}. Membatalkan percobaan dan rotasi proxy...")
+        raise
     except Exception as e:
         logger.error(f"failed: {e}")
         status_to_record = FlowState.PENDING if not mark_failed_on_error else FlowState.FAILED
@@ -1277,24 +1325,96 @@ class ReenableStore:
         self.good_key_file = good_key_file
         self.lock = asyncio.Lock()
 
+    def _build_lookup_maps(self) -> Tuple[Dict[str, Tuple[str, str]], Dict[str, str]]:
+        key_to_account: Dict[str, Tuple[str, str]] = {}
+        email_to_password: Dict[str, str] = {}
+
+        # 1. Gsuite files
+        for gpath in ["tokenharbor-dataset/gsuite.txt", "gsuite.txt"]:
+            if os.path.exists(gpath):
+                try:
+                    for acc in load_accounts(gpath):
+                        email_to_password[acc.email.lower()] = acc.password
+                except Exception:
+                    pass
+
+        # 2. Result & status files
+        for rpath in [
+            "akun-result-tokenharbor.txt",
+            "akun-good-tokenharbor.txt",
+            "akun-need-verif-tokenharbor.txt",
+            "akun-bad-tokenharbor.txt",
+        ]:
+            if os.path.exists(rpath):
+                try:
+                    with open(rpath, "r", encoding="utf-8") as f:
+                        for line in f:
+                            raw = line.strip()
+                            if not raw or raw.startswith("#"):
+                                continue
+                            parts = raw.split(":")
+                            if len(parts) >= 3:
+                                em = parts[0].strip()
+                                k = parts[-1].strip()
+                                pw = ":".join(parts[1:-1]).strip()
+                                if k.startswith("thk_") or len(k) >= 25:
+                                    key_to_account[k] = (em, pw)
+                                    email_to_password[em.lower()] = pw
+                except Exception:
+                    pass
+
+        # 3. State JSONL
+        for spath in ["state.jsonl", "state-tokenharbor.jsonl"]:
+            if os.path.exists(spath):
+                try:
+                    with open(spath, "r", encoding="utf-8") as f:
+                        for line in f:
+                            try:
+                                obj = json.loads(line)
+                                em = obj.get("email")
+                                pw = obj.get("password")
+                                k = obj.get("apiKey")
+                                if em and pw:
+                                    email_to_password[em.lower()] = pw
+                                if k and em:
+                                    key_to_account[k] = (em, pw or email_to_password.get(em.lower(), ""))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+        return key_to_account, email_to_password
+
     def load_accounts(self) -> List[Tuple[str, str, Optional[str], str]]:
         """
         Loads accounts from bad_file.
+        Supports:
+          - email:password:apiKey
+          - email:password
+          - plain apiKey (looks up email & password automatically)
         Returns list of (email, password, api_key, raw_line).
         """
         if not os.path.exists(self.bad_file):
             return []
+
+        key_to_account, email_to_password = self._build_lookup_maps()
         accounts = []
         seen = set()
+
         with open(self.bad_file, "r", encoding="utf-8") as f:
             for line in f:
                 raw = line.strip()
                 if not raw or raw.startswith("#"):
                     continue
                 parts = raw.split(":")
+
+                email = ""
+                password = ""
+                api_key = None
+
                 if len(parts) >= 3:
                     email = parts[0].strip()
-                    if parts[-1].strip().startswith("thk_") or len(parts[-1].strip()) >= 30:
+                    if parts[-1].strip().startswith("thk_") or len(parts[-1].strip()) >= 25:
                         api_key = parts[-1].strip()
                         password = ":".join(parts[1:-1]).strip()
                     else:
@@ -1303,14 +1423,59 @@ class ReenableStore:
                 elif len(parts) == 2:
                     email = parts[0].strip()
                     password = parts[1].strip()
-                    api_key = None
+                    for k, (em, _) in key_to_account.items():
+                        if em.lower() == email.lower():
+                            api_key = k
+                            break
+                elif len(parts) == 1 and (parts[0].startswith("thk_") or len(parts[0]) >= 25):
+                    k = parts[0].strip()
+                    api_key = k
+                    if k in key_to_account:
+                        email, password = key_to_account[k]
+                    else:
+                        continue
                 else:
                     continue
+
+                if not email:
+                    continue
+
+                if not password and email.lower() in email_to_password:
+                    password = email_to_password[email.lower()]
+
+                if not password:
+                    password = os.getenv("TOKENHARBOR_PASSWORD", "torabikA1###########")
 
                 if email.lower() not in seen:
                     seen.add(email.lower())
                     accounts.append((email, password, api_key, raw))
+
         return accounts
+
+    def _remove_from_file(self, filepath: str, email: str, api_key: Optional[str] = None):
+        if not os.path.exists(filepath):
+            return
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            remaining_lines = []
+            em_lower = email.lower().strip()
+            key_str = (api_key or "").strip()
+            for l in lines:
+                raw = l.strip()
+                if not raw or raw.startswith("#"):
+                    remaining_lines.append(l)
+                    continue
+                parts = raw.split(":")
+                if parts and parts[0].strip().lower() == em_lower:
+                    continue
+                if key_str and (key_str in raw or raw == key_str):
+                    continue
+                remaining_lines.append(l)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.writelines(remaining_lines)
+        except Exception:
+            pass
 
     async def mark_success(self, email: str, password: str, api_key: str):
         async with self.lock:
@@ -1339,22 +1504,16 @@ class ReenableStore:
                 with open(self.good_key_file, "a", encoding="utf-8") as f:
                     f.write(f"{api_key}\n")
 
-            # 3. Remove from bad_file
-            if os.path.exists(self.bad_file):
-                with open(self.bad_file, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                remaining_lines = []
-                for l in lines:
-                    raw = l.strip()
-                    if not raw or raw.startswith("#"):
-                        remaining_lines.append(l)
-                        continue
-                    parts = raw.split(":")
-                    if parts and parts[0].lower().strip() == email.lower():
-                        continue  # remove this account
-                    remaining_lines.append(l)
-                with open(self.bad_file, "w", encoding="utf-8") as f:
-                    f.writelines(remaining_lines)
+            # 3. Clean up from bad and need-verif files
+            cleanup_files = {
+                self.bad_file,
+                "apikey-need-verif-tokenharbor.txt",
+                "akun-need-verif-tokenharbor.txt",
+                "akun-bad-tokenharbor.txt",
+            }
+            for target_path in cleanup_files:
+                if target_path:
+                    self._remove_from_file(target_path, email, api_key)
 
 async def run_single_reenable_account(
     email: str,
@@ -1367,6 +1526,9 @@ async def run_single_reenable_account(
     screenshot_dir: str,
     logger,
     pace: str = "human",
+    gsuite_accounts: Optional[Dict[str, Account]] = None,
+    temp_mail: Optional[TempMailClient] = None,
+    reverify_mode: bool = False,
 ) -> Tuple[bool, Optional[str]]:
     # Step 1: Pre-check via API if api_key already present (instant, no browser needed)
     if api_key:
@@ -1377,7 +1539,7 @@ async def run_single_reenable_account(
             store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "reenabled": True})
             return True, api_key
         else:
-            logger.info(f"Pre-check API key {email} -> HTTP {status} ({msg}). Melanjutkan proses login browser...")
+            logger.info(f"Pre-check API key {email} -> HTTP {status} ({msg}). Melanjutkan proses browser...")
 
     os.makedirs(screenshot_dir, exist_ok=True)
     delay_mult = 1.4 if pace == "careful" else (0.85 if pace == "fast" else 1.0)
@@ -1400,77 +1562,152 @@ async def run_single_reenable_account(
             if fp:
                 logger.info(f"🛡️ Camoufox Fingerprint: OS={fp.get('platform')} | Screen={fp.get('screen')} | Viewport={fp.get('viewport')} | Cores={fp.get('cores')} | UA={fp.get('ua')}")
 
-            # 1. Navigasi ke https://tokenharbor.ai/login
-            logger.info(f"navigating to {DEFAULT_LOGIN_URL}")
-            await page.goto(DEFAULT_LOGIN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
-            await human_delay(int(1500 * delay_mult), int(2500 * delay_mult))
-            await recover_if_something_snapped(page, target_url=DEFAULT_LOGIN_URL, logger=logger)
-            await dismiss_cookie_banner(page, logger=logger)
+            gsuite_acc = gsuite_accounts.get(email.lower()) if gsuite_accounts else None
+            is_google = (
+                gsuite_acc is not None
+                or any(email.lower().endswith(dom) for dom in ["@rurasa.my.id", "@gmail.com", "@googlemail.com"])
+            )
 
-            # Jika belum di /dashboard, lakukan form login
-            if "/dashboard" not in page.url:
-                login_tab = await page.query_selector('button[data-analytics="login-tab-signin"], button:has-text("Sign in")')
-                if login_tab:
+            # ── 1. Login flow ──────────────────────────────────────────────
+            if is_google:
+                logger.info(f"navigating to {DEFAULT_LOGIN_URL} for Google OAuth login ({email})...")
+                await page.goto(DEFAULT_LOGIN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                await human_delay(int(1500 * delay_mult), int(2500 * delay_mult))
+                await recover_if_something_snapped(page, target_url=DEFAULT_LOGIN_URL, logger=logger)
+                await dismiss_cookie_banner(page, logger=logger)
+
+                if "/dashboard" not in page.url:
+                    if proxy and await is_turnstile_detected(page):
+                        logger.warn(f"Cloudflare Turnstile terdeteksi di landing page dengan proxy {proxy.server}! Langsung ganti proxy...")
+                        raise TurnstileDetectedException(f"Turnstile detected on landing via proxy {proxy.server}")
+
+                    google_btn = await page.wait_for_selector(
+                        'button:has-text("Continue with Google"), button[aria-label="Continue with Google"]',
+                        timeout=30000 if proxy else 20000,
+                    )
+                    if not google_btn:
+                        raise RuntimeError("Button 'Continue with Google' tidak ditemukan di halaman login")
+
+                    logger.info("clicking 'Continue with Google'...")
                     try:
-                        await login_tab.click()
-                        await human_delay(300, 600)
+                        await google_btn.click(no_wait_after=True, timeout=15000)
                     except Exception:
-                        pass
-
-                # Input email
-                email_input = await page.wait_for_selector('input[name="email"], input[type="email"]', timeout=25000)
-                if not email_input:
-                    raise RuntimeError("Field email tidak ditemukan di halaman login")
-                await email_input.fill("")
-                await human_type(page, 'input[name="email"], input[type="email"]', email, min_delay_ms=int(45 * delay_mult), max_delay_ms=int(110 * delay_mult))
-                await human_delay(400, 800)
-
-                # Input password
-                pwd_input = await page.wait_for_selector('input[name="password"], input[type="password"]', timeout=15000)
-                if not pwd_input:
-                    raise RuntimeError("Field password tidak ditemukan di halaman login")
-                await pwd_input.fill("")
-                await human_type(page, 'input[name="password"], input[type="password"]', password, min_delay_ms=int(50 * delay_mult), max_delay_ms=int(115 * delay_mult))
-                await human_delay(600, 1200)
-
-                # Turnstile
-                await resolve_turnstile_if_present(page, timeout_sec=10)
-
-                # Tombol Sign in
-                signin_btn = await page.wait_for_selector(
-                    'button[type="submit"][data-analytics="login-signin"], button[data-analytics="login-signin"], button[type="submit"]:has-text("Sign in")',
-                    timeout=15000,
-                )
-                if not signin_btn:
-                    raise RuntimeError("Tombol submit Sign in tidak ditemukan")
-
-                logger.info("clicking 'Sign in' button...")
-                try:
-                    await signin_btn.click(timeout=10000)
-                except Exception:
-                    await signin_btn.click(force=True, timeout=5000)
-
-                # Tunggu redirect ke /dashboard
-                logger.info("waiting for navigation to /dashboard...")
-                redirected = False
-                for _ in range(25):
-                    if "/dashboard" in page.url:
-                        redirected = True
-                        break
-                    err = await page.evaluate("""() => {
-                        const el = document.querySelector('[role="alert"], .alert-danger, .text-danger, .text-red-500, .text-rose-500');
-                        return el ? el.textContent : null;
-                    }""")
-                    if err and any(w in err.lower() for w in ["invalid", "incorrect", "not found", "banned", "disabled"]):
-                        raise RuntimeError(f"Login ditolak oleh TokenHarbor: {err.strip()}")
-                    await asyncio.sleep(1)
-
-                if not redirected and "/dashboard" not in page.url:
-                    logger.info("attempting manual navigation to /dashboard...")
-                    await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                        await page.evaluate("""() => {
+                            const btn = document.querySelector('button[aria-label="Continue with Google"]') ||
+                                        Array.from(document.querySelectorAll('button')).find(b => (b.textContent || '').includes('Continue with Google'));
+                            if (btn) btn.click();
+                        }""")
                     await human_delay(1500, 2500)
 
-            # 2. Tangani modal dan toggle Enable free models di /dashboard
+                    if proxy:
+                        for _ in range(8):
+                            if "accounts.google.com" in page.url or "/dashboard" in page.url:
+                                break
+                            if await is_turnstile_detected(page):
+                                logger.warn(f"Turnstile terdeteksi saat SSO Google dengan proxy {proxy.server}! Langsung ganti proxy...")
+                                raise TurnstileDetectedException(f"Turnstile detected before Google OAuth via proxy {proxy.server}")
+                            await asyncio.sleep(0.5)
+                    else:
+                        await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
+
+                    recovery_email = gsuite_acc.recovery_email if gsuite_acc else None
+                    post_auth_page = await perform_google_oauth(
+                        page=page,
+                        email=email,
+                        password=password,
+                        recovery_email=recovery_email,
+                        timeout_sec=120 if proxy else 75,
+                        logger=logger,
+                    )
+                    page = post_auth_page
+                    await human_delay(2000, 3500)
+
+                    if proxy:
+                        for _ in range(8):
+                            if "/dashboard" in page.url:
+                                break
+                            if await is_turnstile_detected(page):
+                                logger.warn(f"Turnstile terdeteksi di callback dengan proxy {proxy.server}! Langsung ganti proxy...")
+                                raise TurnstileDetectedException(f"Turnstile detected on callback via proxy {proxy.server}")
+                            await asyncio.sleep(0.5)
+                    else:
+                        await resolve_turnstile_if_present(page, timeout_sec=15, logger=logger)
+
+                    await handle_finish_and_start_chatting(page, logger)
+
+            else:
+                logger.info(f"navigating to {DEFAULT_LOGIN_URL} for credentials form login ({email})...")
+                await page.goto(DEFAULT_LOGIN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                await human_delay(int(1500 * delay_mult), int(2500 * delay_mult))
+                await recover_if_something_snapped(page, target_url=DEFAULT_LOGIN_URL, logger=logger)
+                await dismiss_cookie_banner(page, logger=logger)
+
+                if "/dashboard" not in page.url:
+                    login_tab = await page.query_selector('button[data-analytics="login-tab-signin"], button:has-text("Sign in")')
+                    if login_tab:
+                        try:
+                            await login_tab.click()
+                            await human_delay(300, 600)
+                        except Exception:
+                            pass
+
+                    # Input email
+                    email_input = await page.wait_for_selector('input[name="email"], input[type="email"]', timeout=25000)
+                    if not email_input:
+                        raise RuntimeError("Field email tidak ditemukan di halaman login")
+                    await email_input.fill("")
+                    await human_type(page, 'input[name="email"], input[type="email"]', email, min_delay_ms=int(45 * delay_mult), max_delay_ms=int(110 * delay_mult))
+                    await human_delay(400, 800)
+
+                    # Input password
+                    pwd_input = await page.wait_for_selector('input[name="password"], input[type="password"]', timeout=15000)
+                    if not pwd_input:
+                        raise RuntimeError("Field password tidak ditemukan di halaman login")
+                    await pwd_input.fill("")
+                    await human_type(page, 'input[name="password"], input[type="password"]', password, min_delay_ms=int(50 * delay_mult), max_delay_ms=int(115 * delay_mult))
+                    await human_delay(600, 1200)
+
+                    if proxy and await is_turnstile_detected(page):
+                        logger.warn(f"Turnstile terdeteksi di login form dengan proxy {proxy.server}! Langsung ganti proxy...")
+                        raise TurnstileDetectedException(f"Turnstile detected on login form via proxy {proxy.server}")
+                    else:
+                        await resolve_turnstile_if_present(page, timeout_sec=10)
+
+                    # Tombol Sign in
+                    signin_btn = await page.wait_for_selector(
+                        'button[type="submit"][data-analytics="login-signin"], button[data-analytics="login-signin"], button[type="submit"]:has-text("Sign in")',
+                        timeout=15000,
+                    )
+                    if not signin_btn:
+                        raise RuntimeError("Tombol submit Sign in tidak ditemukan")
+
+                    logger.info("clicking 'Sign in' button...")
+                    try:
+                        await signin_btn.click(timeout=10000)
+                    except Exception:
+                        await signin_btn.click(force=True, timeout=5000)
+
+                    # Tunggu redirect ke /dashboard
+                    logger.info("waiting for navigation to /dashboard...")
+                    redirected = False
+                    for _ in range(25):
+                        if "/dashboard" in page.url:
+                            redirected = True
+                            break
+                        err = await page.evaluate("""() => {
+                            const el = document.querySelector('[role="alert"], .alert-danger, .text-danger, .text-red-500, .text-rose-500');
+                            return el ? el.textContent : null;
+                        }""")
+                        if err and any(w in err.lower() for w in ["invalid", "incorrect", "not found", "banned", "disabled"]):
+                            raise RuntimeError(f"Login ditolak oleh TokenHarbor: {err.strip()}")
+                        await asyncio.sleep(1)
+
+                    if not redirected and "/dashboard" not in page.url:
+                        logger.info("attempting manual navigation to /dashboard...")
+                        await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                        await human_delay(1500, 2500)
+
+            # ── 2. Tangani dashboard, modal free models, dan verifikasi email ─
             logger.info("waiting for dashboard content to finish loading...")
             try:
                 await page.wait_for_selector("text=LOADING", state="hidden", timeout=15000)
@@ -1480,49 +1717,81 @@ async def run_single_reenable_account(
 
             logger.info("checking Enable free models consent modal on dashboard...")
             await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
-            await ensure_free_models_enabled(page, logger=logger, timeout_sec=10)
+            await ensure_free_models_enabled(page, logger=logger, timeout_sec=8)
             await dismiss_cookie_banner(page, logger=logger)
 
-            await human_delay(2000, 3000)
-
-            # Check if email verification is needed on dashboard
+            # Cek status perlunya verifikasi email
             needs_verif = await page.evaluate("""() => {
                 const text = document.body.innerText || '';
-                return text.includes("Verify your email") || text.includes("Send verification email");
+                return text.includes("Verify your email") ||
+                       text.includes("Send verification email") ||
+                       text.includes("confirmation link") ||
+                       text.includes("resend email");
             }""")
-            if needs_verif:
-                logger.info("Email verification banner detected on dashboard during re-enable...")
-                try:
-                    verify_btn = await page.query_selector(
-                        'button.btn-float-primary:has-text("Verify email"), button:has-text("Verify email"), button:has-text("Send verification email"), button:has-text("Resend email")'
+
+            if needs_verif or reverify_mode:
+                logger.info(f"Proses verifikasi email untuk {email}...")
+                verify_clicked = False
+                for _ in range(5):
+                    try:
+                        await handle_enable_free_models_modal(page, logger=logger, timeout_sec=1)
+                        await dismiss_cookie_banner(page)
+
+                        verify_btn = await page.query_selector(
+                            'button.btn-float-primary:has-text("Verify email"), button:has-text("Verify email"), button:has-text("Send verification email"), button:has-text("Resend email")'
+                        )
+                        if verify_btn and await verify_btn.is_enabled():
+                            btn_txt = (await verify_btn.text_content() or "").strip()
+                            if "email sent" not in btn_txt.lower():
+                                logger.info(f"clicking '{btn_txt}' button to dispatch verification email...")
+                                try:
+                                    await verify_btn.click(timeout=3000)
+                                except Exception:
+                                    await verify_btn.click(force=True, timeout=2000)
+                                verify_clicked = True
+                                await human_delay(2000, 3500)
+                                break
+                            else:
+                                logger.info("Tombol verifikasi email sudah dalam status 'Email sent'.")
+                                verify_clicked = True
+                                break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1)
+
+                await human_delay(2000, 3500)
+
+                v_url = None
+                if is_google:
+                    v_url = await retrieve_verification_link_from_gmail(context, email, logger, timeout_sec=90 if proxy else 60)
+                elif temp_mail:
+                    v_url = await temp_mail.wait_for_verification_link(
+                        address=email,
+                        timeout_sec=75,
+                        interval_sec=2.5,
+                        filter_sender="tokenharbor",
+                        link_pattern=VERIFY_LINK_RE,
                     )
-                    if verify_btn:
-                        try:
-                            await verify_btn.click(timeout=3000)
-                        except Exception:
-                            await verify_btn.click(force=True, timeout=2000)
-                        await human_delay(2000, 3000)
 
-                    v_url = await retrieve_verification_link_from_gmail(context, email, logger, timeout_sec=60)
-                    if v_url:
-                        logger.info(f"navigating to verification URL: {v_url}...")
-                        await page.goto(v_url, wait_until="domcontentloaded", timeout=timeout_ms)
-                        await human_delay(2500, 4000)
-                        await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout_ms)
-                        await human_delay(1500, 2500)
-                except Exception as e:
-                    logger.warn(f"Note during email verification in re-enable: {e}")
+                if v_url:
+                    logger.info(f"navigating to verification URL: {v_url}...")
+                    await page.goto(v_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    await human_delay(2500, 4000)
+                    await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                    await human_delay(1500, 2500)
+                else:
+                    logger.warn("Verification URL tidak dapat diambil dari inbox/gmail.")
 
-            # 3. Post-check API key
+            # ── 3. Post-check & pembuatan API key jika perlu ───────────────
             active_key = api_key
             is_valid = False
             if active_key:
                 is_valid, status, msg = verify_tokenharbor_key_api(active_key, timeout_sec=8.0)
                 if is_valid:
-                    logger.info(f"API key lama ({active_key[:12]}...) BERHASIL DIAKTIFKAN KEMBALI! Live API HTTP 200 OK.")
+                    logger.info(f"API key ({active_key[:12]}...) BERHASIL TERVERIFIKASI & AKTIF! Live API HTTP 200 OK.")
 
             if not is_valid:
-                logger.info("API key lama masih belum aktif atau belum ada, membuat API key baru di dashboard/api-keys...")
+                logger.info("API key belum aktif atau belum ada, membuat/mengambil API key baru di dashboard...")
                 try:
                     new_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
                     if new_key:
@@ -1541,10 +1810,13 @@ async def run_single_reenable_account(
                 store.upsert({"email": email, "status": FlowState.DONE, "apiKey": active_key, "reenabled": True})
                 return True, active_key
             else:
-                raise RuntimeError(f"Gagal mengaktifkan free models untuk {email} (API check failed)")
+                raise RuntimeError(f"Gagal memverifikasi/mengaktifkan akun {email} (API check HTTP {status}: {msg})")
 
+    except TurnstileDetectedException as e:
+        logger.warn(f"Cloudflare Turnstile terdeteksi saat re-enable/re-verify akun {email}: {e}")
+        raise
     except Exception as e:
-        logger.error(f"failed re-enabling free models for {email}: {e}")
+        logger.error(f"failed re-enabling/re-verifying for {email}: {e}")
         store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e), "reenable_attempt": True})
         return False, None
 
@@ -1607,6 +1879,7 @@ async def main_async():
     parser.add_argument("--proxy-timeout", type=float, default=float(os.getenv("PROXY_PRECHECK_TIMEOUT", "6.0")), help="Timeout in seconds for proxy TokenHarbor HTTP 200 pre-check (default: 6.0s)")
     parser.add_argument("--skip-proxy-precheck", action="store_true", default=os.getenv("SKIP_PROXY_PRECHECK", "0") in ("1", "true", "yes"), help="Skip proxy pre-check before browser launch")
     parser.add_argument("--re-enable-free", action="store_true", help="Re-enable free models for accounts in akun-bad-tokenharbor.txt")
+    parser.add_argument("--reverify-email", action="store_true", help="Re-verify email for accounts/keys in apikey-need-verif-tokenharbor.txt")
     args = parser.parse_args()
 
     # Resolve proxies file
@@ -1635,11 +1908,25 @@ async def main_async():
     logger = create_logger()
     logger.info(f"TokenHarbor Camoufox runner started (auth={args.auth}, pace={args.pace}, workers={args.workers}). Proxies loaded: {len(proxies)} (proxy_mode={'no-proxy' if args.no_proxy or not proxies else 'active'})")
 
-    # ── RE-ENABLE FREE MODELS FLOW ──────────────────────────────────────────
-    if args.re_enable_free:
-        bad_file = args.accounts_file if args.accounts_file else "akun-bad-tokenharbor.txt"
+    # ── RE-ENABLE / RE-VERIFY FLOW ──────────────────────────────────────────
+    if args.re_enable_free or args.reverify_email:
+        is_reverify = args.reverify_email
+        mode_label = "Re-verifikasi Email" if is_reverify else "Re-enable Free Models"
+
+        if args.accounts_file:
+            bad_file = args.accounts_file
+        elif is_reverify:
+            if os.path.exists("apikey-need-verif-tokenharbor.txt"):
+                bad_file = "apikey-need-verif-tokenharbor.txt"
+            elif os.path.exists("akun-need-verif-tokenharbor.txt"):
+                bad_file = "akun-need-verif-tokenharbor.txt"
+            else:
+                bad_file = "apikey-need-verif-tokenharbor.txt"
+        else:
+            bad_file = "akun-bad-tokenharbor.txt"
+
         if not os.path.exists(bad_file):
-            logger.error(f"File {bad_file} tidak ditemukan. Tidak ada akun untuk di-re-enable!")
+            logger.error(f"File {bad_file} tidak ditemukan. Tidak ada akun untuk di-{mode_label.lower()}!")
             return
 
         reenable_store = ReenableStore(
@@ -1649,20 +1936,30 @@ async def main_async():
         )
         todo_accounts = reenable_store.load_accounts()
         if not todo_accounts:
-            logger.info(f"Tidak ada akun tersisa di {bad_file}. Semua akun sudah berhasil!")
+            logger.info(f"Tidak ada akun tersisa di {bad_file}. Semua akun sudah berhasil atau file kosong!")
             return
 
         target_count = min(args.limit, len(todo_accounts)) if args.limit > 0 else len(todo_accounts)
         worker_count = max(1, min(args.workers, target_count))
         logger.info(
-            f"TokenHarbor Re-enable Free Models started: {len(todo_accounts)} akun di {bad_file}, "
+            f"TokenHarbor {mode_label} started: {len(todo_accounts)} akun di {bad_file}, "
             f"target: {target_count}, workers: {worker_count}, proxy: {'direct' if args.no_proxy or not proxies else len(proxies)}"
         )
 
         if args.dry_run:
-            logger.info(f"dry-run: Akun yang akan di-re-enable: {[a[0] for a in todo_accounts[:target_count]]}")
+            logger.info(f"dry-run: Akun yang akan diproses: {[a[0] for a in todo_accounts[:target_count]]}")
             return
 
+        gsuite_accounts: Dict[str, Account] = {}
+        for gpath in ["tokenharbor-dataset/gsuite.txt", "gsuite.txt"]:
+            if os.path.exists(gpath):
+                try:
+                    for a in load_accounts(gpath):
+                        gsuite_accounts[a.email.lower()] = a
+                except Exception:
+                    pass
+
+        temp_mail = TempMailClient(default_domain=args.domain)
         account_queue = deque(todo_accounts[:target_count])
         processed = 0
         success_count = 0
@@ -1693,18 +1990,28 @@ async def main_async():
                         logger.warn(f"Worker #{worker_id}: All proxies ({len(proxies)}) have been exhausted or blacklisted.")
                         break
 
-                ok, active_key = await run_single_reenable_account(
-                    email=email,
-                    password=password,
-                    api_key=api_key,
-                    proxy=proxy,
-                    reenable_store=reenable_store,
-                    store=store,
-                    headed=args.headed,
-                    screenshot_dir=args.screenshot_dir,
-                    logger=acc_logger,
-                    pace=args.pace,
-                )
+                turnstile_detected = False
+                try:
+                    ok, active_key = await run_single_reenable_account(
+                        email=email,
+                        password=password,
+                        api_key=api_key,
+                        proxy=proxy,
+                        reenable_store=reenable_store,
+                        store=store,
+                        headed=args.headed,
+                        screenshot_dir=args.screenshot_dir,
+                        logger=acc_logger,
+                        pace=args.pace,
+                        gsuite_accounts=gsuite_accounts,
+                        temp_mail=temp_mail,
+                        reverify_mode=is_reverify,
+                    )
+                except TurnstileDetectedException as te:
+                    ok = False
+                    active_key = None
+                    turnstile_detected = True
+                    acc_logger.warn(f"Cloudflare Turnstile terdeteksi saat {mode_label} dengan proxy: {te}")
 
                 async with lock:
                     if proxy_pool and proxy:
@@ -1712,15 +2019,22 @@ async def main_async():
                             proxy_pool.mark_result(proxy, success=True)
                         else:
                             proxy_pool.mark_result(proxy, success=False)
+                            if turnstile_detected:
+                                logger.warn(f"Worker #{worker_id}: Proxy {proxy.server} terblokir Turnstile! Dibuang dari pool dan di-blacklist.")
 
                     if ok:
                         success_count += 1
-                        logger.info(f"Progress Re-enable: {success_count}/{target_count} akun sukses ({processed}/{target_count} diproses)")
+                        logger.info(f"Progress {mode_label}: {success_count}/{target_count} akun sukses ({processed}/{target_count} diproses)")
+                    elif turnstile_detected:
+                        logger.info(f"Worker #{worker_id}: Turnstile pada proxy untuk {email}. Menunda akun ke akhir antrean...")
+                        account_queue.append(item)
 
                 if success_count < target_count and account_queue:
                     if ok and args.delay > 0:
                         logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
                         await asyncio.sleep(args.delay)
+                    elif turnstile_detected:
+                        await asyncio.sleep(0.5)
                     elif not ok:
                         await asyncio.sleep(1.5)
 
@@ -1729,7 +2043,7 @@ async def main_async():
         else:
             await reenable_worker(1)
 
-        logger.info(f"TokenHarbor Re-enable Free Models selesai: {success_count}/{target_count} target akun berhasil diaktifkan ({processed} total diproses).")
+        logger.info(f"TokenHarbor {mode_label} selesai: {success_count}/{target_count} target akun berhasil diproses ({processed} total diproses).")
         return
 
     # ── GOOGLE OAUTH FLOW ───────────────────────────────────────────────────
@@ -1856,17 +2170,23 @@ async def main_async():
                     and proxy_pool.has_proxies
                     and attempts_per_account[account.email] < MAX_PROXY_ATTEMPTS - 1
                 )
-                ok = await run_single_google_account(
-                    account=account,
-                    proxy=proxy,
-                    store=store,
-                    results=results,
-                    headed=args.headed,
-                    screenshot_dir=args.screenshot_dir,
-                    logger=acc_logger,
-                    pace=args.pace,
-                    mark_failed_on_error=(not will_retry_if_failed),
-                )
+                turnstile_detected = False
+                try:
+                    ok = await run_single_google_account(
+                        account=account,
+                        proxy=proxy,
+                        store=store,
+                        results=results,
+                        headed=args.headed,
+                        screenshot_dir=args.screenshot_dir,
+                        logger=acc_logger,
+                        pace=args.pace,
+                        mark_failed_on_error=(not will_retry_if_failed),
+                    )
+                except TurnstileDetectedException as te:
+                    ok = False
+                    turnstile_detected = True
+                    acc_logger.warn(f"Cloudflare Turnstile terdeteksi: {te}")
 
                 async with lock:
                     in_flight -= 1
@@ -1876,11 +2196,23 @@ async def main_async():
                             logger.info(f"Worker #{worker_id}: Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
                         else:
                             proxy_pool.mark_result(proxy, success=False)
-                            logger.warn(f"Worker #{worker_id}: Proxy {proxy.server} failed/rejected. Discarded and will not be reused.")
+                            if turnstile_detected:
+                                logger.warn(f"Worker #{worker_id}: Proxy {proxy.server} terblokir Turnstile! Dibuang dari pool dan di-blacklist.")
+                            else:
+                                logger.warn(f"Worker #{worker_id}: Proxy {proxy.server} failed/rejected. Discarded and will not be reused.")
 
                     if ok:
                         success_count += 1
                         logger.info(f"Progress: {success_count}/{target_count} accounts completed successfully.")
+                    elif turnstile_detected:
+                        # Turnstile captcha detected on proxy:
+                        # Jangan kurangi jatah attempt akun, jangan tandai gagal!
+                        # Geser akun ke paling belakang antrean agar proses lanjut ke akun lain dulu.
+                        logger.info(
+                            f"Worker #{worker_id}: Cloudflare Turnstile terdeteksi pada proxy untuk {account.email}. "
+                            f"Menunda akun ini ke akhir antrean agar lanjut memproses akun lain terlebih dahulu..."
+                        )
+                        account_queue.append(account)
                     else:
                         attempts_per_account[account.email] += 1
                         current_att = attempts_per_account[account.email]
@@ -1905,6 +2237,9 @@ async def main_async():
                     if ok and args.delay > 0:
                         logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
                         await asyncio.sleep(args.delay)
+                    elif turnstile_detected:
+                        # Rotasi cepat ke akun lain
+                        await asyncio.sleep(0.5)
                     elif not ok:
                         logger.info(f"Worker #{worker_id} switching immediately to next proxy / account...")
                         await asyncio.sleep(1.5)
