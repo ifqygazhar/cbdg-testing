@@ -226,13 +226,66 @@ async with browser_ctx as browser:
 
 ---
 
-## GSuite / Workspace Terms of Service Speedbump
+## GSuite / Workspace Terms of Service Speedbump & OAuth Popup Premature Return
 
-**Symptom.** During Google OAuth, the page stops on `https://accounts.google.com/speedbump/workspacetermsofservice` with title "Selamat datang di akun baru Anda" / "Welcome to your new account", and never redirects back to the application.
+**Symptom.** During Google OAuth (especially on freshly provisioned GSuite/Google Workspace accounts), the browser hangs on `https://accounts.google.com/v3/signin/speedbump/workspacetermsofservice` displaying "Selamat datang di akun baru Anda" / "Welcome to your new account" and a blue "I understand" / "Saya mengerti" button at the bottom right. The runner logs "waiting for dashboard to mount" and eventually crashes with timeout while the popup is visibly stuck.
 
-**Cause.** Freshly provisioned Google Workspace / GSuite enterprise accounts mandate accepting the organization's domain policy on first login.
+**Root Causes:**
+1. **The Popup Premature Return Bug**:
+   When an application opens Google OAuth in a popup window, `context.pages` contains both the parent app tab (`dash.app.io`) and the Google OAuth popup (`accounts.google.com`). If the loop checks `for p in context.pages: if not is_google(p.url): return p` without first verifying that **no active pages remain on `accounts.google.com`**, the runner immediately returns the parent tab on loop iteration 1. The caller thinks OAuth is complete and starts polling for the dashboard, while the Google popup is left stranded at the speedbump screen without ever executing the click handler!
+2. **Google v3 Material Layout & Scroll Requirement**:
+   Google v3 signin renders "I understand" (`button[jsname="LgbsSe"]`) at the bottom of a scrollable terms card. Standard Playwright `query_selector.click()` can fail or be considered unclickable if the button is below the viewport or obscured by overflow styling.
 
-**Fix.** In `packages/camoufox_core/google_oauth.py`, check for `speedbump/workspacetermsofservice` and automatically click `button:has-text("I understand")` / `button:has-text("Saya mengerti")`.
+**Fix & Standard Implementation:**
+1. **Popup Lifetime Rule**:
+   NEVER return the parent app page while ANY page in `context.pages` is still on `accounts.google.com`. Only return once all Google pages have closed or redirected away:
+   ```python
+   open_pages = [p for p in context.pages if not p.is_closed()]
+   google_pages = [p for p in open_pages if GOOGLE_AUTH_URL_RE.search(p.url)]
+
+   if not google_pages:
+       # OAuth finished (popup closed or redirected)
+       if not page.is_closed():
+           await page.bring_to_front()
+           return page
+       for p in open_pages:
+           if p.url != "about:blank":
+               return p
+       return target_page
+   ```
+2. **Robust Multi-Layer Speedbump Click**:
+   When URL matches `speedbump|termsofservice|tos|welcome`, use DOM `evaluate` with `scrollIntoView` + `.click()`, backed by Playwright `scroll_into_view_if_needed()` and `click(force=True)`:
+   ```python
+   is_speedbump = bool(re.search(r"speedbump|termsofservice|tos|welcome", current_url, re.I))
+   if is_speedbump:
+       clicked = await target_page.evaluate("""() => {
+           const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+           const needles = [
+               'i understand', 'saya mengerti', 'i agree', 'saya setuju',
+               'accept all', 'accept', 'terima', 'continue', 'lanjutkan',
+               'confirm', 'agree', 'entiendo', "j'ai compris", 'ich verstehe'
+           ];
+           const btns = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
+           for (const btn of btns) {
+               const txt = norm(btn.textContent || btn.value || btn.getAttribute('aria-label'));
+               if (needles.some(n => txt.includes(n))) {
+                   btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                   btn.focus();
+                   btn.click();
+                   return txt;
+               }
+           }
+           const lgbs = Array.from(document.querySelectorAll('button[jsname="LgbsSe"]')).filter(b => !b.disabled);
+           if (lgbs.length > 0) {
+               const btn = lgbs[lgbs.length - 1];
+               btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+               btn.focus();
+               btn.click();
+               return norm(btn.textContent) || 'LgbsSe';
+           }
+           return null;
+       }""")
+   ```
 
 ---
 

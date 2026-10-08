@@ -15,7 +15,8 @@ Every automation platform should support one or both of the following authentica
 
 ### Mode A: Google OAuth (`--auth google`)
 - **Account Source**: `gsuite.txt` or platform-specific account files via `load_accounts()`.
-- **SSO Handling**: Solves Google login screens (`#identifierId`, `#password`), handles account choosers, and automatically accepts Google Workspace Terms of Service speedbumps (`/speedbump/workspacetermsofservice`).
+- **SSO Handling**: Solves Google login screens (`#identifierId`, `#password`), handles account choosers, and automatically accepts Google Workspace Terms of Service speedbumps (`/speedbump/workspacetermsofservice` via DOM evaluate + `scrollIntoView`).
+- **Popup Synchronization**: In popup-based OAuth, NEVER exit the OAuth polling loop while ANY open page in `context.pages` is still on `accounts.google.com`. Prematurely returning the parent page leaves the popup stranded at the speedbump screen.
 - **Proxy Bypass (`GOOGLE_DIRECT=1`)**: Automatically bypasses proxy for Google and Gmail hostnames (`accounts.google.com,ssl.gstatic.com,www.gstatic.com,mail.google.com,gmail.com`) so Google risk control sees the direct machine IP instead of flagged datacenter proxies.
 - **Gmail Tab Verification (In-Session)**: If the target platform sends an email verification link even after Google SSO (e.g. TokenHarbor "Verify your email to claim rewards"), open Gmail web in a secondary tab inside the same authenticated context (`context.new_page()`), extract the link, and visit it.
 
@@ -89,6 +90,10 @@ Hashed CSS classes (e.g. `.css-c4xhxe`, `.btn-v3-blue`) change with every platfo
 - Always wrap browser instances in `async with` or `try ... finally`.
 - Close secondary tabs (`gmail_page.close()`) as soon as the verification token is extracted.
 - Catch signals using `setup_process_signals()` so Ctrl+C never leaves zombie browser processes.
+
+### Rule 5: Google OAuth Popup Synchronization & Speedbump Automation
+- **Never exit early in popup OAuth**: When an IdP flow opens in a popup window, `context.pages` holds both the parent app and the Google popup. The OAuth resolver must NEVER return the parent page while `accounts.google.com` remains in any open page URL. Only return once all Google pages have closed or redirected away.
+- **Scroll & DOM Click for Terms of Service**: In Google v3 signin speedbumps (`/speedbump/workspacetermsofservice`), the "I understand" button (`button[jsname="LgbsSe"]`) sits at the bottom of the scrollable terms container. Always trigger it using DOM `evaluate` with `scrollIntoView({ behavior: 'instant', block: 'center' })` and `.click()`, backed by Playwright locator click fallbacks across multiple languages (`I understand`, `Saya mengerti`, `I agree`, `Saya setuju`, `Accept`).
 
 ---
 

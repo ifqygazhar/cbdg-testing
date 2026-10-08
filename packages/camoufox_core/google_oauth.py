@@ -122,26 +122,41 @@ async def perform_google_oauth(
     # 5. Handle Challenge / Recovery Email / 2FA / Consent / Speedbump ("I understand")
     deadline = asyncio.get_event_loop().time() + timeout_sec
     while asyncio.get_event_loop().time() < deadline:
-        # Keep track of active Google page (in case of tab/popup switch)
-        for p in context.pages:
-            if not p.is_closed() and GOOGLE_AUTH_URL_RE.search(p.url):
-                target_page = p
-                break
+        # 1. Identify all active (open) pages
+        open_pages = [p for p in context.pages if not p.is_closed()]
+        google_pages = [p for p in open_pages if GOOGLE_AUTH_URL_RE.search(p.url)]
 
-        current_url = target_page.url
-        # Check if already redirected back from Google to the target application
-        if not GOOGLE_AUTH_URL_RE.search(current_url) and current_url != "about:blank":
-            logger.info(f"OAuth success, redirected to: {current_url}")
+        # If there are NO active pages remaining on accounts.google.com, OAuth has completed!
+        if not google_pages:
+            logger.info("No active Google authentication page remaining (OAuth redirect complete or popup closed).")
+            await human_delay(1000, 2000)
+            if not page.is_closed():
+                try:
+                    await page.bring_to_front()
+                except Exception:
+                    pass
+                return page
+            for p in open_pages:
+                if p.url != "about:blank":
+                    try:
+                        await p.bring_to_front()
+                    except Exception:
+                        pass
+                    return p
             return target_page
 
-        # Check for another tab/page that might be the app page if popup closed
-        for p in context.pages:
-            if not p.is_closed() and not GOOGLE_AUTH_URL_RE.search(p.url) and p.url != "about:blank":
-                logger.info(f"OAuth callback page active: {p.url}")
-                return p
+        # There is still an active Google page (popup or tab). Flow is still ongoing!
+        target_page = google_pages[0]
+        try:
+            await target_page.bring_to_front()
+        except Exception:
+            pass
+
+        current_url = target_page.url
 
         content = await target_page.content()
-        if "wrong password" in content.lower() or "sandi salah" in content.lower():
+        content_lower = content.lower()
+        if "wrong password" in content_lower or "sandi salah" in content_lower:
             raise RuntimeError("INVALID_PASSWORD: Sandi akun Google salah")
 
         if RESTRICTED_RE.search(content):
@@ -186,6 +201,47 @@ async def perform_google_oauth(
             continue
 
         # Check for Google Speedbump / Workspace Terms of Service ("I understand", "Saya mengerti", "I agree", etc.)
+        is_speedbump = bool(re.search(r"speedbump|termsofservice|tos|welcome", current_url, re.I))
+        if is_speedbump:
+            logger.info(f"detected Google Workspace Terms of Service speedbump ({current_url}), clicking 'I understand'...")
+            try:
+                clicked_text = await target_page.evaluate("""() => {
+                    const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    const needles = [
+                        'i understand', 'saya mengerti', 'i agree', 'saya setuju',
+                        'accept all', 'accept', 'terima', 'continue', 'lanjutkan',
+                        'confirm', 'agree', 'entiendo', "j'ai compris", 'ich verstehe'
+                    ];
+                    // 1. Check all buttons, role=button, and inputs
+                    const btns = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
+                    for (const btn of btns) {
+                        const txt = norm(btn.textContent || btn.value || btn.getAttribute('aria-label'));
+                        if (needles.some(n => txt.includes(n))) {
+                            btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            btn.focus();
+                            btn.click();
+                            return txt;
+                        }
+                    }
+                    // 2. Google primary action button: button[jsname="LgbsSe"]
+                    const lgbs = Array.from(document.querySelectorAll('button[jsname="LgbsSe"]')).filter(b => !b.disabled);
+                    if (lgbs.length > 0) {
+                        const btn = lgbs[lgbs.length - 1];
+                        btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        btn.focus();
+                        btn.click();
+                        return norm(btn.textContent) || 'LgbsSe';
+                    }
+                    return null;
+                }""")
+                if clicked_text:
+                    logger.info(f"successfully clicked Google speedbump button via DOM evaluate: '{clicked_text}'")
+                    await human_delay(2000, 3500)
+                    continue
+            except Exception as e:
+                logger.warn(f"speedbump DOM evaluate click exception: {e}")
+
+        # General speedbump / consent / passkey skip button selectors (Playwright locators fallback)
         speedbump_handled = False
         speedbump_selectors = [
             'button:has-text("I understand")',
@@ -199,13 +255,17 @@ async def perform_google_oauth(
             'button:has-text("Lanjutkan")',
             'button:has-text("Confirm")',
             'button:has-text("Konfirmasi")',
-            'button:has-text("Next")',
-            'button:has-text("Berikutnya")',
             '#submit_approve_access',
             'button:has-text("Allow")',
             'button:has-text("Izinkan")',
             '#confirm',
+            'button:has-text("Not now")',
+            'button:has-text("Jangan sekarang")',
+            'button:has-text("Skip")',
+            'button:has-text("Lewati")',
             'button[jsname="LgbsSe"]',
+            'button:has-text("Next")',
+            'button:has-text("Berikutnya")',
         ]
         for sel in speedbump_selectors:
             try:
@@ -235,7 +295,10 @@ async def perform_google_oauth(
         await asyncio.sleep(1)
 
     # Return whatever valid active page remains
-    for p in context.pages:
-        if not p.is_closed() and not GOOGLE_AUTH_URL_RE.search(p.url):
+    open_pages = [p for p in context.pages if not p.is_closed()]
+    if not page.is_closed():
+        return page
+    for p in open_pages:
+        if not GOOGLE_AUTH_URL_RE.search(p.url) and p.url != "about:blank":
             return p
     return target_page

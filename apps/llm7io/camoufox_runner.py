@@ -410,10 +410,19 @@ async def run_single_account(
                         email=email,
                         password=password or "",
                         recovery_email=recovery_email,
-                        timeout_sec=65,
+                        timeout_sec=90,
                         logger=logger,
                     )
                     page = post_auth_page
+                    if page.is_closed():
+                        for p in context.pages:
+                            if not p.is_closed():
+                                page = p
+                                break
+                    try:
+                        await page.bring_to_front()
+                    except Exception:
+                        pass
                     await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
 
                 else:
@@ -724,16 +733,28 @@ async def run_single_account(
                 logger.info("waiting for LLM7.io dashboard to mount...")
                 dashboard_mounted = False
                 for _ in range(40):
-                    if await page.query_selector(
-                        "aside.dashboard-sidebar, button:has-text('API Keys'), button.dashboard-nav-logout, .dashboard-root"
-                    ):
-                        dashboard_mounted = True
-                        break
-                    # Check for sonner error toasts
-                    err_toast = await page.query_selector("[data-sonner-toast][data-type='error']")
-                    if err_toast:
-                        err_text = await err_toast.text_content()
-                        raise RuntimeError(f"LLM7.io returned error: {err_text}")
+                    if page.is_closed():
+                        for p in context.pages:
+                            if not p.is_closed():
+                                page = p
+                                break
+                    try:
+                        if await page.query_selector(
+                            "aside.dashboard-sidebar, button:has-text('API Keys'), button.dashboard-nav-logout, .dashboard-root"
+                        ):
+                            dashboard_mounted = True
+                            break
+                        # Check for sonner error toasts
+                        err_toast = await page.query_selector("[data-sonner-toast][data-type='error']")
+                        if err_toast:
+                            err_text = await err_toast.text_content()
+                            raise RuntimeError(f"LLM7.io returned error: {err_text}")
+                    except Exception as e:
+                        if "closed" in str(e).lower():
+                            for p in context.pages:
+                                if not p.is_closed():
+                                    page = p
+                                    break
                     await asyncio.sleep(0.5)
 
                 if not dashboard_mounted:
