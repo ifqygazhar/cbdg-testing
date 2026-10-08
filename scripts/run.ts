@@ -200,7 +200,7 @@ async function askPlan(): Promise<RunPlan> {
         {
           value: "google",
           label: "Google OAuth (GSuite)",
-          hint: `daftar via akun Google (butuh gsuite.txt: ${seeds.accounts} akun)`,
+          hint: `daftar via akun Google (butuh gsuite.txt: ${seeds.accounts} akun)${app === "llm7io" ? " — direkomendasikan karena domain bebas banned" : ""}`,
         },
         {
           value: "tempmail",
@@ -208,7 +208,7 @@ async function askPlan(): Promise<RunPlan> {
           hint: "otomatis buat email & verif link / OTP",
         },
       ],
-      seeds.accounts > 0 && app !== "llm7io" ? 0 : 1,
+      seeds.accounts > 0 ? 0 : 1,
     );
   }
 
@@ -229,14 +229,26 @@ async function askPlan(): Promise<RunPlan> {
       " akun",
     );
   } else if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io") && authMethod === "tempmail")) {
-    domain = await select<string>("Domain TempMail?", [
-      { value: "ifqy.net", label: "ifqy.net", hint: "domain utama TempMail-Pro (default)" },
-      { value: "meongtopup.my.id", label: "meongtopup.my.id", hint: "domain alternatif 1" },
-      { value: "huzt.my.id", label: "huzt.my.id", hint: "domain alternatif 2" },
-      { value: "custom", label: "Ketik domain kustom...", hint: "masukkan domain email lainnya" },
-    ]);
+    domain = await select<string>(
+      app === "llm7io"
+        ? "Domain TempMail? (Catatan: LLM7.io memblokir ifqy.net, meongtopup.my.id, huzt.my.id)"
+        : "Domain TempMail?",
+      app === "llm7io"
+        ? [
+            { value: "custom", label: "Ketik domain kustom... (Disarankan)", hint: "gunakan domain fresh yang belum diblokir LLM7.io" },
+            { value: "ifqy.net", label: "ifqy.net (Peringatan: Diblokir LLM7.io)", hint: "domain utama — diblokir oleh anti-abuse LLM7.io (HTTP 403)" },
+            { value: "meongtopup.my.id", label: "meongtopup.my.id (Peringatan: Diblokir LLM7.io)", hint: "domain alternatif 1 — diblokir LLM7.io" },
+            { value: "huzt.my.id", label: "huzt.my.id (Peringatan: Diblokir LLM7.io)", hint: "domain alternatif 2 — diblokir LLM7.io" },
+          ]
+        : [
+            { value: "ifqy.net", label: "ifqy.net", hint: "domain utama TempMail-Pro (default)" },
+            { value: "meongtopup.my.id", label: "meongtopup.my.id", hint: "domain alternatif 1" },
+            { value: "huzt.my.id", label: "huzt.my.id", hint: "domain alternatif 2" },
+            { value: "custom", label: "Ketik domain kustom...", hint: "masukkan domain email lainnya" },
+          ],
+    );
     if (domain === "custom") {
-      domain = await askText("Masukkan domain email kustom", "ifqy.net");
+      domain = await askText("Masukkan domain email kustom", app === "llm7io" ? "" : "ifqy.net");
     }
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
   } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {

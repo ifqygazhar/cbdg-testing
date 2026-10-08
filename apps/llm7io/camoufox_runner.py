@@ -46,13 +46,14 @@ from packages.camoufox_core import (
 )
 
 DEFAULT_SIGNUP_URL = "https://dash.llm7.io/"
+API_PING_URL = "https://api.llm7.io/ping"
 API_KEYS_URL = "https://dash.llm7.io/#/api-keys"
 
 
 def check_proxy_single_sync(
     proxy: Proxy,
-    target_url: str = DEFAULT_SIGNUP_URL,
-    timeout_sec: float = 6.0,
+    target_url: str = API_PING_URL,
+    timeout_sec: float = 4.0,
 ) -> Tuple[Proxy, bool, Union[int, str], float]:
     t0 = time.time()
     try:
@@ -110,8 +111,8 @@ def check_proxy_single_sync(
 
 def check_proxy_batch_sync(
     candidates: List[Proxy],
-    target_url: str = DEFAULT_SIGNUP_URL,
-    timeout_sec: float = 6.0,
+    target_url: str = API_PING_URL,
+    timeout_sec: float = 4.0,
     max_workers: int = 15,
 ) -> List[Tuple[Proxy, bool, Union[int, str], float]]:
     workers = min(max_workers, max(1, len(candidates)))
@@ -164,8 +165,8 @@ class SmartProxyPool:
 
     async def get_next_live_proxy(
         self,
-        target_url: str = DEFAULT_SIGNUP_URL,
-        timeout_sec: float = 6.0,
+        target_url: str = API_PING_URL,
+        timeout_sec: float = 4.0,
         logger=None,
         batch_size: int = 15,
         enable_precheck: bool = True,
@@ -366,22 +367,39 @@ async def run_single_account(
                     logger.info("initiating Google OAuth flow...")
                     # Ensure terms checkbox is checked if present
                     try:
-                        terms_box = await page.query_selector("button[role='checkbox'].ios-green-checkbox")
-                        if terms_box and await terms_box.get_attribute("data-state") != "checked":
-                            await terms_box.click()
-                            await human_delay(300, 600)
+                        terms_box = await page.query_selector(
+                            "button[role='checkbox'].ios-green-checkbox, button[role='checkbox'], button.ios-green-checkbox, button[aria-label='Accept terms']"
+                        )
+                        if terms_box:
+                            data_state = await terms_box.get_attribute("data-state")
+                            aria_checked = await terms_box.get_attribute("aria-checked")
+                            if data_state != "checked" and aria_checked != "true":
+                                logger.info("checking terms of service checkbox for Google OAuth...")
+                                await terms_box.click()
+                                await human_delay(400, 800)
                     except Exception:
                         pass
 
                     google_btn = await page.wait_for_selector(
-                        "#google-signin-button, div.S9gUrf-YoZ4jf, button:has-text('Lanjutkan dengan Google'), button:has-text('Continue with Google')",
+                        "#google-signin-button iframe, #google-signin-button, div.S9gUrf-YoZ4jf, button:has-text('Lanjutkan dengan Google'), button:has-text('Continue with Google')",
                         timeout=15000,
                     )
                     if not google_btn:
                         raise RuntimeError("Could not find Google Sign-in button on LLM7.io")
 
-                    await google_btn.click()
-                    await human_delay(1200, 2200)
+                    # Prefer clicking inside the Google Identity iframe if mounted
+                    g_iframe = await page.query_selector("#google-signin-button iframe")
+                    if g_iframe:
+                        logger.info("clicking Google Sign-in GSI iframe...")
+                        try:
+                            await g_iframe.click(timeout=8000)
+                        except Exception:
+                            await google_btn.click(timeout=5000)
+                    else:
+                        logger.info("clicking Google Sign-in button...")
+                        await google_btn.click()
+
+                    await human_delay(1500, 2500)
 
                     # Solve Turnstile if challenged during Google login redirect
                     await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
@@ -508,8 +526,12 @@ async def run_single_account(
                                     data = await resp.json()
                                     err_info = data.get("error", {})
                                     msg = err_info.get("message") or data.get("message") or f"HTTP {resp.status}"
+                                    code = err_info.get("code") or data.get("code") or ""
                                     if err_info.get("turnstile_required") or "turnstile" in msg.lower():
                                         api_status["turnstile_required"] = True
+                                    elif code == "email_banned" or "banned from using the api" in msg.lower():
+                                        domain_part = email.split("@")[-1] if "@" in email else ""
+                                        api_status["error"] = f"Domain @{domain_part} is blacklisted by LLM7.io ({msg})"
                                     else:
                                         api_status["error"] = msg
                                 except Exception:
@@ -590,7 +612,16 @@ async def run_single_account(
                                 await take_error_screenshot()
                                 raise RuntimeError(f"LLM7.io error toast: {err_text}")
 
-                        # 6. Retry button click after 8s if still on initial page and button is enabled
+                        # 6. Detect hanging proxy connection (spinner stuck spinning without response)
+                        if poll_idx >= 16 and not turnstile_widget and not api_status["turnstile_required"]:
+                            has_spinner = await page.query_selector(".login-loading, span.spinner, [aria-label='Loading']")
+                            if has_spinner:
+                                logger.warn("⚠️ Signup POST request pending >8s. Proxy connection to api.llm7.io is hanging.")
+                                if poll_idx >= 20:
+                                    await take_error_screenshot()
+                                    raise RuntimeError("Proxy connection to api.llm7.io hung (request timeout)")
+
+                        # 7. Retry button click after 8s if still on initial page and button is enabled
                         if poll_idx == 16 and not turnstile_solved:
                             resubmit = await page.query_selector("button:has-text('Continue with email'):not([disabled])")
                             if resubmit:
@@ -877,7 +908,7 @@ async def main():
     parser.add_argument("--pace", choices=["fast", "human", "careful"], default="human", help="Pacing mode")
     parser.add_argument("--retry-failed", action="store_true", help="Retry previously failed accounts")
     parser.add_argument("--dry-run", action="store_true", help="Validate setup without launching browser")
-    parser.add_argument("--proxy-timeout", type=float, default=6.0, help="Proxy timeout in seconds for pre-check (default: 6.0)")
+    parser.add_argument("--proxy-timeout", type=float, default=4.0, help="Proxy timeout in seconds for pre-check (default: 4.0)")
     parser.add_argument("--skip-proxy-precheck", action="store_true", help="Skip HTTP 200 proxy pre-check before launch")
     parser.add_argument("--workers", type=int, default=1, help="Concurrent workers (default: 1)")
 
@@ -886,6 +917,13 @@ async def main():
     setup_process_signals()
 
     headed = args.headed and not args.headless
+
+    if args.auth == "tempmail" and args.domain in ("ifqy.net", "meongtopup.my.id", "huzt.my.id", "rurasa.my.id"):
+        logger.warn(
+            f"⚠️ Peringatan: Domain '@{args.domain}' saat ini diblokir secara permanen oleh LLM7.io (HTTP 403 email_banned). "
+            f"Pendaftaran via TempMail dengan domain ini kemungkinan besar akan ditolak oleh API LLM7.io. "
+            f"Disarankan menggunakan Google OAuth (--auth google) atau gunakan domain email kustom."
+        )
 
     # Paths and stores
     state_file = os.path.join(REPO_ROOT, args.state_file) if not os.path.isabs(args.state_file) else args.state_file
@@ -968,7 +1006,7 @@ async def main():
             proxy = None
             if proxy_pool:
                 proxy = await proxy_pool.get_next_live_proxy(
-                    target_url=DEFAULT_SIGNUP_URL,
+                    target_url=API_PING_URL,
                     timeout_sec=args.proxy_timeout,
                     logger=logger,
                     batch_size=15,
@@ -1015,7 +1053,7 @@ async def main():
             proxy = None
             if proxy_pool:
                 proxy = await proxy_pool.get_next_live_proxy(
-                    target_url=DEFAULT_SIGNUP_URL,
+                    target_url=API_PING_URL,
                     timeout_sec=args.proxy_timeout,
                     logger=logger,
                     batch_size=15,

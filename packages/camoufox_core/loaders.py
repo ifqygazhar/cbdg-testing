@@ -16,18 +16,35 @@ def load_accounts(filepath: str) -> List[Account]:
     if not os.path.exists(filepath):
         return []
     accounts: List[Account] = []
+    lines = []
+    shared_password = ""
+
     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
+        for raw in f:
+            line = raw.strip()
             if not line or line.startswith("#"):
                 continue
-            parts = line.split(":")
-            if len(parts) >= 2:
-                email = parts[0].strip()
-                password = parts[1].strip()
-                recovery = parts[2].strip() if len(parts) >= 3 else None
-                if "@" in email:
-                    accounts.append(Account(email=email, password=password, recovery_email=recovery))
+            lines.append(line)
+            if not shared_password:
+                lower = line.lower()
+                if lower.startswith("password:") or lower.startswith("pass:") or lower.startswith("pw:"):
+                    shared_password = line.split(":", 1)[1].strip()
+
+    for line in lines:
+        lower = line.lower()
+        if lower.startswith("password:") or lower.startswith("pass:") or lower.startswith("pw:"):
+            continue
+        parts = line.split(":")
+        if len(parts) >= 2:
+            email = parts[0].strip()
+            password = parts[1].strip()
+            recovery = parts[2].strip() if len(parts) >= 3 else None
+            if "@" in email:
+                accounts.append(Account(email=email, password=password, recovery_email=recovery))
+        elif "@" in line and shared_password:
+            email = line.strip()
+            accounts.append(Account(email=email, password=shared_password, recovery_email=None))
+
     return accounts
 
 def parse_proxy(line: str) -> Optional[Proxy]:
