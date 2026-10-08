@@ -535,13 +535,52 @@ async def retrieve_verification_link_from_gmail(context, email: str, logger, tim
 
         start_time = time.time()
         while time.time() - start_time < timeout_sec:
-            # Handle Workspace Terms speedbump if present
-            if "speedbump" in gmail_page.url:
+            # Handle Google Speedbump / Workspace Terms of Service ("I understand", "Saya mengerti", "I agree", etc.)
+            is_speedbump = bool(re.search(r"speedbump|termsofservice|tos|welcome", gmail_page.url, re.I))
+            if is_speedbump:
+                logger.info(f"detected Google Workspace Terms of Service speedbump ({gmail_page.url}) in Gmail tab, clicking 'I understand'...")
+                try:
+                    clicked_text = await gmail_page.evaluate("""() => {
+                        const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                        const needles = [
+                            'i understand', 'saya mengerti', 'i agree', 'saya setuju',
+                            'accept all', 'accept', 'terima', 'continue', 'lanjutkan',
+                            'confirm', 'agree', 'entiendo', "j'ai compris", 'ich verstehe'
+                        ];
+                        // 1. Check all buttons, role=button, and inputs
+                        const btns = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
+                        for (const btn of btns) {
+                            const txt = norm(btn.textContent || btn.value || btn.getAttribute('aria-label'));
+                            if (needles.some(n => txt.includes(n))) {
+                                btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                btn.focus();
+                                btn.click();
+                                return txt;
+                            }
+                        }
+                        // 2. Google primary action button: button[jsname="LgbsSe"]
+                        const lgbs = Array.from(document.querySelectorAll('button[jsname="LgbsSe"]')).filter(b => !b.disabled);
+                        if (lgbs.length > 0) {
+                            const btn = lgbs[lgbs.length - 1];
+                            btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            btn.focus();
+                            btn.click();
+                            return norm(btn.textContent) || 'LgbsSe';
+                        }
+                        return null;
+                    }""")
+                    if clicked_text:
+                        logger.info(f"successfully clicked Google speedbump button via DOM evaluate: '{clicked_text}'")
+                        await human_delay(2000, 3500)
+                        continue
+                except Exception as e:
+                    logger.warn(f"speedbump DOM evaluate click exception in Gmail tab: {e}")
+
                 accept_btn = await gmail_page.query_selector(
                     'button:has-text("I understand"), button:has-text("Saya mengerti"), button:has-text("Accept"), button:has-text("Setuju")'
                 )
                 if accept_btn:
-                    logger.info("accepted Workspace Terms speedbump in Gmail tab...")
+                    logger.info("accepted Workspace Terms speedbump in Gmail tab via selector...")
                     try:
                         await accept_btn.click(no_wait_after=True, timeout=10000)
                     except Exception:
@@ -940,7 +979,23 @@ async def run_single_google_account(
             store.upsert({"email": email, "status": FlowState.API_KEY})
             api_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
 
-            logger.info(f"SUCCESS: API key extracted -> {api_key[:12]}...")
+            # ── 9. Validate API Key against TokenHarbor Completion API ──────
+            is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=8.0)
+            if not is_valid:
+                if status_code == 403 and "email_verification_required" in err_msg.lower():
+                    logger.warn(f"API key created ({api_key[:12]}...), but requires email verification! Attempting recovery via Gmail...")
+                    recovery_url = await retrieve_verification_link_from_gmail(context, email, logger, timeout_sec=70 if proxy else 50)
+                    if recovery_url:
+                        logger.info(f"navigating to recovery verification URL: {recovery_url}...")
+                        await page.goto(recovery_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        await human_delay(3000, 5000)
+                        verify_url = recovery_url
+                        is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=8.0)
+
+                if not is_valid:
+                    raise RuntimeError(f"API key created but live API verification failed: HTTP {status_code} ({err_msg})")
+
+            logger.info(f"SUCCESS: API key extracted & verified LIVE (HTTP 200 OK) -> {api_key[:12]}...")
             store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
             results.mark_success(email, password, api_key)
             return True
@@ -1194,7 +1249,12 @@ async def run_single_account(
             store.upsert({"email": email, "status": FlowState.API_KEY})
             api_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
 
-            logger.info(f"SUCCESS: API key extracted -> {api_key[:12]}...")
+            # ── 7. Validate API Key against TokenHarbor Completion API ──────
+            is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=8.0)
+            if not is_valid:
+                raise RuntimeError(f"API key created but live API verification failed: HTTP {status_code} ({err_msg})")
+
+            logger.info(f"SUCCESS: API key extracted & verified LIVE (HTTP 200 OK) -> {api_key[:12]}...")
             store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
             results.mark_success(email, password, api_key)
             return True
@@ -1424,6 +1484,34 @@ async def run_single_reenable_account(
             await dismiss_cookie_banner(page, logger=logger)
 
             await human_delay(2000, 3000)
+
+            # Check if email verification is needed on dashboard
+            needs_verif = await page.evaluate("""() => {
+                const text = document.body.innerText || '';
+                return text.includes("Verify your email") || text.includes("Send verification email");
+            }""")
+            if needs_verif:
+                logger.info("Email verification banner detected on dashboard during re-enable...")
+                try:
+                    verify_btn = await page.query_selector(
+                        'button.btn-float-primary:has-text("Verify email"), button:has-text("Verify email"), button:has-text("Send verification email"), button:has-text("Resend email")'
+                    )
+                    if verify_btn:
+                        try:
+                            await verify_btn.click(timeout=3000)
+                        except Exception:
+                            await verify_btn.click(force=True, timeout=2000)
+                        await human_delay(2000, 3000)
+
+                    v_url = await retrieve_verification_link_from_gmail(context, email, logger, timeout_sec=60)
+                    if v_url:
+                        logger.info(f"navigating to verification URL: {v_url}...")
+                        await page.goto(v_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        await human_delay(2500, 4000)
+                        await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                        await human_delay(1500, 2500)
+                except Exception as e:
+                    logger.warn(f"Note during email verification in re-enable: {e}")
 
             # 3. Post-check API key
             active_key = api_key
