@@ -100,9 +100,15 @@ Hashed CSS classes (e.g. `.css-c4xhxe`, `.btn-v3-blue`) change with every platfo
 - **Queue Deferral (Process Other Accounts First)**: Discard/blacklist the bad proxy, push the current account to the back of the queue (`account_queue.append(account)`), and do NOT burn the account's attempt budget. Immediately proceed to the next account in the queue.
 - **Fresh Randomized Fingerprint per Attempt**: Ensure every launch draws a brand-new, randomized hardware and browser fingerprint (`randomize_fingerprint=True`, OS, screen window, and humanize speed).
 
-### Rule 7: Email Re-Verification & Activation Flow
-- **Segregate Pending Verifications**: When API key check returns HTTP 403 (`Verify your email address to use the API...`), do not classify it as dead/bad. Separate into `apikey-need-verif-<app>.txt` and `akun-need-verif-<app>.txt`.
-- **Re-Verification Runner Mode**: Implement `--reverify-email` in the runner. The flow must support logging in via Google OAuth (if GSuite account) or password form (if TempMail), clicking the verification/resend button on the dashboard, polling Gmail / TempMail for the link, visiting the link, and confirming HTTP 200 API status before moving the account to `akun-good-<app>.txt`.
+### Rule 7: Email Re-Verification & Gmail Thread Automation
+- **Segregate Pending Verifications**: When API key check returns HTTP 403 (`Verify your email address to use the API...`), do not classify it as dead/bad. Match `"verify your email"`, `"confirmation link"`, and `"email_verification"`. Separate into `apikey-need-verif-<app>.txt` and `akun-need-verif-<app>.txt`.
+- **Direct Network for Gmail in Firefox**: In Firefox Camoufox, `network.proxy.no_proxies_on` matches domain suffixes directly without wildcards. Never pass `*.google.com` (which breaks Firefox proxy bypass); always pass clean bare domains: `localhost,127.0.0.1,google.com,mail.google.com,accounts.google.com,gmail.com,gstatic.com,googleusercontent.com,googleapis.com`.
+- **Gmail DOM: Open Thread Detail Before Extracting Verification Link**:
+  - Never click table row center (`tr.zA`) as it clicks empty whitespace and fails to open the message.
+  - Target the subject link specifically (`span.bog`, `td.y6`, `span.bqe`) and dispatch mouse events (`mousedown`, `mouseup`, `click`) without `{ view: window }` (passing `view: window` in Firefox sandboxed evaluate throws `UIEventInit does not implement interface Window`).
+  - Verify detail view opened via thread hash (`window.location.hash.startsWith('#inbox/') && window.location.hash.length > 7`), subject header (`h2.hP`), or message body (`div.a3s`).
+  - Inside the opened detail view, wait for message body to render, click the `Verify email` button (handling popup tab if opened), and extract the unescaped verification URL (`google.com/url?q=...`).
+- **Re-Verification Runner Mode**: Implement `--reverify-email` in the runner. The flow supports logging in via Google OAuth (if GSuite account) or password form (if TempMail), clicking the verification/resend button on the dashboard, opening the email in Gmail direct, clicking the verification link, and confirming HTTP 200 API status before moving the account to `akun-good-<app>.txt`.
 
 ---
 

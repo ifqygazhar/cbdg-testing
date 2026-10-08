@@ -564,7 +564,8 @@ async def run_single_account(
                         await submit_btn.click(timeout=8000)
                     except Exception:
                         await page.evaluate("""() => {
-                            const btn = document.querySelector("button:has-text('Continue with email'), .email-auth-form button");
+                            const btn = Array.from(document.querySelectorAll('button')).find(b => (b.textContent || '').includes('Continue with email')) ||
+                                        document.querySelector('.email-auth-form button');
                             if (btn) btn.click();
                             const form = document.querySelector('form.email-auth-form');
                             if (form) form.requestSubmit ? form.requestSubmit() : form.submit();

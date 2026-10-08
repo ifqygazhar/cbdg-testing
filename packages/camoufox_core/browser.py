@@ -155,27 +155,25 @@ async def launch_camoufox(
             env_hosts = os.getenv("GOOGLE_DIRECT_HOSTS", "")
             hosts_list = [h.strip() for h in re.split(r"[;,\s]+", env_hosts) if h.strip()]
             default_bypass = [
-                "accounts.google.com",
-                "accounts.youtube.com",
+                "localhost",
+                "127.0.0.1",
                 "google.com",
-                "www.google.com",
-                "ssl.gstatic.com",
-                "www.gstatic.com",
+                "mail.google.com",
+                "accounts.google.com",
+                "gmail.com",
                 "gstatic.com",
-                "fonts.gstatic.com",
-                "apis.google.com",
+                "googleusercontent.com",
+                "googleapis.com",
+                "youtube.com",
                 "play.google.com",
                 "myaccount.google.com",
-                "mail.google.com",
-                "gmail.com",
-                "googleusercontent.com",
-                "lh3.googleusercontent.com",
-                "*.google.com",
-                "*.gstatic.com",
-                "*.googleusercontent.com",
             ]
-            combined = list(dict.fromkeys(hosts_list + default_bypass))
-            bypass = ",".join(combined)
+            clean_hosts = []
+            for h in hosts_list + default_bypass:
+                cleaned = h.strip().lstrip("*.").strip()
+                if cleaned and cleaned not in clean_hosts:
+                    clean_hosts.append(cleaned)
+            bypass = ",".join(clean_hosts)
 
         if bypass:
             proxy_dict["bypass"] = bypass

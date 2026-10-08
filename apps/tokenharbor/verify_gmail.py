@@ -104,7 +104,8 @@ async def verify_single_account(email: str, password: str, api_key: str, headed:
         logger.info(f"API key for {email} is ALREADY valid & live (HTTP 200 OK)!")
         return True
 
-    if status != 403 or "email_verification_required" not in msg.lower():
+    is_verif_needed = ("verify your email" in msg.lower() or "confirmation link" in msg.lower() or "email_verification" in msg.lower())
+    if status != 403 or not is_verif_needed:
         logger.warn(f"Account {email} reported HTTP {status} ({msg}) - not an email verification issue. Skipping.")
         return False
 
@@ -141,52 +142,145 @@ async def verify_single_account(email: str, password: str, api_key: str, headed:
 
         verify_url = None
         start_time = time.time()
+        reload_counter = 0
         while time.time() - start_time < 90:
             if "speedbump" in page.url or "termsofservice" in page.url or "welcome" in page.url:
                 await handle_speedbump_robust(page)
                 await asyncio.sleep(2)
 
-            content = await page.content()
-            m = VERIFY_LINK_RE.search(content)
-            if m:
-                raw_url = html.unescape(m.group(0))
-                if "google.com/url" in raw_url:
-                    parsed = urlparse(raw_url)
-                    qs = parse_qs(parsed.query)
-                    verify_url = qs.get("q", [raw_url])[0]
-                else:
-                    verify_url = raw_url
-                logger.info(f"Found verification link: {verify_url}")
-                break
+            # ── Step A: Check if email detail view is currently open ─────────
+            is_detail_open = await page.evaluate("""() => {
+                const hash = window.location.hash || '';
+                const hasThreadHash = hash.startsWith('#inbox/') && hash.length > 7;
+                const heading = document.querySelector('h2.hP');
+                const hasHeading = heading && (heading.textContent || '').includes('Verify your email');
+                const verifyBtn = document.querySelector('a[href*="tokenharbor.ai/verify-email"]') ||
+                                  Array.from(document.querySelectorAll('a')).find(a => (a.textContent || '').includes('Verify email'));
+                const msgBody = document.querySelector('div.a3s');
+                return Boolean(hasThreadHash || hasHeading || (msgBody && verifyBtn));
+            }""")
 
+            if is_detail_open:
+                logger.info("detail tampilan email verifikasi Token Harbor terdeteksi terbuka di Gmail!")
+                btn_link = None
+                for _ in range(15):
+                    btn_link = await page.query_selector('a:has-text("Verify email"), a[href*="tokenharbor.ai/verify-email"]')
+                    if btn_link:
+                        raw_href = await btn_link.get_attribute("href")
+                        if raw_href:
+                            raw_href = html.unescape(raw_href)
+                            if "google.com/url" in raw_href:
+                                parsed = urlparse(raw_href)
+                                qs = parse_qs(parsed.query)
+                                verify_url = qs.get("q", [raw_href])[0]
+                            else:
+                                verify_url = raw_href
+                            if verify_url:
+                                break
+                    content = await page.content()
+                    m = VERIFY_LINK_RE.search(content)
+                    if m:
+                        raw_url = html.unescape(m.group(0))
+                        if "google.com/url" in raw_url:
+                            parsed = urlparse(raw_url)
+                            qs = parse_qs(parsed.query)
+                            verify_url = qs.get("q", [raw_url])[0]
+                        else:
+                            verify_url = raw_url
+                        if verify_url:
+                            break
+                    await asyncio.sleep(0.5)
+
+                # Click the "Verify email" button inside the email body
+                if btn_link:
+                    logger.info("clicking 'Verify email' button inside Gmail message...")
+                    try:
+                        async with context.expect_page(timeout=4000) as popup_info:
+                            await btn_link.click(timeout=3000)
+                        popup = await popup_info.value
+                        logger.info(f"Verification link opened popup tab: {popup.url}")
+                        await popup.wait_for_load_state("domcontentloaded", timeout=15000)
+                        if not verify_url and "verify-email" in popup.url:
+                            verify_url = popup.url
+                        await asyncio.sleep(2.5)
+                        try:
+                            await popup.close()
+                        except Exception:
+                            pass
+                    except Exception:
+                        try:
+                            await btn_link.click(force=True, timeout=2000)
+                        except Exception:
+                            pass
+
+                if verify_url:
+                    logger.info(f"Found verification link: {verify_url}")
+                    break
+                else:
+                    logger.warn("Detail view open but verify link not yet ready, retrying...")
+                    await asyncio.sleep(1.5)
+                    continue
+
+            # ── Step B: If in inbox list, locate email row and click to open ───
             email_row = await page.query_selector(
-                'tr.zA:has-text("Token Harbor"), tr:has-text("Token Harbor"), div[role="row"]:has-text("Token Harbor"), tr:has-text("Verify your email")'
+                'tr.zA:has-text("Token Harbor"), tr.zA:has-text("Verify your email"), tr:has-text("Token Harbor"), div[role="row"]:has-text("Token Harbor")'
             )
             if email_row:
-                logger.info("Opening Token Harbor email in Gmail...")
-                try:
-                    await email_row.click()
-                except Exception:
-                    await email_row.click(force=True)
-                await asyncio.sleep(3)
-                content = await page.content()
-                m = VERIFY_LINK_RE.search(content)
-                if m:
-                    raw_url = html.unescape(m.group(0))
-                    if "google.com/url" in raw_url:
-                        parsed = urlparse(raw_url)
-                        qs = parse_qs(parsed.query)
-                        verify_url = qs.get("q", [raw_url])[0]
-                    else:
-                        verify_url = raw_url
-                    logger.info(f"Found verification link inside email: {verify_url}")
-                    break
+                logger.info("found Token Harbor email row in Gmail inbox! Clicking to open detail view...")
+                # 1. Click specifically on the subject span / sender element
+                subject_el = await email_row.query_selector('span.bog, td.y6, div.y6, span.bqe, span:has-text("Verify your email")')
+                if subject_el:
+                    try:
+                        await subject_el.scroll_into_view_if_needed(timeout=3000)
+                        await subject_el.click(timeout=4000)
+                    except Exception:
+                        pass
 
+                # 2. Also dispatch DOM mouse events to ensure Gmail router triggers
+                await page.evaluate("""() => {
+                    const rows = Array.from(document.querySelectorAll('tr.zA, div[role="row"]'));
+                    const row = rows.find(r => {
+                        const txt = (r.innerText || '').toLowerCase();
+                        return txt.includes('token harbor') || txt.includes('verify your email');
+                    });
+                    if (!row) return;
+                    const el = row.querySelector('span.bog') || row.querySelector('div.y6') || row.querySelector('td.y6') || row.querySelector('span.bqe') || row;
+                    try { el.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch(e){}
+                    try { el.click(); } catch(e){}
+                    ['mouseenter', 'mousedown', 'mouseup', 'click'].forEach(name => {
+                        try {
+                            el.dispatchEvent(new MouseEvent(name, { bubbles: true, cancelable: true }));
+                        } catch(e){}
+                    });
+                }""")
+
+                # 3. Wait up to 8s for email detail view to open (do NOT reload while waiting)
+                for _ in range(16):
+                    await asyncio.sleep(0.5)
+                    opened = await page.evaluate("""() => {
+                        const hash = window.location.hash || '';
+                        const hasThreadHash = hash.startsWith('#inbox/') && hash.length > 7;
+                        const heading = document.querySelector('h2.hP');
+                        const hasHeading = heading && (heading.textContent || '').includes('Verify your email');
+                        const msgBody = document.querySelector('div.a3s');
+                        return Boolean(hasThreadHash || hasHeading || msgBody);
+                    }""")
+                    if opened:
+                        logger.info("Successfully entered Token Harbor email detail view in Gmail!")
+                        break
+
+                # Detail view will be processed on next iteration (Step A)
+                continue
+
+            # ── Step C: Refresh or reload inbox ──────────────────────────────
+            reload_counter += 1
             try:
                 refresh_btn = await page.query_selector('div[aria-label*="Refresh" i], div[data-tooltip*="Refresh" i], div[act="20"]')
-                if refresh_btn:
+                if refresh_btn and reload_counter % 3 != 0:
+                    logger.info("Token Harbor email not visible yet; clicking refresh button...")
                     await refresh_btn.click()
                 else:
+                    logger.info("Token Harbor email not visible yet; reloading page...")
                     await page.reload(wait_until="domcontentloaded")
             except Exception:
                 pass
@@ -216,7 +310,7 @@ async def main():
     setup_process_signals()
     parser = argparse.ArgumentParser(description="TokenHarbor Gmail Auto-Verifier")
     parser.add_argument("--accounts-file", default="gsuite.txt", help="Path to accounts file")
-    parser.add_argument("--keys-file", default="apikey-unli.txt", help="Path to API keys file")
+    parser.add_argument("--keys-file", default="", help="Path to API keys file")
     parser.add_argument("--headed", action="store_true", help="Run in headed mode")
     args = parser.parse_args()
 
@@ -236,10 +330,17 @@ async def main():
                 accounts[parts[0].strip().lower()] = (parts[0].strip(), parts[1].strip())
 
     # Map keys to accounts
-    # Format 1: In apikey-unli.txt, key might be plain key or email:pass:key
+    candidate_files = []
+    if args.keys_file and os.path.exists(args.keys_file):
+        candidate_files.append(args.keys_file)
+    else:
+        for f in ["apikey-need-verif-tokenharbor.txt", "akun-need-verif-tokenharbor.txt", "apikey-unli.txt", "akun-bad-tokenharbor.txt"]:
+            if os.path.exists(f):
+                candidate_files.append(f)
+
     unverified: List[Tuple[str, str, str]] = []
-    if os.path.exists(args.keys_file):
-        with open(args.keys_file, "r", encoding="utf-8") as f:
+    for kf in candidate_files:
+        with open(kf, "r", encoding="utf-8") as f:
             for line in f:
                 raw = line.strip()
                 if not raw or raw.startswith("#"):
@@ -251,24 +352,9 @@ async def main():
                     key = parts[-1].strip()
                     if key.startswith("thk_"):
                         unverified.append((email, pwd, key))
-                elif raw.startswith("thk_"):
+                elif len(parts) == 1 and raw.startswith("thk_"):
                     # Plain key: try to match with accounts
                     pass
-
-    # Also check akun-bad-tokenharbor.txt
-    if os.path.exists("akun-bad-tokenharbor.txt"):
-        with open("akun-bad-tokenharbor.txt", "r", encoding="utf-8") as f:
-            for line in f:
-                raw = line.strip()
-                if not raw or raw.startswith("#"):
-                    continue
-                parts = raw.split(":")
-                if len(parts) >= 3:
-                    email = parts[0].strip()
-                    pwd = parts[1].strip()
-                    key = parts[-1].strip()
-                    if key.startswith("thk_") and email.lower() in accounts:
-                        unverified.append((email, pwd, key))
 
     # De-duplicate
     seen = set()
@@ -282,7 +368,8 @@ async def main():
     verified_count = 0
     for email, pwd, key in unique_unverified:
         is_valid, status, msg = verify_tokenharbor_key_api(key)
-        if not is_valid and status == 403 and "email_verification_required" in msg.lower():
+        is_verif_needed = ("verify your email" in msg.lower() or "confirmation link" in msg.lower() or "email_verification" in msg.lower())
+        if not is_valid and status == 403 and is_verif_needed:
             ok = await verify_single_account(email, pwd, key, headed=args.headed)
             if ok:
                 verified_count += 1
@@ -291,6 +378,17 @@ async def main():
                     gf.write(f"{email}:{pwd}:{key}\n")
                 with open("apikey-good-tokenharbor.txt", "a", encoding="utf-8") as kf:
                     kf.write(f"{key}\n")
+
+                # Remove from need-verif files
+                for vf in ["apikey-need-verif-tokenharbor.txt", "akun-need-verif-tokenharbor.txt"]:
+                    if os.path.exists(vf):
+                        try:
+                            with open(vf, "r", encoding="utf-8") as rf:
+                                remaining = [l for l in rf if email.lower() not in l.lower() and key not in l]
+                            with open(vf, "w", encoding="utf-8") as wf:
+                                wf.writelines(remaining)
+                        except Exception:
+                            pass
 
     logger.info(f"Verification completed: {verified_count} accounts verified.")
 
