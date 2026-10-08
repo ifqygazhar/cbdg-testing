@@ -350,6 +350,11 @@ async def run_single_account(
                 pass
 
             # ── 2. Check if already authenticated / landed on dashboard ──────
+            if "/restricted" in page.url or await page.query_selector("h1:has-text('Account restricted'), .restricted-title"):
+                await take_error_screenshot()
+                domain_part = email.split("@")[-1] if "@" in email else ""
+                raise RuntimeError(f"ACCOUNT_RESTRICTED: Domain @{domain_part} diblokir oleh LLM7.io (dash.llm7.io/restricted: email_banned)")
+
             is_dashboard = False
             for _ in range(3):
                 if await page.query_selector(
@@ -425,6 +430,10 @@ async def run_single_account(
                         await page.bring_to_front()
                     except Exception:
                         pass
+                    if "/restricted" in page.url or await page.query_selector("h1:has-text('Account restricted'), .restricted-title, [role='alert']:has-text('restricted')"):
+                        await take_error_screenshot()
+                        domain_part = email.split("@")[-1] if "@" in email else ""
+                        raise RuntimeError(f"ACCOUNT_RESTRICTED: Domain @{domain_part} diblokir oleh LLM7.io (dash.llm7.io/restricted: email_banned)")
                     await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
 
                 else:
@@ -741,6 +750,11 @@ async def run_single_account(
                                 page = p
                                 break
                     try:
+                        if "/restricted" in page.url or await page.query_selector("h1:has-text('Account restricted'), .restricted-title, [role='alert']:has-text('restricted')"):
+                            await take_error_screenshot()
+                            domain_part = email.split("@")[-1] if "@" in email else ""
+                            raise RuntimeError(f"ACCOUNT_RESTRICTED: Domain @{domain_part} diblokir oleh LLM7.io (dash.llm7.io/restricted: email_banned)")
+
                         if await page.query_selector(
                             "aside.dashboard-sidebar, button:has-text('API Keys'), button.dashboard-nav-logout, .dashboard-root"
                         ):
