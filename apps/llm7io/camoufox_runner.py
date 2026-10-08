@@ -326,6 +326,26 @@ async def run_single_account(
             await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded")
             await human_delay(int(1500 * delay_mult), int(2800 * delay_mult))
 
+            # Helper to save screenshot on error while browser is alive
+            async def take_error_screenshot():
+                try:
+                    ss_path = os.path.join(screenshot_dir, f"{sanitized_email}_error.png")
+                    await page.screenshot(path=ss_path, full_page=True)
+                    logger.info(f"debug screenshot saved to {ss_path}")
+                except Exception:
+                    pass
+
+            # Dismiss analytics / cookie preferences banner if present
+            try:
+                no_thanks = await page.query_selector(
+                    "button:has-text('No thanks'), button:has-text('Save preferences'), button[aria-label='Close analytics preferences']"
+                )
+                if no_thanks:
+                    await no_thanks.click()
+                    await human_delay(200, 500)
+            except Exception:
+                pass
+
             # ── 2. Check if already authenticated / landed on dashboard ──────
             is_dashboard = False
             for _ in range(3):
@@ -478,6 +498,25 @@ async def run_single_account(
                     if not submit_btn:
                         raise RuntimeError("Could not find 'Continue with email' button")
 
+                    # Intercept backend responses to capture status & challenge requirements
+                    api_status = {"error": None, "turnstile_required": False}
+
+                    async def handle_signup_response(resp):
+                        if "email-verifications" in resp.url and resp.request.method == "POST":
+                            if resp.status >= 400:
+                                try:
+                                    data = await resp.json()
+                                    err_info = data.get("error", {})
+                                    msg = err_info.get("message") or data.get("message") or f"HTTP {resp.status}"
+                                    if err_info.get("turnstile_required") or "turnstile" in msg.lower():
+                                        api_status["turnstile_required"] = True
+                                    else:
+                                        api_status["error"] = msg
+                                except Exception:
+                                    api_status["error"] = f"HTTP {resp.status}"
+
+                    page.on("response", handle_signup_response)
+
                     logger.info("clicking 'Continue with email' button...")
                     try:
                         await submit_btn.click(timeout=8000)
@@ -490,27 +529,69 @@ async def run_single_account(
                         }""")
                     await human_delay(1500, 2500)
 
-                    # Wait for OTP form step (with Sonner toast error checking & retry)
+                    # Wait for OTP form step (with Turnstile challenge resolution & error handling)
                     store.upsert({"email": email, "status": "WAIT_OTP"})
-                    logger.info("waiting for OTP verification screen...")
+                    logger.info("waiting for OTP verification screen or security challenge...")
 
                     otp_screen = None
-                    for poll_idx in range(40):
+                    turnstile_solved = False
+
+                    for poll_idx in range(50):
+                        # 1. Check if OTP verification screen mounted
                         otp_screen = await page.query_selector(
                             "input#email-verification-code, p#email-verification-delivery, .email-verification-form"
                         )
                         if otp_screen:
                             break
 
-                        # Check for error toast from LLM7.io backend
+                        # 2. Check if Cloudflare Turnstile challenge is required on signup form
+                        turnstile_widget = await page.query_selector(
+                            ".email-auth-form .turnstile-widget, .turnstile-widget, iframe[src*='challenges.cloudflare.com']"
+                        )
+                        if (turnstile_widget or api_status["turnstile_required"]) and not turnstile_solved:
+                            logger.info("🛡️ Cloudflare Turnstile challenge detected on signup form! Resolving...")
+                            resolved = await resolve_turnstile_if_present(page, timeout_sec=25, logger=logger)
+                            if resolved:
+                                turnstile_solved = True
+                                api_status["turnstile_required"] = False
+                                logger.info("✅ Turnstile resolved on signup form! Submitting with challenge token...")
+                                await human_delay(600, 1200)
+
+                                # Wait for Continue button to become enabled with turnstile token and click
+                                for _ in range(20):
+                                    re_submit = await page.query_selector("button:has-text('Continue with email'):not([disabled])")
+                                    if re_submit:
+                                        await re_submit.click()
+                                        await human_delay(1500, 2500)
+                                        break
+                                    await asyncio.sleep(0.3)
+
+                        # 3. Check for inline error message / cooldown alert on signup page
+                        alert_el = await page.query_selector(
+                            "#login-auth-error, #login-auth-cooldown, .login-auth-error, [role='alert']"
+                        )
+                        if alert_el:
+                            alert_text = (await alert_el.text_content() or "").strip()
+                            # If it's an error/cooldown and not just waiting for Turnstile resolution
+                            if alert_text and not await page.query_selector(".turnstile-widget"):
+                                await take_error_screenshot()
+                                raise RuntimeError(f"LLM7.io inline error: {alert_text}")
+
+                        # 4. Check if backend returned a fatal error
+                        if api_status["error"]:
+                            await take_error_screenshot()
+                            raise RuntimeError(f"LLM7.io API error: {api_status['error']}")
+
+                        # 5. Check Sonner toasts
                         err_toast = await page.query_selector("[data-sonner-toast][data-type='error']")
                         if err_toast:
                             err_text = (await err_toast.text_content() or "").strip()
                             if err_text:
-                                raise RuntimeError(f"LLM7.io error during signup submission: {err_text}")
+                                await take_error_screenshot()
+                                raise RuntimeError(f"LLM7.io error toast: {err_text}")
 
-                        # If still on signup after 8s (poll_idx == 16), attempt re-clicking submit
-                        if poll_idx == 16:
+                        # 6. Retry button click after 8s if still on initial page and button is enabled
+                        if poll_idx == 16 and not turnstile_solved:
                             resubmit = await page.query_selector("button:has-text('Continue with email'):not([disabled])")
                             if resubmit:
                                 logger.info("still on signup page after 8s; re-clicking 'Continue with email'...")
@@ -522,10 +603,15 @@ async def run_single_account(
                         await asyncio.sleep(0.5)
 
                     if not otp_screen:
-                        err_toast = await page.query_selector("[data-sonner-toast]")
-                        if err_toast:
-                            err_text = (await err_toast.text_content() or "").strip()
-                            raise RuntimeError(f"LLM7.io error: {err_text}")
+                        await take_error_screenshot()
+                        alert_el = await page.query_selector(
+                            "#login-auth-error, #login-auth-cooldown, .login-auth-error, [role='alert']"
+                        )
+                        if alert_el:
+                            alert_text = (await alert_el.text_content() or "").strip()
+                            raise RuntimeError(f"LLM7.io rejected signup: {alert_text}")
+                        if api_status["error"]:
+                            raise RuntimeError(f"LLM7.io API error: {api_status['error']}")
                         raise RuntimeError("Did not navigate to OTP verification form within timeout")
 
                     # Poll TempMail inbox for 6-digit OTP code
