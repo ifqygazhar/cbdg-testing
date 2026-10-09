@@ -5,6 +5,7 @@ Registers on TokenHarbor using either Google OAuth (GSuite) or TempMail-Pro,
 verifies email, enables free models, creates API keys, and saves tokens.
 """
 
+from __future__ import annotations
 import argparse
 import asyncio
 from collections import deque, defaultdict
@@ -15,7 +16,7 @@ import random
 import re
 import sys
 import time
-from typing import Optional, List, Set, Tuple, Union
+from typing import Optional, List, Set, Tuple, Union, Dict, Any
 from urllib.parse import urlparse, parse_qs, unquote
 import requests
 

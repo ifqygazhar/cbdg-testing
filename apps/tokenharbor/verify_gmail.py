@@ -8,6 +8,7 @@ Verifies TokenHarbor accounts stuck in `email_verification_required` state by:
 4. Verifying that the API key becomes LIVE (HTTP 200 OK) and saving to good files.
 """
 
+from __future__ import annotations
 import argparse
 import asyncio
 import html
@@ -15,7 +16,7 @@ import os
 import re
 import sys
 import time
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any, Set, Union
 from urllib.parse import urlparse, parse_qs
 import requests
 
