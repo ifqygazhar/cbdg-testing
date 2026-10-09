@@ -115,7 +115,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;

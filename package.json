@@ -33,6 +33,7 @@
     "tokenharbor:python": "/home/azhar/.venvs/camoufox/bin/python apps/tokenharbor/camoufox_runner.py",
     "groqcloud:python": "/home/azhar/.venvs/camoufox/bin/python apps/groqcloud/camoufox_runner.py",
     "llm7io:python": "/home/azhar/.venvs/camoufox/bin/python apps/llm7io/camoufox_runner.py",
+    "webshare:python": "/home/azhar/.venvs/camoufox/bin/python apps/webshare/camoufox_runner.py",
     "test:fastrouter-units": "bun test apps/fastrouter/src/units.test.ts",
     "test:fastrouter-queue": "bun test apps/fastrouter/src/queue.test.ts",
     "test:tokenharbor-units": "bun test apps/tokenharbor/src/units.test.ts",
@@ -51,6 +52,7 @@
   },
   "dependencies": {
     "@ifqy/google-oauth": "workspace:*",
+    "puppeteer-core": "^23.0.0",
     "socks": "^2.8.10"
   }
 }

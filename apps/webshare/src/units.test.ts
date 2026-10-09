@@ -43,6 +43,11 @@ describe("app config", () => {
     expect(applyArgsToEnv(parseArgs(["--fast"]), {}).PACE).toBe("fast");
     expect(applyArgsToEnv(parseArgs(["--delay", "45"]), {}).INTER_ACCOUNT_DELAY_SEC).toBe("45");
     expect(applyArgsToEnv(parseArgs(["--retry-failed"]), {}).RETRY_FAILED).toBe("1");
+    expect(applyArgsToEnv(parseArgs(["--camoufox"]), {}).BROWSER_ENGINE).toBe("python");
+    expect(applyArgsToEnv(parseArgs(["--engine", "python"]), {}).BROWSER_ENGINE).toBe("python");
+    expect(applyArgsToEnv(parseArgs(["--bun"]), {}).BROWSER_ENGINE).toBe("bun");
+    expect(applyArgsToEnv(parseArgs(["--limit", "5"]), {}).LIMIT).toBe("5");
+    expect(applyArgsToEnv(parseArgs(["--accounts-file", "my-gsuite.txt"]), {}).SEED_GSUITE).toBe("my-gsuite.txt");
   });
 });
 

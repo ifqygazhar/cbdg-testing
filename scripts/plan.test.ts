@@ -60,7 +60,7 @@ describe("buildArgs", () => {
     expect(loud).toContain("--headless");
     expect(loud).toEqual(expect.arrayContaining(["-w", "3", "--retry-failed", "--dry-run", "--limit", "5"]));
   });
-  it("fastrouter, crusoe, tokenharbor, groqcloud, and llm7io get the engine switch when python chosen", () => {
+  it("fastrouter, crusoe, tokenharbor, groqcloud, llm7io, and webshare get the engine switch when python chosen", () => {
     const frPython = buildArgs({ ...base, app: "fastrouter", engine: "python" });
     expect(frPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     const crusoePython = buildArgs({ ...base, app: "crusoe", engine: "python" });
@@ -71,6 +71,8 @@ describe("buildArgs", () => {
     expect(gqPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     const llm7Python = buildArgs({ ...base, app: "llm7io", engine: "python" });
     expect(llm7Python).toEqual(expect.arrayContaining(["--engine", "python"]));
+    const wsPython = buildArgs({ ...base, app: "webshare", engine: "python" });
+    expect(wsPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     // bun engine is default so no flag needed
     const frBun = buildArgs({ ...base, app: "fastrouter", engine: "bun" });
     expect(frBun).not.toContain("--engine");
@@ -80,6 +82,8 @@ describe("buildArgs", () => {
     expect(gqBun).not.toContain("--engine");
     const llm7Bun = buildArgs({ ...base, app: "llm7io", engine: "bun" });
     expect(llm7Bun).not.toContain("--engine");
+    const wsBun = buildArgs({ ...base, app: "webshare", engine: "bun" });
+    expect(wsBun).not.toContain("--engine");
     // cbdg doesn't support camoufox engine
     const cbdg = buildArgs({ ...base, app: "cbdg", engine: "python" });
     expect(cbdg).not.toContain("--engine");

@@ -22,7 +22,7 @@ export type Pace = "fast" | "human" | "careful";
 export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
 
-export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "tokenharbor", "groqcloud", "llm7io"];
+export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io"];
 
 export interface RunPlan {
   app: AppName;
