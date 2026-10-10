@@ -42,6 +42,10 @@ from packages.camoufox_core import (
     kill_descendant_processes,
     TempMailClient,
     resolve_turnstile_if_present,
+    find_turnstile_sitekey,
+    solve_turnstile_via_api,
+    setup_turnstile_interceptor,
+    inject_turnstile_token,
     perform_google_oauth,
 )
 from packages.camoufox_core.turnstile import find_turnstile_target
@@ -50,16 +54,28 @@ class TurnstileDetectedException(Exception):
     """Raised when Cloudflare Turnstile captcha is detected when using proxy."""
     pass
 
-async def is_turnstile_detected(page) -> bool:
+async def is_turnstile_detected(page, logger=None) -> bool:
     """Checks if Cloudflare Turnstile widget or challenge iframe is currently present."""
     try:
         target = await find_turnstile_target(page)
         if target:
+            if logger:
+                sk_info = await find_turnstile_sitekey(page)
+                if sk_info:
+                    logger.info(f"🔑 Cloudflare Turnstile Sitekey: {sk_info[0]} (sumber: {sk_info[1]})")
             return True
         if await page.locator("iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile']").count() > 0:
+            if logger:
+                sk_info = await find_turnstile_sitekey(page)
+                if sk_info:
+                    logger.info(f"🔑 Cloudflare Turnstile Sitekey: {sk_info[0]} (sumber: {sk_info[1]})")
             return True
         content = (await page.content() or "").lower()
         if "challenges.cloudflare.com" in content and ("cf-turnstile" in content or "turnstile" in content):
+            if logger:
+                sk_info = await find_turnstile_sitekey(page)
+                if sk_info:
+                    logger.info(f"🔑 Cloudflare Turnstile Sitekey: {sk_info[0]} (sumber: {sk_info[1]})")
             return True
         if "just a moment..." in content and "cloudflare" in content:
             return True
@@ -918,6 +934,7 @@ async def run_single_google_account(
             timeout_ms = 90000 if proxy else 45000
             page.set_default_timeout(timeout_ms)
             page.set_default_navigation_timeout(timeout_ms)
+            await setup_turnstile_interceptor(page)
 
             fp = await get_browser_fingerprint_info(page)
             if fp:
@@ -934,7 +951,7 @@ async def run_single_google_account(
 
             if "/dashboard" not in page.url:
                 # Cek apakah landing page terblokir Turnstile (jika pakai proxy)
-                if proxy and await is_turnstile_detected(page):
+                if proxy and await is_turnstile_detected(page, logger=logger):
                     logger.warn(f"Cloudflare Turnstile captcha terdeteksi di landing page dengan proxy {proxy.server}! Langsung ganti proxy...")
                     raise TurnstileDetectedException(f"Turnstile detected on landing via proxy {proxy.server}")
 
@@ -964,9 +981,15 @@ async def run_single_google_account(
                     for _ in range(8):
                         if "accounts.google.com" in page.url or "/dashboard" in page.url:
                             break
-                        if await is_turnstile_detected(page):
-                            logger.warn(f"Cloudflare Turnstile captcha terdeteksi saat Google SSO dengan proxy {proxy.server}! Langsung ganti proxy...")
-                            raise TurnstileDetectedException(f"Turnstile detected before Google OAuth via proxy {proxy.server}")
+                        if await is_turnstile_detected(page, logger=logger):
+                            logger.info(f"Cloudflare Turnstile captcha terdeteksi saat Google SSO dengan proxy {proxy.server}. Mencoba penyelesaian via Solver API & click...")
+                            solved = await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
+                            if solved:
+                                logger.info("Turnstile teratasi pada proses Google SSO!")
+                                break
+                            else:
+                                logger.warn(f"Turnstile tidak teratasi dengan proxy {proxy.server}! Langsung ganti proxy...")
+                                raise TurnstileDetectedException(f"Turnstile detected before Google OAuth via proxy {proxy.server}")
                         await asyncio.sleep(0.5)
                 else:
                     solved = await resolve_turnstile_if_present(page, timeout_sec=25, logger=logger)
@@ -996,7 +1019,7 @@ async def run_single_google_account(
                     for _ in range(8):
                         if "/dashboard" in page.url:
                             break
-                        if await is_turnstile_detected(page):
+                        if await is_turnstile_detected(page, logger=logger):
                             logger.warn(f"Cloudflare Turnstile captcha terdeteksi di callback TokenHarbor dengan proxy {proxy.server}! Langsung ganti proxy...")
                             raise TurnstileDetectedException(f"Turnstile detected on callback via proxy {proxy.server}")
                         await asyncio.sleep(0.5)
@@ -1172,6 +1195,7 @@ async def run_single_account(
             timeout_ms = 90000 if proxy else 45000
             page.set_default_timeout(timeout_ms)
             page.set_default_navigation_timeout(timeout_ms)
+            await setup_turnstile_interceptor(page)
 
             # Log active anonymous fingerprint for this process/worker
             fp = await get_browser_fingerprint_info(page)
@@ -1183,6 +1207,11 @@ async def run_single_account(
             await page.goto(DEFAULT_SIGNUP_URL, wait_until="domcontentloaded", timeout=timeout_ms)
             await human_delay(int(2000 * delay_mult), int(3500 * delay_mult))
             await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
+
+            # Check and report Turnstile sitekey
+            sk_info = await find_turnstile_sitekey(page)
+            if sk_info:
+                logger.info(f"🔑 Cloudflare Turnstile Sitekey terdeteksi: {sk_info[0]} (sumber: {sk_info[1]})")
 
             # Dismiss analytics/cookie banner if present
             try:
@@ -1301,6 +1330,13 @@ async def run_single_account(
                         raise RuntimeError(f"Rate limited by TokenHarbor (speed check): {speed_warning}")
 
                 if signup_error:
+                    if "human check" in signup_error.lower() or "captcha" in signup_error.lower() or "turnstile" in signup_error.lower():
+                        logger.info(f"Human check required ('{signup_error}'). Meminta clearance token via Turnstile Solver API (bycf.snowping.cfd)...")
+                        token = await solve_turnstile_via_api(page.url, "0x4AAAAAADBuC8Knz1EJZx9-", timeout_sec=20.0, logger=logger)
+                        if token:
+                            await inject_turnstile_token(page, token, logger=logger)
+                            await human_delay(1500, 2500)
+                            continue
                     logger.warn(f"TokenHarbor error detected: '{signup_error}'. Skipping account immediately...")
                     raise RuntimeError(f"Signup rejected: {signup_error}")
 
@@ -1636,6 +1672,7 @@ async def run_single_reenable_account(
             timeout_ms = 90000 if proxy else 45000
             page.set_default_timeout(timeout_ms)
             page.set_default_navigation_timeout(timeout_ms)
+            await setup_turnstile_interceptor(page)
 
             fp = await get_browser_fingerprint_info(page)
             if fp:
@@ -1656,7 +1693,7 @@ async def run_single_reenable_account(
                 await dismiss_cookie_banner(page, logger=logger)
 
                 if "/dashboard" not in page.url:
-                    if proxy and await is_turnstile_detected(page):
+                    if proxy and await is_turnstile_detected(page, logger=logger):
                         logger.warn(f"Cloudflare Turnstile terdeteksi di landing page dengan proxy {proxy.server}! Langsung ganti proxy...")
                         raise TurnstileDetectedException(f"Turnstile detected on landing via proxy {proxy.server}")
 
@@ -1682,7 +1719,7 @@ async def run_single_reenable_account(
                         for _ in range(8):
                             if "accounts.google.com" in page.url or "/dashboard" in page.url:
                                 break
-                            if await is_turnstile_detected(page):
+                            if await is_turnstile_detected(page, logger=logger):
                                 logger.warn(f"Turnstile terdeteksi saat SSO Google dengan proxy {proxy.server}! Langsung ganti proxy...")
                                 raise TurnstileDetectedException(f"Turnstile detected before Google OAuth via proxy {proxy.server}")
                             await asyncio.sleep(0.5)
@@ -1705,7 +1742,7 @@ async def run_single_reenable_account(
                         for _ in range(8):
                             if "/dashboard" in page.url:
                                 break
-                            if await is_turnstile_detected(page):
+                            if await is_turnstile_detected(page, logger=logger):
                                 logger.warn(f"Turnstile terdeteksi di callback dengan proxy {proxy.server}! Langsung ganti proxy...")
                                 raise TurnstileDetectedException(f"Turnstile detected on callback via proxy {proxy.server}")
                             await asyncio.sleep(0.5)
@@ -1746,11 +1783,11 @@ async def run_single_reenable_account(
                     await human_type(page, 'input[name="password"], input[type="password"]', password, min_delay_ms=int(50 * delay_mult), max_delay_ms=int(115 * delay_mult))
                     await human_delay(600, 1200)
 
-                    if proxy and await is_turnstile_detected(page):
+                    if proxy and await is_turnstile_detected(page, logger=logger):
                         logger.warn(f"Turnstile terdeteksi di login form dengan proxy {proxy.server}! Langsung ganti proxy...")
                         raise TurnstileDetectedException(f"Turnstile detected on login form via proxy {proxy.server}")
                     else:
-                        await resolve_turnstile_if_present(page, timeout_sec=10)
+                        await resolve_turnstile_if_present(page, timeout_sec=10, logger=logger)
 
                     # Tombol Sign in
                     signin_btn = await page.wait_for_selector(

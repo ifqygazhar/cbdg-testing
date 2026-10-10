@@ -1,9 +1,201 @@
 import asyncio
 import random
+import re
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
+from urllib.parse import urlparse, parse_qs
+import requests
 from playwright.async_api import Page
 from .log import Logger
+
+BYCF_SOLVE_API = "https://bycf.snowping.cfd/api/solve"
+
+KNOWN_SITEKEYS: Dict[str, str] = {
+    "tokenharbor.ai": "0x4AAAAAADBuC8Knz1EJZx9-",
+}
+
+async def solve_turnstile_via_api(
+    url: str,
+    sitekey: str,
+    timeout_sec: float = 25.0,
+    logger: Optional[Logger] = None,
+) -> Optional[str]:
+    """
+    Calls bycf.snowping.cfd/api/solve to solve a Cloudflare Turnstile challenge and get a clearance token.
+    """
+    if logger:
+        logger.info(f"[turnstile-api] Requesting clearance token from {BYCF_SOLVE_API} (sitekey={sitekey})...")
+    try:
+        def _post():
+            return requests.post(
+                BYCF_SOLVE_API,
+                json={"url": url, "siteKey": sitekey},
+                timeout=timeout_sec,
+                headers={"Content-Type": "application/json"},
+            )
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(None, _post)
+        if resp.status_code == 200:
+            data = resp.json()
+            token = data.get("result", {}).get("token")
+            solve_time = data.get("result", {}).get("solveTime", "unknown")
+            if token:
+                if logger:
+                    logger.info(f"[turnstile-api] Clearance token successfully received! (solveTime: {solve_time}, tokenLen: {len(token)})")
+                return token
+            else:
+                if logger:
+                    logger.warn(f"[turnstile-api] Response 200 but token missing: {data}")
+        else:
+            if logger:
+                logger.warn(f"[turnstile-api] API returned HTTP {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        if logger:
+            logger.warn(f"[turnstile-api] Failed to solve via API: {e}")
+    return None
+
+async def setup_turnstile_interceptor(page: Page) -> None:
+    """
+    Injects an init script before navigation to intercept window.turnstile.render
+    callbacks so that clearance tokens can be dispatched directly into React's state.
+    """
+    await page.add_init_script("""
+        window._turnstileCallbacks = window._turnstileCallbacks || [];
+        let _t = undefined;
+        Object.defineProperty(window, 'turnstile', {
+            configurable: true,
+            get() { return _t; },
+            set(val) {
+                _t = val;
+                if (val && typeof val.render === 'function' && !val._hooked) {
+                    const orig = val.render;
+                    val.render = function(container, params) {
+                        if (params && typeof params.callback === 'function') {
+                            window._turnstileCallbacks.push(params.callback);
+                        }
+                        return orig.apply(this, arguments);
+                    };
+                    val._hooked = true;
+                }
+            }
+        });
+    """)
+
+async def inject_turnstile_token(page: Page, token: str, logger: Optional[Logger] = None) -> bool:
+    """
+    Injects a Turnstile clearance token into the page:
+    1. Triggers all intercepted window._turnstileCallbacks (updating React state).
+    2. Populates or creates input[name='cf-turnstile-response'].
+    """
+    try:
+        res = await page.evaluate("""(token) => {
+            let called = 0;
+            if (window._turnstileCallbacks && window._turnstileCallbacks.length > 0) {
+                window._turnstileCallbacks.forEach(cb => {
+                    try { cb(token); called++; } catch(e){}
+                });
+            }
+            if (window.turnstile && window.turnstile._widgets) {
+                for (const k in window.turnstile._widgets) {
+                    const w = window.turnstile._widgets[k];
+                    if (w && typeof w.callback === 'function') {
+                        try { w.callback(token); called++; } catch(e){}
+                    }
+                }
+            }
+            let inps = document.querySelectorAll('input[name="cf-turnstile-response"]');
+            if (inps.length === 0) {
+                const forms = document.querySelectorAll('form');
+                forms.forEach(f => {
+                    const inp = document.createElement('input');
+                    inp.type = 'hidden';
+                    inp.name = 'cf-turnstile-response';
+                    inp.value = token;
+                    f.appendChild(inp);
+                });
+            } else {
+                inps.forEach(i => {
+                    i.value = token;
+                    i.dispatchEvent(new Event('input', { bubbles: true }));
+                    i.dispatchEvent(new Event('change', { bubbles: true }));
+                });
+            }
+            return { called, inputCount: document.querySelectorAll('input[name="cf-turnstile-response"]').length };
+        }""", token)
+        if logger:
+            logger.info(f"[turnstile] Token injected into page: {res}")
+        return True
+    except Exception as e:
+        if logger:
+            logger.warn(f"[turnstile] Failed to inject token: {e}")
+        return False
+
+async def find_turnstile_sitekey(page: Page) -> Optional[Tuple[str, str]]:
+    """
+    Extracts the Cloudflare Turnstile sitekey from the active page.
+    Returns (sitekey, source_description) or None.
+    """
+    # 1. Check DOM attribute data-sitekey / data-site-key
+    try:
+        res = await page.evaluate("""() => {
+            const el = document.querySelector('[data-sitekey], [data-site-key], .cf-turnstile');
+            if (el) {
+                const k = el.getAttribute('data-sitekey') || el.getAttribute('data-site-key');
+                if (k) return { key: k, source: 'dom_attribute' };
+            }
+            const inp = document.querySelector('input[name="cf-turnstile-response"]');
+            if (inp && inp.parentElement) {
+                const k = inp.parentElement.getAttribute('data-sitekey');
+                if (k) return { key: k, source: 'response_input_parent' };
+            }
+            const clerk = document.querySelector('#clerk-captcha, [data-cl-interactive="true"]');
+            if (clerk) {
+                const k = clerk.getAttribute('data-sitekey');
+                if (k) return { key: k, source: 'clerk_captcha' };
+            }
+            return null;
+        }""")
+        if res and res.get("key"):
+            return res["key"], res["source"]
+    except Exception:
+        pass
+
+    # 2. Check iframes matching challenges.cloudflare.com
+    try:
+        for f in page.frames:
+            url = f.url or ""
+            if "challenges.cloudflare.com" in url or "turnstile" in url:
+                m = re.search(r"(0x4[A-Za-z0-9_\-]{15,})", url)
+                if m:
+                    return m.group(1), f"frame_url({f.name or 'iframe'})"
+                parsed = urlparse(url)
+                qs = parse_qs(parsed.query)
+                if "sitekey" in qs:
+                    return qs["sitekey"][0], "frame_query_sitekey"
+                if "k" in qs:
+                    return qs["k"][0], "frame_query_k"
+    except Exception:
+        pass
+
+    # 3. Check page scripts or HTML content for 0x4 pattern
+    try:
+        content = await page.content()
+        m = re.search(r"(0x4[A-Za-z0-9_\-]{20,})", content)
+        if m:
+            return m.group(1), "page_content_regex"
+    except Exception:
+        pass
+
+    # 4. Check known sitekeys by domain
+    try:
+        host = urlparse(page.url).netloc.lower()
+        for domain, sk in KNOWN_SITEKEYS.items():
+            if domain in host:
+                return sk, f"known_sitekey({domain})"
+    except Exception:
+        pass
+
+    return None
 
 async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
     """
@@ -202,12 +394,25 @@ async def resolve_turnstile_if_present(
             source = target["source"]
             box = target["box"]
 
+            sk_info = await find_turnstile_sitekey(page)
             if logger:
+                sk_msg = f" | 🔑 Sitekey: {sk_info[0]} ({sk_info[1]})" if sk_info else ""
                 logger.info(
                     f"[turnstile] Challenge terdeteksi via {source}! "
                     f"Posisi: ({box['x']:.0f}, {box['y']:.0f}), {box['width']:.0f}x{box['height']:.0f}. "
-                    f"Target checkbox: ({click_x:.1f}, {click_y:.1f})"
+                    f"Target checkbox: ({click_x:.1f}, {click_y:.1f}){sk_msg}"
                 )
+            # ── 0. Fast-track via Turnstile Solver API if sitekey available ──
+            if sk_info:
+                sitekey = sk_info[0]
+                token = await solve_turnstile_via_api(page.url, sitekey, timeout_sec=15.0, logger=logger)
+                if token:
+                    await inject_turnstile_token(page, token, logger=logger)
+                    await asyncio.sleep(1.2)
+                    if await is_turnstile_solved(page):
+                        if logger:
+                            logger.info(f"[turnstile] Verifikasi sukses via API clearance token! URL: {page.url[:80]}...")
+                        return True
 
             # Wait briefly for widget to fully settle before clicking
             await asyncio.sleep(random.uniform(0.6, 1.2))

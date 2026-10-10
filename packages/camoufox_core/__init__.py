@@ -11,7 +11,14 @@ from .browser import (
 from .google_oauth import perform_google_oauth
 from .loaders import load_accounts, load_proxies, Account, Proxy
 from .store import JsonlStore, ResultWriter, FlowState
-from .turnstile import resolve_turnstile_if_present
+from .turnstile import (
+    resolve_turnstile_if_present,
+    find_turnstile_sitekey,
+    KNOWN_SITEKEYS,
+    solve_turnstile_via_api,
+    setup_turnstile_interceptor,
+    inject_turnstile_token,
+)
 from .log import create_logger, Logger
 from .tempmail import TempMailClient
 
@@ -26,6 +33,11 @@ __all__ = [
     "get_descendant_pids",
     "perform_google_oauth",
     "resolve_turnstile_if_present",
+    "find_turnstile_sitekey",
+    "KNOWN_SITEKEYS",
+    "solve_turnstile_via_api",
+    "setup_turnstile_interceptor",
+    "inject_turnstile_token",
     "load_accounts",
     "load_proxies",
     "Account",
