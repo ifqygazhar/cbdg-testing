@@ -364,15 +364,16 @@ async def recover_if_something_snapped(page, target_url: Optional[str] = None, l
 
 async def handle_finish_and_start_chatting(page, logger) -> bool:
     """
-    Handles 'One more step' screen after Google OAuth signup (tokenharbor-dataset/oauth-finish-after-signup.html)
+    Handles 'One more step' screen after Google OAuth signup (tokenharbor-dataset/oauth-finish-after-signup.html).
+    Returns True if onboarding screen was detected and clicked (new registration), False if directly dashboard.
     """
     for _ in range(12):
         if "/dashboard" in page.url:
-            return True
+            return False
         try:
             finish_btn = await page.query_selector('button:has-text("Finish and start chatting"), button[type="submit"]:has-text("Finish and start chatting")')
             if finish_btn:
-                logger.info("detected 'One more step' onboarding screen, clicking 'Finish and start chatting'...")
+                logger.info("detected 'One more step' onboarding screen (Akun Baru), clicking 'Finish and start chatting'...")
                 try:
                     await finish_btn.click(no_wait_after=True, timeout=10000)
                 except Exception:
@@ -950,6 +951,7 @@ async def run_single_google_account(
             # Dismiss analytics/cookie banner if present
             await dismiss_cookie_banner(page, logger=logger)
 
+            saw_onboarding = False
             if "/dashboard" not in page.url:
                 # Cek apakah landing page terblokir Turnstile (jika pakai proxy)
                 if proxy and await is_turnstile_detected(page, logger=logger):
@@ -1028,7 +1030,8 @@ async def run_single_google_account(
                     await resolve_turnstile_if_present(page, timeout_sec=15, logger=logger)
 
                 # ── 4. Handle "One more step" / Finish and start chatting ───
-                await handle_finish_and_start_chatting(page, logger)
+                if await handle_finish_and_start_chatting(page, logger):
+                    saw_onboarding = True
 
             # ── 5. Ensure Reached Dashboard ────────────────────────────────
             reached_dashboard = False
@@ -1037,7 +1040,8 @@ async def run_single_google_account(
                     reached_dashboard = True
                     break
                 if await page.query_selector('button:has-text("Finish and start chatting")'):
-                    await handle_finish_and_start_chatting(page, logger)
+                    if await handle_finish_and_start_chatting(page, logger):
+                        saw_onboarding = True
                 await asyncio.sleep(0.5)
 
             if not reached_dashboard and "/dashboard" not in page.url:
@@ -1047,7 +1051,12 @@ async def run_single_google_account(
                     await page.goto(DASHBOARD_URL, wait_until="domcontentloaded")
                     await human_delay(2000, 3500)
 
-            store.upsert({"email": email, "status": FlowState.DASHBOARD})
+            if saw_onboarding:
+                logger.info(f"✨ Akun {email}: Status REGISTRASI BARU (pertama kali mendaftar di TokenHarbor)")
+            else:
+                logger.info(f"🔑 Akun {email}: Status SUDAH TERDAFTAR SEBELUMNYA (login berhasil, lanjut mengambil/membuat API key)")
+
+            store.upsert({"email": email, "status": FlowState.DASHBOARD, "is_new_registration": saw_onboarding})
             await human_delay(2000, 3000)
 
             # ── 6. Enable Free Models (Idempotent) ──────────────────────────
