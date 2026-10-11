@@ -8,7 +8,11 @@ from .browser import (
     kill_descendant_processes,
     get_descendant_pids,
 )
-from .google_oauth import perform_google_oauth
+from .google_oauth import (
+    perform_google_oauth,
+    GooglePhoneVerificationException,
+    is_google_phone_verification,
+)
 from .loaders import load_accounts, load_proxies, Account, Proxy
 from .store import JsonlStore, ResultWriter, FlowState
 from .turnstile import (
@@ -32,6 +36,8 @@ __all__ = [
     "kill_descendant_processes",
     "get_descendant_pids",
     "perform_google_oauth",
+    "GooglePhoneVerificationException",
+    "is_google_phone_verification",
     "resolve_turnstile_if_present",
     "find_turnstile_sitekey",
     "KNOWN_SITEKEYS",

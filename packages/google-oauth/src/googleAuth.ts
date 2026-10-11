@@ -829,6 +829,34 @@ export async function isGoogleBlockedPage(page: Page): Promise<boolean> {
     .catch(() => false);
 }
 
+export async function isGooglePhoneVerificationChallenge(page: Page): Promise<boolean> {
+  if (!isGoogleUrl(page.url())) return false;
+  return page
+    .evaluate(() => {
+      const url = window.location.href.toLowerCase();
+      if (url.includes("challenge/ipp") || url.includes("challenge/kpp")) return true;
+
+      const phoneInput = document.querySelector(
+        'input[type="tel"], input#phoneNumberId, input[name="phoneNumber"], input[autocomplete="tel"], [data-challengetype="13"], [data-challengetype="9"]'
+      );
+      if (phoneInput) return true;
+
+      const text = (document.body?.innerText || "").toLowerCase();
+      return (
+        text.includes("enter a phone number to get a text message") ||
+        text.includes("enter a phone number") ||
+        text.includes("masukkan nomor telepon") ||
+        text.includes("standard message and data rates may apply") ||
+        text.includes("tarif pesan dan data standar") ||
+        text.includes("phone number cannot be used for verification") ||
+        text.includes("nomor telepon ini tidak dapat digunakan untuk verifikasi") ||
+        ((text.includes("verify it's you") || text.includes("verifikasi diri anda")) &&
+          (text.includes("phone number") || text.includes("nomor telepon")))
+      );
+    })
+    .catch(() => false);
+}
+
 // ── Consent advancement ─────────────────────────────────────────────
 
 async function isAtGoogleCredentialStep(page: Page): Promise<boolean> {
@@ -892,6 +920,7 @@ export async function advanceGoogleConsent(
   opts: GoogleOAuthOptions = {},
 ): Promise<boolean> {
   if (await isAtGoogleCredentialStep(page)) return false;
+  if (await isGooglePhoneVerificationChallenge(page)) return false;
   await page.waitForNetworkIdle({ idleTime: 500, timeout: 2000 }).catch(() => {});
   const button = await findGoogleConsentButton(page, email);
   if (!button) return false;
@@ -934,6 +963,7 @@ export async function performGoogleOAuth(
   await settlePage(page, pace);
 
   if (await isGoogleBlockedPage(page)) throw err("GOOGLE_BLOCKED", "browser not secure");
+  if (await isGooglePhoneVerificationChallenge(page)) throw err("GOOGLE_PHONE_VERIFICATION_REQUIRED", "phone verification required");
   await dismissCookieBanners(page, opts);
   await pause(opts);
 
@@ -942,6 +972,7 @@ export async function performGoogleOAuth(
 
   if (await isGoogleCaptchaPage(page)) await handleGoogleCaptcha(page, email, opts);
   if (await isGoogleBlockedPage(page)) throw err("GOOGLE_BLOCKED_AFTER_EMAIL", "blocked after email");
+  if (await isGooglePhoneVerificationChallenge(page)) throw err("GOOGLE_PHONE_VERIFICATION_REQUIRED", "phone verification required after email");
 
   const passResult = await maybeHandleGooglePassword(context, { email, password }, opts);
   if (passResult === "browser_not_secure") throw err("GOOGLE_BLOCKED_PASSWORD", "browser_not_secure");
@@ -958,6 +989,9 @@ export async function performGoogleOAuth(
     const googlePage = findGooglePageIn(pages);
     if (!googlePage) break;
 
+    if (await isGooglePhoneVerificationChallenge(googlePage)) {
+      throw err("GOOGLE_PHONE_VERIFICATION_REQUIRED", "phone verification required after password");
+    }
     if (await isGoogleCaptchaPage(googlePage)) await handleGoogleCaptcha(googlePage, email, opts);
     if (await isGoogleBlockedPage(googlePage)) throw err("GOOGLE_BLOCKED_AFTER_PASSWORD", "blocked after password");
 

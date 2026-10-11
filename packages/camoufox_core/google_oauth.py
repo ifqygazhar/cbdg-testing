@@ -8,6 +8,87 @@ from .log import Logger
 GOOGLE_AUTH_URL_RE = re.compile(r"accounts\.google\.com", re.I)
 RESTRICTED_RE = re.compile(r"(account\s+has\s+been\s+disabled|account\s+restricted|aktivitas\s+mencurigakan|tidak\s+dapat\s+memverifikasi)", re.I)
 
+class GooglePhoneVerificationException(RuntimeError):
+    """Raised when Google presents a phone number verification challenge (SMS / call)."""
+    pass
+
+PHONE_VERIFICATION_RE = re.compile(
+    r"(enter\s+a\s+phone\s+number|"
+    r"masukkan\s+nomor\s+telepon|"
+    r"standard\s+message\s+and\s+data\s+rates|"
+    r"tarif\s+pesan\s+dan\s+data\s+standar|"
+    r"phone\s+number\s+cannot\s+be\s+used\s+for\s+verification|"
+    r"nomor\s+telepon\s+ini\s+tidak\s+dapat\s+digunakan|"
+    r"phone\s+number\s+has\s+already\s+been\s+used|"
+    r"get\s+a\s+text\s+message\s+with\s+a\s+verification\s+code|"
+    r"dapatkan\s+sms\s+berisi\s+kode\s+verifikasi)",
+    re.I
+)
+
+async def is_google_phone_verification(page: Page) -> bool:
+    """
+    Detects whether Google is presenting a phone verification challenge screen
+    (requiring SMS / phone call verification code or entering a phone number).
+    """
+    try:
+        url = (page.url or "").lower()
+        if not GOOGLE_AUTH_URL_RE.search(url):
+            return False
+
+        # 1. Specific Google challenge URL endpoints for phone verification
+        if any(ep in url for ep in ["/challenge/ipp", "/challenge/kpp"]):
+            return True
+
+        # 2. Check for explicit phone input selectors
+        phone_input = await page.query_selector(
+            'input[type="tel"], input#phoneNumberId, input[name="phoneNumber"], '
+            'input[id="phoneNumberId"], input[autocomplete="tel"], input[autocomplete="tel-national"], '
+            'div[data-challengetype="13"], div[data-challengetype="9"]'
+        )
+        if phone_input:
+            try:
+                if await phone_input.is_visible():
+                    return True
+            except Exception:
+                return True
+
+        # 3. Check page content for explicit phone challenge phrasing
+        content = (await page.content() or "").lower()
+        phone_needles = [
+            "enter a phone number to get a text message",
+            "enter a phone number",
+            "masukkan nomor telepon untuk mendapatkan",
+            "masukkan nomor telepon",
+            "standard message and data rates may apply",
+            "tarif pesan dan data standar",
+            "google will store this number and only use it for security purposes",
+            "google akan menyimpan nomor ini",
+            "phone number cannot be used for verification",
+            "nomor telepon ini tidak dapat digunakan untuk verifikasi",
+            "this phone number has already been used too many times",
+            "nomor telepon ini sudah digunakan terlalu sering",
+            "get a verification code sent to your phone",
+            "dapatkan kode verifikasi yang dikirimkan ke ponsel",
+        ]
+        if any(needle in content for needle in phone_needles):
+            if "challenge" in url or "signin" in url or "identifier" in url or "v3/signin" in url:
+                return True
+
+        # 4. Check DOM evaluate for "Verify it's you" paired with phone cues
+        is_phone_chal = await page.evaluate("""() => {
+            const txt = (document.body ? document.body.innerText : '').toLowerCase();
+            const hasPhoneText = txt.includes('phone number') || txt.includes('nomor telepon');
+            const hasVerifyTitle = txt.includes("verify it's you") || txt.includes("verifikasi diri anda");
+            const hasPhoneInput = Boolean(document.querySelector('input[type="tel"], input#phoneNumberId, input[name="phoneNumber"]'));
+            return (hasVerifyTitle && hasPhoneText) || (hasPhoneInput && hasPhoneText);
+        }""")
+        if is_phone_chal:
+            return True
+
+    except Exception:
+        pass
+    return False
+
 async def find_google_page(context: BrowserContext, fallback_page: Page) -> Page:
     """Finds the page containing the Google sign in flow (same tab or popup)."""
     for page in context.pages:
@@ -60,7 +141,10 @@ async def perform_google_oauth(
     if not GOOGLE_AUTH_URL_RE.search(target_page.url):
         logger.warn(f"current URL is {target_page.url}, attempting to proceed")
 
-    # 2. Check for Account Restricted or Disabled
+    # 2. Check for Account Restricted or Disabled / Phone Verification
+    if await is_google_phone_verification(target_page):
+        raise GooglePhoneVerificationException("GOOGLE_PHONE_VERIFICATION: Google meminta verifikasi nomor HP")
+
     page_text = await target_page.content()
     if RESTRICTED_RE.search(page_text):
         raise RuntimeError("ACCOUNT_RESTRICTED: Akun Google dibatasi / dinonaktifkan")
@@ -95,6 +179,8 @@ async def perform_google_oauth(
     try:
         await target_page.wait_for_selector(pwd_sel, timeout=30000)
     except Exception as e:
+        if await is_google_phone_verification(target_page):
+            raise GooglePhoneVerificationException("GOOGLE_PHONE_VERIFICATION: Google meminta verifikasi nomor HP setelah email")
         # Check if Google gave a security check or restriction
         content = await target_page.content()
         if RESTRICTED_RE.search(content):
@@ -153,6 +239,11 @@ async def perform_google_oauth(
             pass
 
         current_url = target_page.url
+
+        # Check for Google Phone Verification challenge FIRST before any button clicks
+        if await is_google_phone_verification(target_page):
+            logger.warn(f"detected Google phone verification challenge on {current_url}")
+            raise GooglePhoneVerificationException("GOOGLE_PHONE_VERIFICATION: Google meminta verifikasi nomor HP")
 
         content = await target_page.content()
         content_lower = content.lower()
@@ -273,9 +364,13 @@ async def perform_google_oauth(
                 for btn in btns:
                     if await btn.is_visible() and await btn.is_enabled():
                         btn_text = (await btn.text_content() or "").strip()
-                        # Avoid clicking Next if we are still at email or password input step
+                        # Avoid clicking Next if we are still at email, password, or phone input step
                         if btn_text.lower() in ("next", "berikutnya") and (
-                            await target_page.query_selector('input[type="password"]') or await target_page.query_selector('#identifierId')
+                            await target_page.query_selector('input[type="password"]')
+                            or await target_page.query_selector('#identifierId')
+                            or await target_page.query_selector('input[type="tel"]')
+                            or await target_page.query_selector('#phoneNumberId')
+                            or await target_page.query_selector('input[name="phoneNumber"]')
                         ):
                             continue
                         logger.info(f"detected Google consent / speedbump button ('{btn_text}'), clicking...")

@@ -47,7 +47,7 @@ class JsonlStore:
         if not record or record.get("status") != FlowState.FAILED:
             return False
         err = (record.get("error") or "").lower()
-        return "restricted" in err or "disabled" in err or "banned" in err
+        return any(k in err for k in ["restricted", "disabled", "banned", "phone verification", "verifikasi nomor", "phone_verification"])
 
     def get_all_done_emails(self) -> Set[str]:
         return {

@@ -47,6 +47,7 @@ from packages.camoufox_core import (
     setup_turnstile_interceptor,
     inject_turnstile_token,
     perform_google_oauth,
+    GooglePhoneVerificationException,
 )
 from packages.camoufox_core.turnstile import find_turnstile_target
 
@@ -1147,6 +1148,11 @@ async def run_single_google_account(
             results.mark_success(email, password, api_key)
             return True
 
+    except GooglePhoneVerificationException as e:
+        logger.error(f"Akun Google {email} meminta verifikasi nomor HP ({e}). Akun gagal dan dilewati tanpa retry!")
+        store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e)})
+        results.mark_failed(email, password, str(e))
+        raise
     except TurnstileDetectedException as e:
         logger.warn(f"Cloudflare Turnstile terdeteksi saat proses akun {email}: {e}. Membatalkan percobaan dan rotasi proxy...")
         raise
@@ -1936,6 +1942,10 @@ async def run_single_reenable_account(
             else:
                 raise RuntimeError(f"Gagal memverifikasi/mengaktifkan akun {email} (API check HTTP {status}: {msg})")
 
+    except GooglePhoneVerificationException as e:
+        logger.error(f"Akun {email} terkena verifikasi nomor HP Google saat re-enable/re-verify: {e}")
+        store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e), "reenable_attempt": True})
+        raise
     except TurnstileDetectedException as e:
         logger.warn(f"Cloudflare Turnstile terdeteksi saat re-enable/re-verify akun {email}: {e}")
         raise
@@ -2115,6 +2125,7 @@ async def main_async():
                         break
 
                 turnstile_detected = False
+                phone_verification_detected = False
                 try:
                     ok, active_key = await run_single_reenable_account(
                         email=email,
@@ -2131,6 +2142,11 @@ async def main_async():
                         temp_mail=temp_mail,
                         reverify_mode=is_reverify,
                     )
+                except GooglePhoneVerificationException as pe:
+                    ok = False
+                    active_key = None
+                    phone_verification_detected = True
+                    acc_logger.error(f"Akun {email} terkena verifikasi nomor HP Google: {pe}. Melewati akun tanpa retry!")
                 except TurnstileDetectedException as te:
                     ok = False
                     active_key = None
@@ -2141,6 +2157,8 @@ async def main_async():
                     if proxy_pool and proxy:
                         if ok:
                             proxy_pool.mark_result(proxy, success=True)
+                        elif phone_verification_detected:
+                            logger.info(f"Worker #{worker_id}: Proxy {proxy.server} tidak diblacklist (kegagalan akun butuh verif HP).")
                         else:
                             proxy_pool.mark_result(proxy, success=False)
                             if turnstile_detected:
@@ -2149,6 +2167,8 @@ async def main_async():
                     if ok:
                         success_count += 1
                         logger.info(f"Progress {mode_label}: {success_count}/{target_count} akun sukses ({processed}/{target_count} diproses)")
+                    elif phone_verification_detected:
+                        logger.warn(f"Worker #{worker_id}: Akun {email} membutuhkan verifikasi nomor telepon Google. Dilewati secara permanen.")
                     elif turnstile_detected:
                         logger.info(f"Worker #{worker_id}: Turnstile pada proxy untuk {email}. Menunda akun ke akhir antrean...")
                         account_queue.append(item)
@@ -2157,6 +2177,8 @@ async def main_async():
                     if ok and args.delay > 0:
                         logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
                         await asyncio.sleep(args.delay)
+                    elif phone_verification_detected:
+                        await asyncio.sleep(1.0)
                     elif turnstile_detected:
                         await asyncio.sleep(0.5)
                     elif not ok:
@@ -2202,6 +2224,11 @@ async def main_async():
             ]
         else:
             logger.info("Retry mode active: prioritizing previously failed accounts at the front of the queue.")
+            # Even in retry mode, permanently unrecoverable accounts (restricted, banned, phone verification) must NOT be retried
+            eligible_accounts = [
+                acc for acc in eligible_accounts
+                if not store.is_restricted_or_banned(acc.email)
+            ]
             def sort_key(acc):
                 return 0 if acc.email.lower() in failed_emails else 1
             eligible_accounts.sort(key=sort_key)
@@ -2295,6 +2322,7 @@ async def main_async():
                     and attempts_per_account[account.email] < MAX_PROXY_ATTEMPTS - 1
                 )
                 turnstile_detected = False
+                phone_verification_detected = False
                 try:
                     ok = await run_single_google_account(
                         account=account,
@@ -2307,6 +2335,10 @@ async def main_async():
                         pace=args.pace,
                         mark_failed_on_error=(not will_retry_if_failed),
                     )
+                except GooglePhoneVerificationException as pe:
+                    ok = False
+                    phone_verification_detected = True
+                    acc_logger.error(f"Akun {account.email} terkena verifikasi nomor HP Google: {pe}. Melewati akun tanpa retry!")
                 except TurnstileDetectedException as te:
                     ok = False
                     turnstile_detected = True
@@ -2318,6 +2350,9 @@ async def main_async():
                         if ok:
                             proxy_pool.mark_result(proxy, success=True)
                             logger.info(f"Worker #{worker_id}: Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
+                        elif phone_verification_detected:
+                            # Masalah bukan pada proxy, jangan blacklist proxy
+                            logger.info(f"Worker #{worker_id}: Proxy {proxy.server} tidak diblacklist (kegagalan akun Google butuh verif HP).")
                         else:
                             proxy_pool.mark_result(proxy, success=False)
                             if turnstile_detected:
@@ -2328,6 +2363,13 @@ async def main_async():
                     if ok:
                         success_count += 1
                         logger.info(f"Progress: {success_count}/{target_count} accounts completed successfully.")
+                    elif phone_verification_detected:
+                        # Akun meminta verifikasi nomor HP Google:
+                        # JANGAN retry, JANGAN append ke account_queue!
+                        logger.warn(
+                            f"Worker #{worker_id}: Akun {account.email} memerlukan verifikasi nomor telepon Google. "
+                            f"Akun dilewati secara permanen dan TIDAK akan dicoba kembali (no retry)."
+                        )
                     elif turnstile_detected:
                         # Turnstile captcha detected on proxy:
                         # Jangan kurangi jatah attempt akun, jangan tandai gagal!
@@ -2361,6 +2403,9 @@ async def main_async():
                     if ok and args.delay > 0:
                         logger.info(f"Worker #{worker_id} waiting {args.delay}s before next account...")
                         await asyncio.sleep(args.delay)
+                    elif phone_verification_detected:
+                        logger.info(f"Worker #{worker_id} beralih langsung ke akun berikutnya...")
+                        await asyncio.sleep(1.0)
                     elif turnstile_detected:
                         # Rotasi cepat ke akun lain
                         await asyncio.sleep(0.5)

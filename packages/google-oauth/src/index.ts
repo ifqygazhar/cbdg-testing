@@ -31,6 +31,7 @@ export {
   findGooglePageIn,
   isGoogleCaptchaPage,
   isGoogleBlockedPage,
+  isGooglePhoneVerificationChallenge,
   type GoogleCredentials,
   type PasswordResult,
 } from "./googleAuth.js";
