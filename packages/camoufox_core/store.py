@@ -1,7 +1,8 @@
 import json
 import os
 import time
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, Union, List
+import re
 
 class FlowState:
     PENDING = "PENDING"
@@ -72,30 +73,44 @@ class JsonlStore:
         with open(self.filepath, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
-def read_emails_from_result_file(filepath: str) -> Set[str]:
+def read_emails_from_result_file(filepath: Union[str, List[str]]) -> Set[str]:
     emails: Set[str] = set()
-    if not filepath or not os.path.exists(filepath):
-        return emails
-    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            # Strip comment after #
-            main_part = line.split("#")[0].strip()
-            # Delimited by : or |
-            parts = [p.strip() for p in main_part.replace("|", ":").split(":") if p.strip()]
-            if parts:
-                first = parts[0].lower()
-                if "@" in first:
-                    emails.add(first)
+    paths = [filepath] if isinstance(filepath, str) else filepath
+    email_regex = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
+    for fp in paths:
+        if not fp or not os.path.exists(fp):
+            continue
+        with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Strip comment after # if preceded by space or colon
+                main_part = line.split(" #")[0].strip() if " #" in line else line
+                # Delimited by : or |
+                parts = [p.strip() for p in main_part.replace("|", ":").split(":") if p.strip()]
+                if parts and "@" in parts[0]:
+                    emails.add(parts[0].lower().strip())
+                else:
+                    m = email_regex.search(line)
+                    if m:
+                        emails.add(m.group(0).lower().strip())
     return emails
 
 class ResultWriter:
-    def __init__(self, key_files: list[str], account_result_file: str, account_failed_file: str):
+    def __init__(
+        self,
+        key_files: list[str],
+        account_result_file: str,
+        account_failed_file: str,
+        fallback_result_files: Optional[List[str]] = None,
+        fallback_failed_files: Optional[List[str]] = None,
+    ):
         self.key_files = key_files
         self.account_result_file = account_result_file
         self.account_failed_file = account_failed_file
+        self.fallback_result_files = fallback_result_files or []
+        self.fallback_failed_files = fallback_failed_files or []
 
     def mark_success(self, email: str, password: str = "", api_key: str = "", extra: str = ""):
         # Save API key to key files
@@ -137,10 +152,12 @@ class ResultWriter:
         return self.mark_failed(email, password_or_reason, reason)
 
     def get_successful_emails(self) -> Set[str]:
-        return read_emails_from_result_file(self.account_result_file)
+        target_files = [self.account_result_file] + [f for f in self.fallback_result_files if f != self.account_result_file]
+        return read_emails_from_result_file(target_files)
 
     def get_failed_emails(self) -> Set[str]:
-        return read_emails_from_result_file(self.account_failed_file)
+        target_files = [self.account_failed_file] + [f for f in self.fallback_failed_files if f != self.account_failed_file]
+        return read_emails_from_result_file(target_files)
 
     def getSuccessfulEmails(self) -> Set[str]:
         return self.get_successful_emails()

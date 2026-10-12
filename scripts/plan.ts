@@ -227,19 +227,25 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd()): Set
   const completed = new Set<string>();
 
   const resultFiles: Record<AppName, string[]> = {
-    tokenharbor: ["akun-result-tokenharbor.txt"],
+    tokenharbor: [
+      "akun-result-tokenharbor.txt",
+      "vps/akun-result-tokenharbor.txt",
+      "akun-good-tokenharbor.txt",
+      "vps/akun-good-tokenharbor.txt",
+      "gsuite-api-key.txt",
+    ],
     fastrouter: ["akun-result-fastrouter.txt"],
     crusoe: ["akun-result-crusoe.txt"],
     cbdg: ["akun-result.txt"],
     webshare: ["akun-result-webshare.txt"],
     groqcloud: ["akun-result-groqcloud.txt"],
-    llm7io: ["akun-result-llm7io.txt", "apikey-llm7io.txt"],
+    llm7io: ["akun-result-llm7io.txt", "apikey-llm7io.txt", "vps/apikey-llm7io.txt"],
     "proxy-check": [],
     "key-checker": [],
   };
 
   const stateFiles: Record<AppName, string[]> = {
-    tokenharbor: ["state.jsonl", "state-tokenharbor.jsonl"],
+    tokenharbor: ["state.jsonl", "state-tokenharbor.jsonl", "vps/state.jsonl"],
     fastrouter: ["state-fastrouter.jsonl", "state.jsonl"],
     crusoe: ["state-crusoe.jsonl", "state.jsonl"],
     cbdg: ["state.jsonl"],

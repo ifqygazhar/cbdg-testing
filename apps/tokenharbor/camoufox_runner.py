@@ -37,6 +37,7 @@ from packages.camoufox_core import (
     JsonlStore,
     ResultWriter,
     FlowState,
+    read_emails_from_result_file,
     create_logger,
     setup_process_signals,
     kill_descendant_processes,
@@ -908,12 +909,14 @@ async def run_single_google_account(
     pace: str = "human",
     mark_failed_on_error: bool = True,
 ) -> bool:
-    email = account.email
+    email = account.email.strip()
+    norm_email = email.lower()
     password = account.password
 
-    # Absolute safeguard: if account already completed or has api key, NEVER rerun!
-    if email.lower() in results.get_successful_emails() or store.is_done(email):
-        logger.info(f"Safeguard: {email} is already completed / successful (API key exists). Skipping execution.")
+    # Absolute safeguard: if account already completed or has api key in ANY result file / state, NEVER rerun!
+    completed_lookup = get_completed_emails(store, results, getattr(store, "filepath", "state.jsonl"))
+    if norm_email in completed_lookup or store.is_done(email) or store.is_done(norm_email):
+        logger.info(f"Safeguard: Akun {email} sudah terdaftar / sukses sebelumnya (tercatat di akun-result-tokenharbor.txt / state). Langsung lewati tanpa membuka browser!")
         return True
 
     logger.info(f"starting TokenHarbor Google OAuth signup for {email} (proxy={proxy.server if proxy else 'direct'}, pace={pace})")
@@ -1963,42 +1966,126 @@ async def run_single_reenable_account(
         store.upsert({"email": email, "status": FlowState.FAILED, "error": str(e), "reenable_attempt": True})
         return False, None
 
+def get_all_tokenharbor_result_files() -> List[str]:
+    """
+    Returns all candidate TokenHarbor result file paths, checked across CWD and repo root.
+    """
+    candidates = [
+        "akun-result-tokenharbor.txt",
+        "vps/akun-result-tokenharbor.txt",
+        "akun-good-tokenharbor.txt",
+        "vps/akun-good-tokenharbor.txt",
+        "gsuite-api-key.txt",
+        "tokenharbor-dataset/akun-result-tokenharbor.txt",
+        "../akun-result-tokenharbor.txt",
+        "../../akun-result-tokenharbor.txt",
+        "../vps/akun-result-tokenharbor.txt",
+        "../../vps/akun-result-tokenharbor.txt",
+    ]
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    for rf in [
+        "akun-result-tokenharbor.txt",
+        "vps/akun-result-tokenharbor.txt",
+        "akun-good-tokenharbor.txt",
+        "vps/akun-good-tokenharbor.txt",
+        "gsuite-api-key.txt",
+    ]:
+        candidates.append(os.path.join(repo_root, rf))
+
+    existing: List[str] = []
+    seen = set()
+    for p in candidates:
+        abs_p = os.path.abspath(p)
+        if abs_p not in seen and os.path.exists(abs_p):
+            seen.add(abs_p)
+            existing.append(abs_p)
+    return existing
+
+def get_all_tokenharbor_failed_files() -> List[str]:
+    candidates = [
+        "akun-failed-tokenharbor.txt",
+        "vps/akun-failed-tokenharbor.txt",
+        "../akun-failed-tokenharbor.txt",
+        "../../akun-failed-tokenharbor.txt",
+    ]
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    for ff in ["akun-failed-tokenharbor.txt", "vps/akun-failed-tokenharbor.txt"]:
+        candidates.append(os.path.join(repo_root, ff))
+
+    existing: List[str] = []
+    seen = set()
+    for p in candidates:
+        abs_p = os.path.abspath(p)
+        if abs_p not in seen and os.path.exists(abs_p):
+            seen.add(abs_p)
+            existing.append(abs_p)
+    return existing
+
+def get_all_tokenharbor_state_files(current_state_file: str = "") -> List[str]:
+    candidates = [
+        "state.jsonl",
+        "state-tokenharbor.jsonl",
+        "vps/state.jsonl",
+        "../state.jsonl",
+        "../../state.jsonl",
+    ]
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    for sf in ["state.jsonl", "state-tokenharbor.jsonl", "vps/state.jsonl"]:
+        candidates.append(os.path.join(repo_root, sf))
+
+    existing: List[str] = []
+    seen = set()
+    curr_abs = os.path.abspath(current_state_file) if current_state_file else ""
+    for p in candidates:
+        abs_p = os.path.abspath(p)
+        if abs_p not in seen and os.path.exists(abs_p) and abs_p != curr_abs:
+            seen.add(abs_p)
+            existing.append(abs_p)
+    return existing
+
 def get_completed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str) -> Set[str]:
     """
     Returns the unified set of all email addresses that have successfully completed TokenHarbor registration
     and obtained an API key, checked across all sources:
     1. akun-result-tokenharbor.txt (and any result files configured on results)
     2. Primary JsonlStore (status == FlowState.DONE)
-    3. Fallback state files (state.jsonl, state-tokenharbor.jsonl)
+    3. Fallback state files (state.jsonl, state-tokenharbor.jsonl, vps/state.jsonl)
+    4. All candidate TokenHarbor result files across repo (vps, good, gsuite-api-key, etc.)
     """
     completed: Set[str] = set()
     completed.update(results.get_successful_emails())
     completed.update(store.get_all_done_emails())
 
-    for sf in ["state.jsonl", "state-tokenharbor.jsonl"]:
-        if os.path.exists(sf) and os.path.abspath(sf) != os.path.abspath(current_state_file):
-            try:
-                alt = JsonlStore(sf)
-                completed.update(alt.get_all_done_emails())
-            except Exception:
-                pass
+    res_files = get_all_tokenharbor_result_files()
+    if res_files:
+        completed.update(read_emails_from_result_file(res_files))
 
-    return completed
+    for sf in get_all_tokenharbor_state_files(current_state_file):
+        try:
+            alt = JsonlStore(sf)
+            completed.update(alt.get_all_done_emails())
+        except Exception:
+            pass
+
+    return {e.strip().lower() for e in completed if e and "@" in e}
 
 def get_failed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str) -> Set[str]:
     failed: Set[str] = set()
     failed.update(results.get_failed_emails())
     failed.update(store.get_all_failed_emails())
 
-    for sf in ["state.jsonl", "state-tokenharbor.jsonl"]:
-        if os.path.exists(sf) and os.path.abspath(sf) != os.path.abspath(current_state_file):
-            try:
-                alt = JsonlStore(sf)
-                failed.update(alt.get_all_failed_emails())
-            except Exception:
-                pass
+    fail_files = get_all_tokenharbor_failed_files()
+    if fail_files:
+        failed.update(read_emails_from_result_file(fail_files))
 
-    return failed
+    for sf in get_all_tokenharbor_state_files(current_state_file):
+        try:
+            alt = JsonlStore(sf)
+            failed.update(alt.get_all_failed_emails())
+        except Exception:
+            pass
+
+    return {e.strip().lower() for e in failed if e and "@" in e}
 
 async def main_async():
     parser = argparse.ArgumentParser(description="TokenHarbor Camoufox runner (Google OAuth / TempMail + Camoufox)")
@@ -2046,6 +2133,8 @@ async def main_async():
         key_files=key_files,
         account_result_file="akun-result-tokenharbor.txt",
         account_failed_file="akun-failed-tokenharbor.txt",
+        fallback_result_files=get_all_tokenharbor_result_files(),
+        fallback_failed_files=get_all_tokenharbor_failed_files(),
     )
 
     logger = create_logger()
@@ -2237,6 +2326,7 @@ async def main_async():
             eligible_accounts = [
                 acc for acc in eligible_accounts
                 if not store.is_restricted_or_banned(acc.email)
+                and acc.email.lower() not in completed_emails
             ]
             def sort_key(acc):
                 return 0 if acc.email.lower() in failed_emails else 1

@@ -57,6 +57,17 @@ export async function runTokenHarborAccount(
   });
 
   // 1. Resolve email & password (generate via TempMail if none provided)
+  if (givenAccount?.email) {
+    const norm = givenAccount.email.trim().toLowerCase();
+    if (results.getSuccessfulEmails().has(norm) || store.get(norm)?.status === FlowState.DONE) {
+      createLog({ email: givenAccount.email })(
+        "info",
+        `safeguard: email ${givenAccount.email} sudah terdaftar di result file / state. Melewati akun tanpa proses ulang.`,
+      );
+      return { success: true, email: givenAccount.email };
+    }
+  }
+
   let email = givenAccount?.email;
   const password = givenAccount?.password || cfg.defaultPassword;
 

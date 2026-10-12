@@ -74,15 +74,23 @@ export class JsonlStore {
 }
 
 // ── Result writer: akun-result-tokenharbor.txt / apikey-tokenharbor.txt ──
-function readEmails(file: string): Set<string> {
+function readEmails(fileOrFiles: string | string[]): Set<string> {
   const out = new Set<string>();
-  if (!file || !fs.existsSync(file)) return out;
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const email = t.split("#")[0].split(/[:|]/)[0].trim().toLowerCase();
-    if (email && email.includes("@")) {
-      out.add(email);
+  const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+  const emailRegex = /[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/;
+  for (const file of files) {
+    if (!file || !fs.existsSync(file)) continue;
+    for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const clean = t.includes(" #") ? t.split(" #")[0].trim() : t;
+      const email = clean.split(/[:|]/)[0].trim().toLowerCase();
+      if (email && email.includes("@")) {
+        out.add(email);
+      } else {
+        const m = t.match(emailRegex);
+        if (m) out.add(m[0].toLowerCase());
+      }
     }
   }
   return out;
@@ -127,10 +135,24 @@ export class ResultWriter {
   }
 
   getSuccessfulEmails(): Set<string> {
-    return readEmails(this.successFile);
+    const candidateFiles = [
+      this.successFile,
+      "akun-result-tokenharbor.txt",
+      "vps/akun-result-tokenharbor.txt",
+      "akun-good-tokenharbor.txt",
+      "vps/akun-good-tokenharbor.txt",
+      "gsuite-api-key.txt",
+      "tokenharbor-dataset/akun-result-tokenharbor.txt",
+    ];
+    return readEmails(candidateFiles);
   }
 
   getFailedEmails(): Set<string> {
-    return readEmails(this.failedFile);
+    const candidateFiles = [
+      this.failedFile,
+      "akun-failed-tokenharbor.txt",
+      "vps/akun-failed-tokenharbor.txt",
+    ];
+    return readEmails(candidateFiles);
   }
 }
