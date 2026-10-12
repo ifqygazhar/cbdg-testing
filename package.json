@@ -10,6 +10,7 @@
     "start": "bun run scripts/run.ts",
     "build:dist": "bun run scripts/build-dist.ts",
     "proxy-check": "bun run scripts/proxy-check.ts",
+    "proxy-dedupe": "bun run scripts/proxy-check.ts --dedupe",
     "build": "echo no-build-needed (bun runs TS directly)",
     "test": "bun run test:library && bun run test:app-units && bun run test:runner && bun run test:queue && bun run test:crusoe-units && bun run test:crusoe-queue && bun run test:webshare-units && bun run test:webshare-queue && bun run test:fastrouter-units && bun run test:fastrouter-queue && bun run test:tokenharbor-units && bun run test:tokenharbor-queue && bun run test:groqcloud-units && bun run test:groqcloud-queue && bun run test:llm7io-units && bun run test:launcher && bun run test:proxy-check",
     "test:library": "bun test packages/google-oauth/src/config.test.ts packages/google-oauth/src/units.test.ts packages/google-oauth/src/tempmail.test.ts packages/google-oauth/src/browser.integration.test.ts",

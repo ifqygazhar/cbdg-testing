@@ -46,7 +46,7 @@ async function askPlan(): Promise<RunPlan> {
 
   const app = await select<AppName>("Mau jalankan yang mana?", [
     { value: "webshare", label: "webshare", hint: "daftar via Google → panen proxy gratis ke proxy.txt" },
-    { value: "proxy-check", label: "cek proxy", hint: "proxy.txt → uji hidup/mati → proxy-live.txt" },
+    { value: "proxy-check", label: "cek proxy", hint: "proxy.txt → uji hidup/mati / format & dedupe unik" },
     { value: "key-checker", label: "cek apikey", hint: "uji status valid / kuota / rate limit API key berbagai provider" },
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
     { value: "fastrouter", label: "fastrouter", hint: "daftar FastRouter → kredit $1 + API key ke apikey-fastrouter" },
@@ -68,6 +68,44 @@ async function askPlan(): Promise<RunPlan> {
         workers: 1,
       };
     }
+    const proxyAction = await select<"check" | "dedupe">("Pilih aksi untuk proxy checker:", [
+      {
+        value: "check",
+        label: "Uji hidup/mati (Liveness Scan)",
+        hint: "cek proxy.txt satu per satu → tulis proxy aktif ke proxy-live.txt",
+      },
+      {
+        value: "dedupe",
+        label: "Format & Hapus Duplikat (Deduplicate)",
+        hint: "format & hilangkan semua proxy duplikat agar tersisa yang unik saja",
+      },
+    ]);
+
+    if (proxyAction === "dedupe") {
+      const targetFile = await select<string>("File mana yang ingin diformat & dibersihkan duplikatnya?", [
+        { value: "all", label: "Semua (proxy.txt dan proxy-live.txt)", hint: "bersihkan duplikat di kedua pool sekaligus (disarankan)" },
+        { value: "proxy.txt", label: "proxy.txt saja", hint: "pool mentah hasil panen webshare" },
+        { value: "proxy-live.txt", label: "proxy-live.txt saja", hint: "pool proxy live yang siap pakai" },
+      ]);
+      const styleChoice = await select<"raw" | "url" | "colon">("Format penulisan proxy output?", [
+        { value: "raw", label: "Format Asli Bersih (Default)", hint: "pertahankan format asli yang sudah valid tanpa duplikat" },
+        { value: "url", label: "Format URL Standar", hint: "format ke protocol://[user:pass@]host:port standar" },
+        { value: "colon", label: "Format Titik Dua (host:port:user:pass)", hint: "format ke host:port[:user:pass] tanpa scheme" },
+      ]);
+      return {
+        app,
+        pace: "human",
+        headless: false,
+        retryFailed: false,
+        dryRun: false,
+        delaySec: 0,
+        workers: 1,
+        proxyDedupe: true,
+        proxyDedupeTarget: targetFile,
+        proxyFormatStyle: styleChoice,
+      };
+    }
+
     const targetSite = await select<string>("Uji untuk target website apa?", [
       { value: "", label: "Umum (semua situs)", hint: "uji liveness & IP echo via ipv4.webshare.io (default)" },
       { value: "https://dash.llm7.io", label: "LLM7.io", hint: "uji liveness + akses langsung ke dash.llm7.io" },

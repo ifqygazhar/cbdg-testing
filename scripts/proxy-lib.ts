@@ -173,6 +173,111 @@ export function parseProxyFile(text: string): ParseProxyFileResult {
   return { entries, skipped, duplicates };
 }
 
+export type ProxyFormatStyle = "raw" | "url" | "colon";
+
+export interface DedupeOptions {
+  /** Mode deduplikasi: 'endpoint' (host:port, default) atau 'exact' (string baris persis) */
+  mode?: "endpoint" | "exact";
+  /** Format penulisan baris output: 'raw' (format asli bersih), 'url' (standard url), 'colon' (host:port[:user:pass]) */
+  style?: ProxyFormatStyle;
+  /** Tambahkan komentar header di awal file */
+  header?: boolean;
+}
+
+export interface DedupeResult {
+  totalLines: number;
+  uniqueCount: number;
+  duplicatesRemoved: number;
+  invalidSkipped: number;
+  skippedLines: string[];
+  entries: ProxyEntry[];
+  output: string;
+}
+
+export function formatProxyEntry(entry: ProxyEntry, style: ProxyFormatStyle = "raw"): string {
+  if (style === "url") return entry.url;
+  if (style === "colon") {
+    return entry.username && entry.password
+      ? `${entry.hostname}:${entry.port}:${entry.username}:${entry.password}`
+      : `${entry.hostname}:${entry.port}`;
+  }
+  return entry.raw;
+}
+
+/**
+ * Format dan bersihkan daftar proxy: hilangkan semua duplikat agar tersisa proxy yang unik.
+ */
+export function dedupeAndFormatProxies(
+  text: string,
+  options: DedupeOptions = {}
+): DedupeResult {
+  const mode = options.mode ?? "endpoint";
+  const style = options.style ?? "raw";
+  const lines = text.split(/\r?\n/);
+
+  let totalLines = 0;
+  for (const l of lines) {
+    const t = l.trim();
+    if (t && !t.startsWith("#")) totalLines++;
+  }
+
+  const entries: ProxyEntry[] = [];
+  const skippedLines: string[] = [];
+  const seenMap = new Map<string, number>();
+  let duplicatesRemoved = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const entry = parseProxyLine(trimmed);
+    if (!entry) {
+      skippedLines.push(trimmed);
+      continue;
+    }
+
+    const key = mode === "exact" ? entry.raw : entry.hostPort;
+    const existingIdx = seenMap.get(key);
+    if (existingIdx !== undefined) {
+      duplicatesRemoved++;
+      if (mode === "endpoint") {
+        const existing = entries[existingIdx];
+        if (!existing.username && entry.username) {
+          entries[existingIdx] = entry;
+        }
+      }
+      continue;
+    }
+
+    seenMap.set(key, entries.length);
+    entries.push(entry);
+  }
+
+  const formattedLines = entries.map((e) => formatProxyEntry(e, style));
+
+  const headerLines: string[] = [];
+  if (options.header) {
+    headerLines.push(
+      `# proxy unik per ${new Date().toISOString()}`,
+      `# total: ${entries.length} unik (${duplicatesRemoved} duplikat dihapus, ${skippedLines.length} baris tidak valid dilewati)`
+    );
+  }
+
+  const output =
+    (headerLines.length > 0 ? headerLines.join("\n") + "\n" : "") +
+    (formattedLines.length > 0 ? formattedLines.join("\n") + "\n" : "");
+
+  return {
+    totalLines,
+    uniqueCount: entries.length,
+    duplicatesRemoved,
+    invalidSkipped: skippedLines.length,
+    skippedLines,
+    entries,
+    output,
+  };
+}
+
 const IP_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
 /** The check endpoint answers with the caller's IP and nothing else. */

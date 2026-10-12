@@ -274,6 +274,14 @@ describe("proxy-check as a menu action", () => {
     expect(buildArgs(withFlags)).toEqual(["--target", "https://tokenharbor.ai", "--append"]);
     expect(commandLine(withFlags)).toBe("bun run proxy-check -- --target https://tokenharbor.ai --append");
   });
+  it("passes dedupe flags when dedupe action is chosen", () => {
+    const dedupeAll: RunPlan = { ...plan, proxyDedupe: true, proxyDedupeTarget: "all", proxyFormatStyle: "url" };
+    expect(buildArgs(dedupeAll)).toEqual(["--dedupe", "--all", "--style", "url"]);
+    expect(commandLine(dedupeAll)).toBe("bun run proxy-check -- --dedupe --all --style url");
+
+    const dedupeLive: RunPlan = { ...plan, proxyDedupe: true, proxyDedupeTarget: "proxy-live.txt", proxyFormatStyle: "colon" };
+    expect(buildArgs(dedupeLive)).toEqual(["--dedupe", "--in", "proxy-live.txt", "--style", "colon"]);
+  });
   it("is flagged as a tool, not an account run", () => {
     expect(IS_TOOL["proxy-check"]).toBe(true);
     expect(IS_TOOL.cbdg).toBe(false);

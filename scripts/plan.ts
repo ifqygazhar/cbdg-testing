@@ -51,6 +51,9 @@ export interface RunPlan {
   domain?: string;
   proxyTarget?: string;
   proxyAppend?: boolean;
+  proxyDedupe?: boolean;
+  proxyDedupeTarget?: string;
+  proxyFormatStyle?: "raw" | "url" | "colon";
   reEnableFree?: boolean;
   reverifyEmail?: boolean;
   accountsFile?: string;
@@ -100,6 +103,18 @@ export function buildArgs(plan: RunPlan): string[] {
   if (IS_TOOL[plan.app]) {
     if (plan.app === "key-checker") return [];
     const toolArgs: string[] = [];
+    if (plan.proxyDedupe) {
+      toolArgs.push("--dedupe");
+      if (plan.proxyDedupeTarget === "all") {
+        toolArgs.push("--all");
+      } else if (plan.proxyDedupeTarget && plan.proxyDedupeTarget !== "proxy.txt") {
+        toolArgs.push("--in", plan.proxyDedupeTarget);
+      }
+      if (plan.proxyFormatStyle && plan.proxyFormatStyle !== "raw") {
+        toolArgs.push("--style", plan.proxyFormatStyle);
+      }
+      return toolArgs;
+    }
     if (plan.proxyTarget) toolArgs.push("--target", plan.proxyTarget);
     if (plan.proxyAppend) toolArgs.push("--append");
     return toolArgs;

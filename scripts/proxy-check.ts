@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   checkSocks,
+  dedupeAndFormatProxies,
   judge,
   mask,
   parseProxyFile,
@@ -17,6 +18,7 @@ import {
   summarise,
   type CheckResult,
   type ProxyEntry,
+  type ProxyFormatStyle,
 } from "./proxy-lib.js";
 import { ui } from "./prompt.js";
 
@@ -31,6 +33,12 @@ export interface CheckOptions {
   force: boolean;
   append: boolean;
   skipExisting: boolean;
+  dedupe: boolean;
+  dedupeAll: boolean;
+  dedupeFirst: boolean;
+  style: ProxyFormatStyle;
+  mode: "endpoint" | "exact";
+  backup: boolean;
 }
 
 export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
@@ -44,6 +52,12 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
     force: false,
     append: false,
     skipExisting: false,
+    dedupe: false,
+    dedupeAll: false,
+    dedupeFirst: false,
+    style: "raw",
+    mode: "endpoint",
+    backup: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -58,15 +72,37 @@ export function parseArgs(argv: string[], cwd = process.cwd()): CheckOptions {
     else if (a === "--force") o.force = true;
     else if (a === "--append" || a === "-a") o.append = true;
     else if (a === "--skip-existing" || a === "-s") o.skipExisting = true;
+    else if (a === "--dedupe" || a === "--unique" || a === "--clean" || a === "--format") o.dedupe = true;
+    else if (a === "--all" || a === "--dedupe-all") { o.dedupe = true; o.dedupeAll = true; }
+    else if (a === "--dedupe-first") o.dedupeFirst = true;
+    else if (a === "--backup") o.backup = true;
+    else if (a === "--style") {
+      const s = next()?.toLowerCase();
+      if (s === "url" || s === "colon" || s === "raw") o.style = s as ProxyFormatStyle;
+    }
+    else if (a === "--by" || a === "--mode") {
+      const m = next()?.toLowerCase();
+      if (m === "exact" || m === "endpoint") o.mode = m;
+    }
     else if (a === "--help" || a === "-h") {
       console.log(
         [
           "Usage: bun run proxy-check [--in FILE] [--out FILE] [--dead FILE]",
           "                           [--timeout SEC] [-c N] [--url URL] [--target URL] [--append] [--skip-existing] [--force]",
+          "                           [--dedupe] [--all] [--style raw|url|colon] [--by endpoint|exact] [--backup] [--dedupe-first]",
           "",
           "  Membaca proxy.txt, mengecek satu per satu, dan langsung menulis yang",
           "  hidup ke proxy-live.txt secara real-time (tanpa perlu menunggu scan beres).",
           "",
+          "  Fitur Format & Deduplikasi (Hilangkan Duplikat):",
+          "  --dedupe, --unique  format & hilangkan semua duplikat agar tersisa proxy yang unik",
+          "  --all, --dedupe-all bersihkan duplikat pada proxy.txt dan proxy-live.txt sekaligus",
+          "  --style STYLE       format baris: raw (default), url (standard protocol://...), colon (host:port[:user:pass])",
+          "  --by MODE           kriteria duplikat: endpoint (IP:port sama, default) atau exact (string baris persis)",
+          "  --backup            buat cadangan file .bak sebelum menimpa file asli",
+          "  --dedupe-first      bersihkan duplikat file input sebelum mulai liveness check",
+          "",
+          "  Fitur Liveness Check:",
           "  --target            verifikasi juga akses ke situs target (misal https://tokenharbor.ai)",
           "  --append, -a        tambahkan ke proxy-live.txt yang sudah ada (tidak menimpa)",
           "  --skip-existing, -s abaikan proxy yang sudah ada di file output (jangan dicek ulang)",
@@ -170,6 +206,74 @@ export function renderLiveFile(alive: CheckResult[], opts: CheckOptions, total: 
 
 export async function main(argv: string[]): Promise<number> {
   const opts = parseArgs(argv);
+  const hasExplicitOut = argv.includes("--out");
+
+  // ── Mode Format & Deduplikasi (Hilangkan Duplikat) ──────────────────
+  if (opts.dedupe) {
+    console.log(`\n${ui.bold("format & bersihkan duplikat proxy")} ${ui.dim(`mode: ${opts.mode} · style: ${opts.style}`)}\n`);
+    const filesToProcess: { in: string; out: string }[] = [];
+
+    if (opts.dedupeAll) {
+      const p1 = path.resolve(process.cwd(), "proxy.txt");
+      const p2 = path.resolve(process.cwd(), "proxy-live.txt");
+      if (fs.existsSync(p1)) filesToProcess.push({ in: p1, out: p1 });
+      if (fs.existsSync(p2)) filesToProcess.push({ in: p2, out: p2 });
+      if (filesToProcess.length === 0) {
+        console.error(ui.red("[proxy-check] Tidak ada file proxy.txt atau proxy-live.txt yang ditemukan."));
+        return 1;
+      }
+    } else {
+      if (!fs.existsSync(opts.input)) {
+        console.error(ui.red(`[proxy-check] ${path.basename(opts.input)} tidak ditemukan.`));
+        return 1;
+      }
+      const outTarget = hasExplicitOut ? opts.output : opts.input;
+      filesToProcess.push({ in: opts.input, out: outTarget });
+    }
+
+    let totalCleanedDuplicates = 0;
+    for (const f of filesToProcess) {
+      if (!fs.existsSync(f.in)) {
+        console.log(ui.yellow(`  file ${path.basename(f.in)} tidak ditemukan, dilewati.`));
+        continue;
+      }
+      const rawText = fs.readFileSync(f.in, "utf8");
+      const res = dedupeAndFormatProxies(rawText, {
+        mode: opts.mode,
+        style: opts.style,
+      });
+      totalCleanedDuplicates += res.duplicatesRemoved;
+
+      if (opts.backup && path.resolve(f.in) === path.resolve(f.out)) {
+        fs.writeFileSync(`${f.in}.bak`, rawText, "utf8");
+      }
+      fs.writeFileSync(f.out, res.output, "utf8");
+
+      const isSameFile = path.resolve(f.in) === path.resolve(f.out);
+      console.log(`  ${ui.bold(path.basename(f.in))}:`);
+      console.log(`    • Total baris dibaca    : ${res.totalLines.toLocaleString()}`);
+      console.log(`    • Proxy duplikat dihapus: ${ui.yellow(res.duplicatesRemoved.toLocaleString())} ${opts.mode === "exact" ? "(string persis)" : "(IP & port sama)"}`);
+      if (res.invalidSkipped > 0) {
+        console.log(`    • Baris rusak/dilewati  : ${ui.red(res.invalidSkipped.toLocaleString())}`);
+      }
+      console.log(`    • Proxy unik tersisa    : ${ui.green(res.uniqueCount.toLocaleString())}`);
+      console.log(`    ${ui.green("→")} Disimpan ke: ${ui.bold(path.basename(f.out))}${isSameFile ? " (diperbarui langsung)" : ""}\n`);
+    }
+
+    console.log(ui.green(`✔ Format & pembersihan duplikat selesai! Total ${totalCleanedDuplicates.toLocaleString()} duplikat disingkirkan.\n`));
+    return 0;
+  }
+
+  // Pra-cek deduplikasi pada input file jika diminta
+  if (opts.dedupeFirst && fs.existsSync(opts.input)) {
+    const rawText = fs.readFileSync(opts.input, "utf8");
+    const res = dedupeAndFormatProxies(rawText, { mode: opts.mode, style: opts.style });
+    if (res.duplicatesRemoved > 0) {
+      if (opts.backup) fs.writeFileSync(`${opts.input}.bak`, rawText, "utf8");
+      fs.writeFileSync(opts.input, res.output, "utf8");
+      console.log(ui.dim(`  [pra-cek] ${res.duplicatesRemoved.toLocaleString()} duplikat di ${path.basename(opts.input)} telah dibersihkan terlebih dahulu.\n`));
+    }
+  }
 
   if (!fs.existsSync(opts.input)) {
     console.error(ui.red(`[proxy-check] ${path.basename(opts.input)} tidak ada — jalankan webshare dulu.`));
@@ -338,6 +442,12 @@ export async function main(argv: string[]): Promise<number> {
     fs.writeFileSync(opts.output, renderLiveFile(uniqueAlive, opts, results.length), "utf8");
     console.log(`  ${ui.green("→")} ${uniqueAlive.length} proxy ditulis ke ${ui.bold(path.basename(opts.output))} (diurutkan dari tercepat)`);
   } else if (opts.append && newLiveCount > 0) {
+    if (fs.existsSync(opts.output)) {
+      const cleanLive = dedupeAndFormatProxies(fs.readFileSync(opts.output, "utf8"), { mode: "endpoint" });
+      if (cleanLive.duplicatesRemoved > 0) {
+        fs.writeFileSync(opts.output, cleanLive.output, "utf8");
+      }
+    }
     console.log(`  ${ui.green("→")} ${newLiveCount} proxy baru ditambahkan ke ${ui.bold(path.basename(opts.output))} (total ${liveCount})`);
   }
   return (opts.append ? liveCount : alive.length) > 0 ? 0 : 2;

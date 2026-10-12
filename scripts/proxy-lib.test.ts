@@ -6,6 +6,8 @@ import { join } from "node:path";
 import {
   checkSocks,
   decodeChunked,
+  dedupeAndFormatProxies,
+  formatProxyEntry,
   judge,
   mask,
   parseProxyFile,
@@ -213,5 +215,85 @@ describe("socks checking", () => {
     const res = await checkSocks(entry, { url: "http://ipv4.webshare.io/", timeoutMs: 500 }, null);
     expect(res.alive).toBe(false);
     expect(res.reason).toBeDefined();
+  });
+});
+
+describe("dedupe & format proxies", () => {
+  it("removes duplicate proxies by endpoint and keeps only unique ones", () => {
+    const raw = [
+      "1.2.3.4:8080",
+      "http://1.2.3.4:8080",
+      "socks4://1.2.3.4:8080",
+      "5.6.7.8:3128",
+      "http://5.6.7.8:3128",
+      "9.10.11.12:1080",
+    ].join("\n");
+
+    const res = dedupeAndFormatProxies(raw);
+    expect(res.totalLines).toBe(6);
+    expect(res.uniqueCount).toBe(3);
+    expect(res.duplicatesRemoved).toBe(3);
+    expect(res.invalidSkipped).toBe(0);
+    expect(res.entries.map((e) => e.hostPort)).toEqual(["1.2.3.4:8080", "5.6.7.8:3128", "9.10.11.12:1080"]);
+  });
+
+  it("upgrades credential-less proxy when authenticated version appears", () => {
+    const raw = [
+      "1.2.3.4:8080",
+      "http://user:secret@1.2.3.4:8080",
+    ].join("\n");
+
+    const res = dedupeAndFormatProxies(raw);
+    expect(res.uniqueCount).toBe(1);
+    expect(res.duplicatesRemoved).toBe(1);
+    expect(res.entries[0].username).toBe("user");
+    expect(res.entries[0].password).toBe("secret");
+  });
+
+  it("supports mode 'exact' to only remove exact identical lines", () => {
+    const raw = [
+      "http://1.2.3.4:8080",
+      "socks5://1.2.3.4:8080",
+      "http://1.2.3.4:8080",
+    ].join("\n");
+
+    const resEndpoint = dedupeAndFormatProxies(raw, { mode: "endpoint" });
+    expect(resEndpoint.uniqueCount).toBe(1);
+    expect(resEndpoint.duplicatesRemoved).toBe(2);
+
+    const resExact = dedupeAndFormatProxies(raw, { mode: "exact" });
+    expect(resExact.uniqueCount).toBe(2);
+    expect(resExact.duplicatesRemoved).toBe(1);
+  });
+
+  it("formats lines according to style option", () => {
+    const raw = [
+      "1.2.3.4:8080:admin:pass123",
+      "5.6.7.8:3128",
+    ].join("\n");
+
+    const resUrl = dedupeAndFormatProxies(raw, { style: "url" });
+    expect(resUrl.output).toContain("http://admin:pass123@1.2.3.4:8080\n");
+    expect(resUrl.output).toContain("http://5.6.7.8:3128\n");
+
+    const resColon = dedupeAndFormatProxies(raw, { style: "colon" });
+    expect(resColon.output).toContain("1.2.3.4:8080:admin:pass123\n");
+    expect(resColon.output).toContain("5.6.7.8:3128\n");
+  });
+
+  it("parses CLI flags for dedupe mode correctly", () => {
+    const d1 = parseArgs(["--dedupe"]);
+    expect(d1.dedupe).toBe(true);
+    expect(d1.dedupeAll).toBe(false);
+
+    const d2 = parseArgs(["--unique", "--all", "--style", "url", "--by", "exact", "--backup"]);
+    expect(d2.dedupe).toBe(true);
+    expect(d2.dedupeAll).toBe(true);
+    expect(d2.style).toBe("url");
+    expect(d2.mode).toBe("exact");
+    expect(d2.backup).toBe(true);
+
+    const d3 = parseArgs(["--dedupe-first"]);
+    expect(d3.dedupeFirst).toBe(true);
   });
 });
