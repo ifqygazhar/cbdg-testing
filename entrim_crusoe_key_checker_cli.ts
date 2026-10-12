@@ -493,8 +493,22 @@ function parseArguments(): Partial<CliConfig> {
       if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("fastrouter");
     } else if (arg === "--tokenharbor" || arg === "--th") {
       config.baseUrl = "https://tokenharbor.ai/v1";
+      if (!config.targetModel) config.targetModel = "deepseek-v4.1-flash:free";
+      config.mode = "chat";
+      if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("tokenharbor");
+      if (!config.outputValid) config.outputValid = "akun-good-tokenharbor.txt";
+      if (!config.outputBad) config.outputBad = "akun-bad-tokenharbor.txt";
+    } else if (arg === "--th-v41" || arg === "--th-v4.1") {
+      config.baseUrl = "https://tokenharbor.ai/v1";
+      config.targetModel = "deepseek-v4.1-flash:free";
+      config.mode = "chat";
+      if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("tokenharbor");
+      if (!config.outputValid) config.outputValid = "akun-good-tokenharbor.txt";
+      if (!config.outputBad) config.outputBad = "akun-bad-tokenharbor.txt";
+    } else if (arg === "--th-v4") {
+      config.baseUrl = "https://tokenharbor.ai/v1";
       config.targetModel = "deepseek-v4-flash:free";
-      config.mode = "smart";
+      config.mode = "chat";
       if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("tokenharbor");
       if (!config.outputValid) config.outputValid = "akun-good-tokenharbor.txt";
       if (!config.outputBad) config.outputBad = "akun-bad-tokenharbor.txt";
@@ -569,7 +583,9 @@ ${c.bold("PENGGUNAAN:")}
 
 ${c.bold("OPSI:")}
   --llm7io, --llm7         Preset LLM7.io AI (https://api.llm7.io/v1 • DeepSeek-V4.1-Flash)
-  --tokenharbor, --th      Preset TokenHarbor AI (https://tokenharbor.ai/v1 • deepseek-v4-flash:free)
+  --tokenharbor, --th      Preset TokenHarbor AI (https://tokenharbor.ai/v1 • deepseek-v4.1-flash:free)
+  --th-v41, --th-v4.1      Preset TokenHarbor AI dengan model deepseek-v4.1-flash:free
+  --th-v4                  Preset TokenHarbor AI dengan model deepseek-v4-flash:free
   --fastrouter, --fr       Preset otomatis untuk FastRouter AI (https://api.fastrouter.ai/api/v1)
   --crusoe                 Preset otomatis untuk Crusoe Cloud Inference
   --entrim                 Preset otomatis untuk Entrim AI
@@ -577,8 +593,8 @@ ${c.bold("OPSI:")}
   -p, --proxy [file]       Gunakan proxy pool (Opsional, Default: proxy-live.txt)
   --no-proxy, --direct     Koneksi langsung tanpa proxy (Default)
   -u, --url <url>          Base URL API (Default: TokenHarbor / Crusoe / LLM7.io)
-  -m, --model <id>         Model target ping (Default: deepseek-v4-flash:free / Deepseek-V4-Flash)
-  --mode <mode>            Metode cek: "smart" (rekomendasi), "chat", "models"
+  -m, --model <id>         Model target ping (Default: deepseek-v4.1-flash:free / Deepseek-V4-Flash)
+  --mode <mode>            Metode cek: "chat" (rekomendasi inferensi), "smart", "models"
   -c, --concurrency <num>  Jumlah worker simultan (Default: 5)
   -t, --timeout <sec>      Batas timeout request dalam detik (Default: 12)
   -l, --limit <num>        Batasi jumlah key yang diuji
@@ -591,6 +607,9 @@ ${c.bold("OPSI:")}
 ${c.bold("CONTOH:")}
   ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts")}
   ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --tokenharbor")}
+  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --th-v41")}
+  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --th-v4")}
+  ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --tokenharbor -m deepseek-v4-flash:free")}
   ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --tokenharbor -k akun-result-tokenharbor.txt -c 10")}
   ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --tokenharbor --limit 5")}
   ${c.cyan("bun run entrim_crusoe_key_checker_cli.ts --fastrouter")}
@@ -707,7 +726,15 @@ async function verifyKey(
   const key = entry.key;
   const cleanBase = config.baseUrl.replace(/\/+$/, "");
   const startTime = performance.now();
-  const isPublicModelsEndpoint = cleanBase.includes("fastrouter") || cleanBase.includes("llm7") || key.startsWith("sk-v1-");
+  const isSkipModelsCheck =
+    cleanBase.includes("fastrouter") ||
+    cleanBase.includes("llm7") ||
+    key.startsWith("sk-v1-") ||
+    (cleanBase.includes("tokenharbor") && config.mode !== "models");
+  const isPublicModelsEndpoint =
+    cleanBase.includes("fastrouter") ||
+    cleanBase.includes("llm7") ||
+    key.startsWith("sk-v1-");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
@@ -723,8 +750,8 @@ async function verifyKey(
   try {
     // 1. TAHAP SMART / MODELS (Cek /models terlebih dahulu: instan, akurat, hemat kuota)
     // CATATAN: FastRouter & LLM7.io memiliki endpoint public /models yang selalu mengembalikan HTTP 200 tanpa auth.
-    // Oleh karena itu, dilewati dari tahap /models dan langsung diuji via /chat/completions.
-    if (!isPublicModelsEndpoint && (config.mode === "smart" || config.mode === "models")) {
+    // TokenHarbor diuji inferensinya via /chat/completions dengan model yang dipilih (kecuali eksplisit --mode models).
+    if (!isSkipModelsCheck && (config.mode === "smart" || config.mode === "models")) {
       try {
         const modelsResp = await fetch(`${cleanBase}/models`, {
           ...fetchOptions,
@@ -1388,8 +1415,14 @@ export async function main() {
   // Konfigurasi Standar
   let config: CliConfig = {
     baseUrl: cliArgs.baseUrl || "https://api.inference.crusoecloud.com/v1",
-    targetModel: cliArgs.targetModel || "deepseek-ai/Deepseek-V4-Flash",
-    mode: cliArgs.mode || "smart",
+    targetModel:
+      cliArgs.targetModel ||
+      (cliArgs.baseUrl?.includes("tokenharbor")
+        ? "deepseek-v4.1-flash:free"
+        : "deepseek-ai/Deepseek-V4-Flash"),
+    mode:
+      cliArgs.mode ||
+      (cliArgs.baseUrl?.includes("tokenharbor") ? "chat" : "smart"),
     concurrency: cliArgs.concurrency || 5,
     timeoutMs: cliArgs.timeoutMs || 12000,
     keysFile: cliArgs.keysFile || defaultKeys,
@@ -1436,11 +1469,11 @@ export async function main() {
         {
           label: "TokenHarbor AI",
           badge: c.bgGreen("Free Models"),
-          desc: "https://tokenharbor.ai/v1 • deepseek-v4-flash:free • Auto parsing email:password:key",
+          desc: "https://tokenharbor.ai/v1 • deepseek-v4.1-flash:free / v4-flash • Auto parsing email:password:key",
           value: {
             url: "https://tokenharbor.ai/v1",
-            model: "deepseek-v4-flash:free",
-            mode: "smart",
+            model: "deepseek-v4.1-flash:free",
+            mode: "chat",
             defaultKeysFile: resolveDefaultKeysFile("tokenharbor"),
             outputValid: "akun-good-tokenharbor.txt",
             outputBad: "akun-bad-tokenharbor.txt",
@@ -1534,6 +1567,43 @@ export async function main() {
       if (providerChoice.outputRateLimit && !cliArgs.outputRateLimit) {
         config.outputRateLimit = providerChoice.outputRateLimit;
       }
+
+      // Khusus TokenHarbor: Sub-menu interaktif untuk memilih model target
+      if (providerChoice.url.includes("tokenharbor") && !cliArgs.targetModel) {
+        const modelChoice = await selectMenu<string>(
+          "Pilih Model TokenHarbor untuk Diuji",
+          [
+            {
+              label: "deepseek-v4.1-flash:free",
+              badge: c.bgGreen("V4.1 Flash (Rekomendasi)"),
+              desc: "DeepSeek V4.1 Flash (Free Tier - Model terbaru)",
+              value: "deepseek-v4.1-flash:free",
+            },
+            {
+              label: "deepseek-v4-flash:free",
+              badge: c.bgCyan("V4 Flash"),
+              desc: "DeepSeek V4 Flash (Free Tier - Versi standar)",
+              value: "deepseek-v4-flash:free",
+            },
+            {
+              label: "Model Kustom (Ketik Manual)",
+              badge: c.bgYellow("Custom"),
+              desc: "Ketik sendiri ID model yang tersedia di TokenHarbor",
+              value: "custom",
+            },
+          ],
+          0
+        );
+
+        if (modelChoice === "custom") {
+          config.targetModel = await promptInput(
+            "Masukkan ID Model TokenHarbor Target Ping",
+            "deepseek-v4.1-flash:free"
+          );
+        } else {
+          config.targetModel = modelChoice;
+        }
+      }
     }
 
     // 1b. Pilih File Sumber API Key / Akun Target (jika tidak ditentukan via flag --keys)
@@ -1584,7 +1654,7 @@ export async function main() {
     }
 
     // 2. Pilih Mode Uji
-    const defaultModeIndex = (config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7")) ? 1 : 0;
+    const defaultModeIndex = (config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7") || config.baseUrl.includes("tokenharbor")) ? 1 : 0;
     config.mode = await selectMenu<"smart" | "chat" | "models">(
       "Pilih Metode Pengujian",
       [
@@ -1596,8 +1666,8 @@ export async function main() {
         },
         {
           label: "Direct Chat Ping (/chat/completions)",
-          badge: (config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7")) ? c.bgGreen("Wajib FastRouter/LLM7") : undefined,
-          desc: "Kirim pesan 1-kata untuk verifikasi inferensi live secara langsung",
+          badge: (config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7") || config.baseUrl.includes("tokenharbor")) ? c.bgGreen("Rekomendasi Uji Model") : undefined,
+          desc: "Kirim pesan 1-kata untuk verifikasi inferensi live secara langsung dengan model pilihan",
           value: "chat",
         },
         {
@@ -1806,12 +1876,13 @@ swiftcedar749@huzt.my.id:torabikA1###########:thk_live_FTu1P_w16ctoHILbjdRg8mpY8
       if (!cliArgs.outputValid) config.outputValid = "apikey-llm7io.txt";
       if (!cliArgs.outputBad) config.outputBad = "akun-bad-llm7io.txt";
     } else if (hasTokenHarborKeys && !config.baseUrl.includes("tokenharbor")) {
+      const targetModel = cliArgs.targetModel || "deepseek-v4.1-flash:free";
       console.log(
-        `${c.cyan("ℹ")} Format TokenHarbor (${c.bold("thk_live_...")}) terdeteksi! Mengalihkan target otomatis ke ${c.bold(c.green("TokenHarbor AI"))} (${c.yellow("deepseek-v4-flash:free")})\n`
+        `${c.cyan("ℹ")} Format TokenHarbor (${c.bold("thk_live_...")}) terdeteksi! Mengalihkan target otomatis ke ${c.bold(c.green("TokenHarbor AI"))} (${c.yellow(targetModel)})\n`
       );
       config.baseUrl = "https://tokenharbor.ai/v1";
-      config.targetModel = "deepseek-v4-flash:free";
-      config.mode = "smart";
+      config.targetModel = targetModel;
+      config.mode = "chat";
       if (!cliArgs.outputValid) config.outputValid = "akun-good-tokenharbor.txt";
       if (!cliArgs.outputBad) config.outputBad = "akun-bad-tokenharbor.txt";
     } else if (hasFastRouterKeys && !config.baseUrl.includes("fastrouter")) {
