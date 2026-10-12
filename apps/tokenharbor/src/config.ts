@@ -23,6 +23,7 @@ export interface TokenHarborConfig {
   apiKeyFile: string;
   screenshotDir: string;
   limit: number;
+  gsuiteMode?: "create_new_key" | "skip_existing";
 }
 
 export function parseBool(val: string | undefined, def: boolean): boolean {
@@ -89,6 +90,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): TokenHarborCon
     apiKeyFile,
     screenshotDir,
     limit,
+    gsuiteMode: (env.TOKENHARBOR_GSUITE_MODE === "skip_existing" ? "skip_existing" : "create_new_key"),
   };
 }
 

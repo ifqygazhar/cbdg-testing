@@ -27,6 +27,8 @@ interface Args {
   accountsFile?: string;
   reEnableFree?: boolean;
   reverifyEmail?: boolean;
+  gsuiteMode?: string;
+  skipExisting?: boolean;
 }
 
 /** Pure: merge parsed CLI flags into an env object (CLI wins over env file). */
@@ -48,6 +50,8 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.accountsFile !== undefined) env.SEED_ACCOUNTS = args.accountsFile;
   if (args.reEnableFree !== undefined) env.TOKENHARBOR_RE_ENABLE_FREE = args.reEnableFree ? "1" : "0";
   if (args.reverifyEmail !== undefined) env.TOKENHARBOR_REVERIFY_EMAIL = args.reverifyEmail ? "1" : "0";
+  if (args.gsuiteMode !== undefined) env.TOKENHARBOR_GSUITE_MODE = args.gsuiteMode;
+  if (args.skipExisting) env.TOKENHARBOR_GSUITE_MODE = "skip_existing";
   return env;
 }
 
@@ -82,6 +86,11 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--domain") args.domain = next();
     else if (a === "--auth") args.auth = next();
     else if (a === "--accounts-file") args.accountsFile = next();
+    else if (a === "--gsuite-mode") args.gsuiteMode = next();
+    else if (a === "--skip-existing") {
+      args.skipExisting = true;
+      args.gsuiteMode = "skip_existing";
+    }
     else if (a === "--re-enable-free" || a === "--reenable-free" || a === "--reenable") args.reEnableFree = true;
     else if (a === "--reverify-email" || a === "--reverify") args.reverifyEmail = true;
     else if (a === "--help" || a === "-h") {
@@ -139,6 +148,8 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       workers: args.workers ?? cfg.workers,
       reEnableFree: args.reEnableFree,
       reverifyEmail: args.reverifyEmail,
+      gsuiteMode: args.gsuiteMode ?? cfg.gsuiteMode,
+      skipExisting: args.skipExisting || (args.gsuiteMode === "skip_existing") || (cfg.gsuiteMode === "skip_existing"),
     });
     return;
   }

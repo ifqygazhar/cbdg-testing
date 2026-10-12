@@ -261,4 +261,22 @@ describe("tokenharbor CLI flags", () => {
     expect(env.TOKENHARBOR_PASSWORD).toBe("Secret123!");
     expect(env.TEMPMAIL_DOMAIN).toBe("meongtopup.my.id");
   });
+
+  it("parses --gsuite-mode and --skip-existing flags correctly", () => {
+    const parsed1 = parseArgs(["--gsuite-mode", "skip_existing"]);
+    expect(parsed1.gsuiteMode).toBe("skip_existing");
+    const env1 = applyArgsToEnv(parsed1, {});
+    expect(env1.TOKENHARBOR_GSUITE_MODE).toBe("skip_existing");
+
+    const parsed2 = parseArgs(["--skip-existing"]);
+    expect(parsed2.skipExisting).toBe(true);
+    expect(parsed2.gsuiteMode).toBe("skip_existing");
+    const env2 = applyArgsToEnv(parsed2, {});
+    expect(env2.TOKENHARBOR_GSUITE_MODE).toBe("skip_existing");
+
+    const parsed3 = parseArgs(["--gsuite-mode", "create_new_key"]);
+    expect(parsed3.gsuiteMode).toBe("create_new_key");
+    const env3 = applyArgsToEnv(parsed3, {});
+    expect(env3.TOKENHARBOR_GSUITE_MODE).toBe("create_new_key");
+  });
 });

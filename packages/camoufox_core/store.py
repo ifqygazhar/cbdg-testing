@@ -115,7 +115,7 @@ class ResultWriter:
     def mark_success(self, email: str, password: str = "", api_key: str = "", extra: str = ""):
         # Save API key to key files
         for kf in self.key_files:
-            if not kf:
+            if not kf or not api_key:
                 continue
             os.makedirs(os.path.dirname(os.path.abspath(kf)), exist_ok=True)
             with open(kf, "a", encoding="utf-8") as f:

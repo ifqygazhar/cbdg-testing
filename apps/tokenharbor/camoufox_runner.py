@@ -805,6 +805,31 @@ async def retrieve_verification_link_from_gmail(context, email: str, logger, tim
 
     return verify_url
 
+async def check_account_has_existing_api_keys(page, logger=None) -> bool:
+    """
+    Checks if the account already has at least one API key on /dashboard/api-keys.
+    Returns True if an existing key is detected, False otherwise.
+    """
+    try:
+        if "/dashboard/api-keys" not in page.url:
+            if logger:
+                logger.info(f"checking if existing API keys exist at {API_KEYS_URL}...")
+            await page.goto(API_KEYS_URL, wait_until="domcontentloaded", timeout=25000)
+            await human_delay(1500, 2500)
+        await recover_if_something_snapped(page, target_url=API_KEYS_URL, logger=logger)
+        has_key = await page.evaluate("""() => {
+            const text = document.body.innerText || '';
+            if (text.includes("No keys yet")) return false;
+            const items = document.querySelectorAll('ul.divide-y li, table tbody tr, button[aria-label*="delete"], button[aria-label*="copy"]');
+            if (items.length > 0) return true;
+            return text.includes("thk_live_") || text.includes("thk_");
+        }""")
+        return bool(has_key)
+    except Exception as e:
+        if logger:
+            logger.warn(f"error checking existing API keys on page: {e}")
+        return False
+
 async def create_and_extract_api_key(page, email: str, screenshot_dir: str, logger) -> str:
     """Navigates to API keys page, creates a new key, and extracts the generated token."""
     logger.info(f"navigating to {API_KEYS_URL}...")
@@ -908,6 +933,7 @@ async def run_single_google_account(
     logger,
     pace: str = "human",
     mark_failed_on_error: bool = True,
+    gsuite_mode: str = "create_new_key",
 ) -> bool:
     email = account.email.strip()
     norm_email = email.lower()
@@ -1082,6 +1108,24 @@ async def run_single_google_account(
                 return text.includes("Verify your email") ||
                        text.includes("Send verification email");
             }""")
+
+            # ── Check GSuite Registration Strategy ─────────────────────────
+            if gsuite_mode == "skip_existing":
+                has_existing_key = await check_account_has_existing_api_keys(page, logger=logger)
+                is_verified = not needs_verification
+                if has_existing_key or is_verified or (not saw_onboarding):
+                    reasons = []
+                    if has_existing_key:
+                        reasons.append("sudah memiliki API key")
+                    if is_verified:
+                        reasons.append("akun sudah terverifikasi")
+                    if not saw_onboarding:
+                        reasons.append("sudah terdaftar di server")
+                    reason_desc = " & ".join(reasons) if reasons else "sudah terdaftar di server TokenHarbor"
+                    logger.info(f"⏭️ Akun {email}: {reason_desc}. Sesuai opsi 'skip_existing', akun dilewati tanpa membuat API key baru!")
+                    store.upsert({"email": email, "status": FlowState.DONE, "is_new_registration": False, "note": f"skipped_existing: {reason_desc}"})
+                    results.mark_success(email=email, password=password, api_key="", extra="ALREADY_REGISTERED")
+                    return True
 
             verify_url = None
             if not needs_verification:
@@ -2110,7 +2154,21 @@ async def main_async():
     parser.add_argument("--skip-proxy-precheck", action="store_true", default=os.getenv("SKIP_PROXY_PRECHECK", "0") in ("1", "true", "yes"), help="Skip proxy pre-check before browser launch")
     parser.add_argument("--re-enable-free", action="store_true", help="Re-enable free models for accounts in akun-bad-tokenharbor.txt")
     parser.add_argument("--reverify-email", action="store_true", help="Re-verify email for accounts/keys in apikey-need-verif-tokenharbor.txt")
+    parser.add_argument(
+        "--gsuite-mode",
+        choices=["create_new_key", "skip_existing"],
+        default=os.getenv("TOKENHARBOR_GSUITE_MODE", "create_new_key"),
+        help="GSuite registration mode: create_new_key (create new key if not in result file) or skip_existing (skip if already registered/verified/has keys)",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Alias for --gsuite-mode skip_existing",
+    )
     args = parser.parse_args()
+
+    if args.skip_existing:
+        args.gsuite_mode = "skip_existing"
 
     # Resolve proxies file
     proxy_file = args.proxy_file
@@ -2433,6 +2491,7 @@ async def main_async():
                         logger=acc_logger,
                         pace=args.pace,
                         mark_failed_on_error=(not will_retry_if_failed),
+                        gsuite_mode=args.gsuite_mode,
                     )
                 except GooglePhoneVerificationException as pe:
                     ok = False

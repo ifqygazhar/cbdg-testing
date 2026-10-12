@@ -98,6 +98,15 @@ describe("buildArgs", () => {
     expect(gq).toContain("meongtopup.my.id");
   });
 
+  it("tokenharbor gets gsuite-mode flag when specified", () => {
+    const th1 = buildArgs({ ...base, app: "tokenharbor", authMethod: "google", gsuiteMode: "skip_existing" });
+    expect(th1).toContain("--gsuite-mode");
+    expect(th1).toContain("skip_existing");
+    const th2 = buildArgs({ ...base, app: "tokenharbor", authMethod: "google", gsuiteMode: "create_new_key" });
+    expect(th2).toContain("--gsuite-mode");
+    expect(th2).toContain("create_new_key");
+  });
+
   it("fastrouter gets auth and domain flags when tempmail chosen", () => {
     const fr = buildArgs({
       ...base,

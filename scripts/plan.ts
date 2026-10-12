@@ -21,6 +21,7 @@ export const IS_TOOL: Record<AppName, boolean> = {
 export type Pace = "fast" | "human" | "careful";
 export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
+export type GsuiteMode = "create_new_key" | "skip_existing";
 
 export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io"];
 
@@ -47,6 +48,7 @@ export interface RunPlan {
   delaySec: number;
   workers: number;
   authMethod?: "google" | "tempmail";
+  gsuiteMode?: GsuiteMode;
   limit?: number;
   domain?: string;
   proxyTarget?: string;
@@ -142,6 +144,9 @@ export function buildArgs(plan: RunPlan): string[] {
     if (plan.accountsFile) args.push("--accounts-file", plan.accountsFile);
   } else {
     if (plan.authMethod) args.push("--auth", plan.authMethod);
+    if (plan.gsuiteMode) {
+      args.push("--gsuite-mode", plan.gsuiteMode);
+    }
     if (plan.domain) args.push("--domain", plan.domain);
     if (plan.accountsFile) args.push("--accounts-file", plan.accountsFile);
   }

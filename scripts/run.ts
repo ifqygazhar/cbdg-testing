@@ -272,6 +272,25 @@ async function askPlan(): Promise<RunPlan> {
   }
 
   let domain: string | undefined;
+  let gsuiteMode: "create_new_key" | "skip_existing" | undefined;
+  if (!reEnableFree && !reverifyEmail && app === "tokenharbor" && authMethod === "google") {
+    gsuiteMode = await select<"create_new_key" | "skip_existing">(
+      "Strategi untuk akun GSuite TokenHarbor:",
+      [
+        {
+          value: "create_new_key",
+          label: "Daftarkan ulang & buat API key baru (Default)",
+          hint: "Skip akun di akun-result-tokenharbor.txt; jika akun terdaftar di server tapi belum ada di file hasil, buatkan API key baru",
+        },
+        {
+          value: "skip_existing",
+          label: "Skip jika sudah terdaftar / sudah punya key / terverifikasi",
+          hint: "Skip akun di akun-result-tokenharbor.txt; jika saat dicek akun sudah terdaftar/punya API key di server, langsung lewati tanpa buat key baru",
+        },
+      ],
+      0,
+    );
+  }
   let limit: number | undefined;
   if (reEnableFree) {
     const badPath = resolve(process.cwd(), "akun-bad-tokenharbor.txt");
@@ -357,7 +376,7 @@ async function askPlan(): Promise<RunPlan> {
   const headless = await confirm("Headless? (captcha/3DS tidak bisa manual)", false);
   const dryRun = await confirm("Dry-run dulu? (validasi saja, tanpa browser)", false);
 
-  return { app, mode, engine, authMethod, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain, reEnableFree, reverifyEmail };
+  return { app, mode, engine, authMethod, gsuiteMode, useProxy, reuseProxy, googleDirect, pace, delaySec, workers, retryFailed, headless, dryRun, limit, domain, reEnableFree, reverifyEmail };
 }
 
 function review(plan: RunPlan): void {
@@ -388,6 +407,16 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
       : []),
     ...(plan.domain ? ([["domain", `@${plan.domain}`]] as Array<[string, string]>) : []),
     ...(plan.authMethod ? ([["auth", plan.authMethod === "tempmail" ? "TempMail (verif OTP)" : "Google OAuth"]] as Array<[string, string]>) : []),
+    ...(plan.gsuiteMode
+      ? ([
+          [
+            "strategi",
+            plan.gsuiteMode === "skip_existing"
+              ? "skip jika sudah terdaftar / sudah punya key / terverifikasi"
+              : "daftarkan ulang & buat key baru jika belum di akun-result",
+          ],
+        ] as Array<[string, string]>)
+      : []),
     ...(plan.mode ? ([["mode", plan.mode === "signup" ? "signup saja" : "full (VCC)"]] as Array<[string, string]>) : []),
 
     ...(plan.useProxy === undefined
