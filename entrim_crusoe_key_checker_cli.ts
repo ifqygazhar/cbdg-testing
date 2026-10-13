@@ -524,7 +524,7 @@ function parseArguments(): Partial<CliConfig> {
       config.targetModel = "gpt-4o-mini";
       config.mode = "smart";
       if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("entrim");
-    } else if (arg === "--url" || arg === "-u") {
+    } else if (arg === "--url" || arg === "-u" || arg === "--endpoint") {
       config.baseUrl = next;
       i++;
     } else if (arg === "--model" || arg === "-m") {
@@ -594,7 +594,7 @@ ${c.bold("OPSI:")}
   -k, --keys <file>        File path daftar API key / akun (email:password:apikey)
   -p, --proxy [file]       Gunakan proxy pool (Opsional, Default: proxy-live.txt)
   --no-proxy, --direct     Koneksi langsung tanpa proxy (Default)
-  -u, --url <url>          Base URL API (Default: TokenHarbor / Crusoe / LLM7.io)
+  -u, --url, --endpoint <url>  Base URL / Endpoint API (Default: TokenHarbor / Crusoe / LLM7.io)
   -m, --model <id>         Model target ping (Default: deepseek-v4.1-flash:free / Deepseek-V4-Flash)
   --mode <mode>            Metode cek: "chat" (rekomendasi inferensi), "smart", "models"
   -c, --concurrency <num>  Jumlah worker simultan (Default: 5)
@@ -732,7 +732,7 @@ async function verifyKey(
     cleanBase.includes("fastrouter") ||
     cleanBase.includes("llm7") ||
     key.startsWith("sk-v1-") ||
-    (cleanBase.includes("tokenharbor") && config.mode !== "models");
+    ((cleanBase.includes("tokenharbor") || key.startsWith("thk_") || config.outputValid?.includes("tokenharbor")) && config.mode !== "models");
   const isPublicModelsEndpoint =
     cleanBase.includes("fastrouter") ||
     cleanBase.includes("llm7") ||
@@ -1437,6 +1437,8 @@ export async function main() {
     limit: cliArgs.limit,
   };
 
+  let userConfiguredBaseUrl = Boolean(cliArgs.baseUrl);
+
   // JIKA TIDAK ADA FLAG CLI: Jalankan Menu Interaktif Tombol Panah (Arrow Key TUI)
   if (!hasCliFlags) {
     console.log(`${c.bold(c.white("PANDUAN INTERAKTIF:"))} Konfigurasikan pengujian Anda dengan tombol panah.\n`);
@@ -1549,6 +1551,7 @@ export async function main() {
         "Masukkan Base URL API",
         "https://api.inference.crusoecloud.com/v1"
       );
+      userConfiguredBaseUrl = true;
       config.targetModel = await promptInput(
         "Masukkan ID Model Target Ping",
         "deepseek-ai/Deepseek-V4-Flash"
@@ -1680,6 +1683,65 @@ export async function main() {
       ],
       defaultModeIndex
     );
+
+    // 2b. Khusus TokenHarbor: Sub-menu Custom Endpoint / Base URL API setelah metode pengujian
+    const isTokenHarborTarget =
+      config.baseUrl.includes("tokenharbor") ||
+      (typeof providerChoice === "object" && providerChoice !== null && providerChoice.url?.includes("tokenharbor"));
+
+    if (isTokenHarborTarget && !cliArgs.baseUrl) {
+      const endpointChoice = await selectMenu<string>(
+        "Pilih Endpoint / Base URL TokenHarbor",
+        [
+          {
+            label: "Default Official Endpoint (https://tokenharbor.ai/v1)",
+            badge: c.bgGreen("Default"),
+            desc: "Endpoint resmi TokenHarbor standard OpenAI-compatible",
+            value: "default",
+          },
+          {
+            label: "Alternative API Endpoint (https://tokenharbor.ai/api/v1)",
+            badge: c.bgBlue("Alternative"),
+            desc: "Path alternatif /api/v1 jika endpoint /v1 utama dibatasi",
+            value: "https://tokenharbor.ai/api/v1",
+          },
+          {
+            label: "Kustom Endpoint (Ketik Base URL / Proxy Sendiri)",
+            badge: c.bgCyan("Custom"),
+            desc: "Gunakan reverse proxy, domain mirror, Cloudflare Worker, atau IP port sendiri",
+            value: "custom",
+          },
+        ],
+        0
+      );
+
+      if (endpointChoice === "custom") {
+        const customUrl = await promptInput(
+          "Masukkan Base URL / Endpoint Kustom TokenHarbor",
+          config.baseUrl || "https://tokenharbor.ai/v1"
+        );
+        let clean = customUrl.trim();
+        if (clean) {
+          if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+            clean = `https://${clean}`;
+          }
+          clean = clean.replace(/\/+$/, "");
+          // Normalisasi jika pengguna memasukkan endpoint path lengkap (/chat/completions atau /models)
+          if (clean.endsWith("/chat/completions")) {
+            clean = clean.replace(/\/chat\/completions$/, "");
+          } else if (clean.endsWith("/models")) {
+            clean = clean.replace(/\/models$/, "");
+          }
+          config.baseUrl = clean;
+          userConfiguredBaseUrl = true;
+        }
+      } else if (endpointChoice !== "default") {
+        config.baseUrl = endpointChoice;
+        userConfiguredBaseUrl = true;
+      } else {
+        userConfiguredBaseUrl = true;
+      }
+    }
 
     // 3. Pilih Concurrency
     config.concurrency = await selectMenu<number>(
@@ -1859,7 +1921,7 @@ swiftcedar749@huzt.my.id:torabikA1###########:thk_live_FTu1P_w16ctoHILbjdRg8mpY8
   }
 
   // Auto-deteksi format key jika flag --url tidak ditentukan secara eksplisit
-  if (keys.length > 0 && !cliArgs.baseUrl) {
+  if (keys.length > 0 && !cliArgs.baseUrl && !userConfiguredBaseUrl) {
     const hasTokenHarborKeys = keys.some(
       (k) => k.key.startsWith("thk_") || k.key.startsWith("thk_live_") || k.rawLine.includes("tokenharbor")
     );
