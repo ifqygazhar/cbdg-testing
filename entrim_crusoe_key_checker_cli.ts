@@ -44,6 +44,8 @@ const c = {
   bgRed: (s: string | number) => `\x1b[48;5;160m\x1b[38;5;255m ${s} \x1b[0m`,
   bgBlue: (s: string | number) => `\x1b[48;5;25m\x1b[38;5;255m ${s} \x1b[0m`,
   bgPurple: (s: string | number) => `\x1b[48;5;93m\x1b[38;5;255m ${s} \x1b[0m`,
+  bgCyan: (s: string | number) => `\x1b[48;5;31m\x1b[38;5;255m ${s} \x1b[0m`,
+  bgMagenta: (s: string | number) => `\x1b[48;5;127m\x1b[38;5;255m ${s} \x1b[0m`,
   bgDark: (s: string | number) => `\x1b[48;5;236m\x1b[38;5;250m ${s} \x1b[0m`,
 };
 
