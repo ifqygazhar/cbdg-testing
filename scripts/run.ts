@@ -290,7 +290,7 @@ async function askPlan(): Promise<RunPlan> {
         {
           value: "skip_existing",
           label: "Skip jika sudah terdaftar / sudah punya key / terverifikasi",
-          hint: "Skip akun di akun-result-tokenharbor.txt; jika saat dicek akun sudah terdaftar/punya API key di server, langsung lewati tanpa buat key baru",
+          hint: "Langsung skip akun yang sudah di akun-result-tokenharbor.txt (tanpa login ulang); akun belum tercatat dicek ke server & dilewati jika sudah ada",
         },
       ],
       0,

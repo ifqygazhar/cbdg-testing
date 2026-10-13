@@ -944,7 +944,8 @@ async def run_single_google_account(
     require_key_for_safeguard = (gsuite_mode == "fetch_existing")
     completed_lookup = get_completed_emails(store, results, getattr(store, "filepath", "state.jsonl"), require_api_key=require_key_for_safeguard)
     if norm_email in completed_lookup or store.is_done(email, require_api_key=require_key_for_safeguard) or store.is_done(norm_email, require_api_key=require_key_for_safeguard):
-        logger.info(f"Safeguard: Akun {email} sudah terdaftar & memiliki API key valid (tercatat di akun-result-tokenharbor.txt / state). Langsung lewati tanpa membuka browser!")
+        status_tag = "memiliki API key valid" if require_key_for_safeguard else "sudah tercatat/terdaftar"
+        logger.info(f"⏭️ [SAFEGUARD] Akun {email} {status_tag} di akun-result-tokenharbor.txt / state. Langsung dilewati tanpa membuka browser!")
         return True
 
     logger.info(f"starting TokenHarbor Google OAuth signup for {email} (proxy={proxy.server if proxy else 'direct'}, pace={pace})")
@@ -2198,11 +2199,17 @@ async def main_async():
     proxies = load_proxies(proxy_file) if (proxy_file and not args.no_proxy) else []
     proxy_pool = SmartProxyPool(proxies, reuse_proxy=args.reuse_proxy) if proxies else None
 
+    repo_root = REPO_ROOT
+    res_path = os.path.join(repo_root, "akun-result-tokenharbor.txt")
+    account_result_file = res_path if os.path.exists(res_path) else "akun-result-tokenharbor.txt"
+    fail_path = os.path.join(repo_root, "akun-failed-tokenharbor.txt")
+    account_failed_file = fail_path if os.path.exists(fail_path) else "akun-failed-tokenharbor.txt"
+
     store = JsonlStore(args.state_file)
     results = ResultWriter(
         key_files=key_files,
-        account_result_file="akun-result-tokenharbor.txt",
-        account_failed_file="akun-failed-tokenharbor.txt",
+        account_result_file=account_result_file,
+        account_failed_file=account_failed_file,
         fallback_result_files=get_all_tokenharbor_result_files(),
         fallback_failed_files=get_all_tokenharbor_failed_files(),
     )
@@ -2431,13 +2438,13 @@ async def main_async():
             # Strictly exclude ANY account that has already completed successfully!
             eligible_accounts = [
                 acc for acc in accounts
-                if acc.email.lower() not in completed_emails
+                if acc.email.strip().lower() not in completed_emails
             ]
 
             if not args.retry_failed:
                 eligible_accounts = [
                     acc for acc in eligible_accounts
-                    if acc.email.lower() not in failed_emails
+                    if acc.email.strip().lower() not in failed_emails
                     and not store.is_restricted_or_banned(acc.email)
                 ]
             else:
@@ -2446,10 +2453,10 @@ async def main_async():
                 eligible_accounts = [
                     acc for acc in eligible_accounts
                     if not store.is_restricted_or_banned(acc.email)
-                    and acc.email.lower() not in completed_emails
+                    and acc.email.strip().lower() not in completed_emails
                 ]
                 def sort_key(acc):
-                    return 0 if acc.email.lower() in failed_emails else 1
+                    return 0 if acc.email.strip().lower() in failed_emails else 1
                 eligible_accounts.sort(key=sort_key)
 
         if not eligible_accounts:
@@ -2506,6 +2513,19 @@ async def main_async():
                     # In-flight workers might re-queue an account
                     await asyncio.sleep(1.0)
                     continue
+
+                norm_email = account.email.strip().lower()
+
+                # Fast pre-check: strictly skip accounts that are already in akun-result-tokenharbor.txt or completed
+                if args.gsuite_mode in ("skip_existing", "create_new_key"):
+                    if norm_email in completed_emails or norm_email in results.get_successful_emails(require_api_key=False):
+                        logger.info(
+                            f"⏭️ [SKIP] Akun {account.email} sudah tercatat di akun-result-tokenharbor.txt. "
+                            f"Langsung dilewati tanpa mengambil proxy & tanpa membuka browser!"
+                        )
+                        async with lock:
+                            in_flight -= 1
+                        continue
 
                 if not args.no_proxy and proxies:
                     proxy = await proxy_pool.get_next_live_proxy(

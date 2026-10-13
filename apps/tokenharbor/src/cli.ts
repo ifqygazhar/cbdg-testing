@@ -129,8 +129,14 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
   const cfg = loadConfig(env);
   ensureDirs(cfg);
 
-  // If python engine requested, re-enable-free, or reverify-email mode active, delegate to Python Camoufox runner
-  if (args.reverifyEmail || args.reEnableFree || shouldUsePythonEngine(args.engine ?? env.BROWSER_ENGINE)) {
+  // If google auth, python engine requested, re-enable-free, or reverify-email mode active, delegate to Python Camoufox runner
+  if (
+    args.auth === "google" ||
+    cfg.authMethod === "google" ||
+    args.reverifyEmail ||
+    args.reEnableFree ||
+    shouldUsePythonEngine(args.engine ?? env.BROWSER_ENGINE)
+  ) {
     const runnerPath = path.resolve(import.meta.dir, "../camoufox_runner.py");
     await spawnPythonRunner(runnerPath, {
       headed: args.headless === false,
