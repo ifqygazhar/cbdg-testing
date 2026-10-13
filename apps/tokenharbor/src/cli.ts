@@ -29,6 +29,7 @@ interface Args {
   reverifyEmail?: boolean;
   gsuiteMode?: string;
   skipExisting?: boolean;
+  fetchExisting?: boolean;
 }
 
 /** Pure: merge parsed CLI flags into an env object (CLI wins over env file). */
@@ -52,6 +53,7 @@ export function applyArgsToEnv(args: Args, base: NodeJS.ProcessEnv): NodeJS.Proc
   if (args.reverifyEmail !== undefined) env.TOKENHARBOR_REVERIFY_EMAIL = args.reverifyEmail ? "1" : "0";
   if (args.gsuiteMode !== undefined) env.TOKENHARBOR_GSUITE_MODE = args.gsuiteMode;
   if (args.skipExisting) env.TOKENHARBOR_GSUITE_MODE = "skip_existing";
+  if (args.fetchExisting) env.TOKENHARBOR_GSUITE_MODE = "fetch_existing";
   return env;
 }
 
@@ -90,6 +92,10 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--skip-existing") {
       args.skipExisting = true;
       args.gsuiteMode = "skip_existing";
+    }
+    else if (a === "--fetch-existing" || a === "--fetch-keys") {
+      args.fetchExisting = true;
+      args.gsuiteMode = "fetch_existing";
     }
     else if (a === "--re-enable-free" || a === "--reenable-free" || a === "--reenable") args.reEnableFree = true;
     else if (a === "--reverify-email" || a === "--reverify") args.reverifyEmail = true;
@@ -150,6 +156,7 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       reverifyEmail: args.reverifyEmail,
       gsuiteMode: args.gsuiteMode ?? cfg.gsuiteMode,
       skipExisting: args.skipExisting || (args.gsuiteMode === "skip_existing") || (cfg.gsuiteMode === "skip_existing"),
+      fetchExisting: args.fetchExisting || (args.gsuiteMode === "fetch_existing") || (cfg.gsuiteMode === "fetch_existing"),
     });
     return;
   }

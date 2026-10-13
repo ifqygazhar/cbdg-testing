@@ -39,9 +39,13 @@ class JsonlStore:
     def get(self, email: str) -> Optional[Dict[str, Any]]:
         return self._records.get(email)
 
-    def is_done(self, email: str) -> bool:
+    def is_done(self, email: str, require_api_key: bool = False) -> bool:
         record = self.get(email)
-        return record is not None and record.get("status") == FlowState.DONE
+        if not record or record.get("status") != FlowState.DONE:
+            return False
+        if require_api_key:
+            return bool(record.get("apiKey"))
+        return True
 
     def is_restricted_or_banned(self, email: str) -> bool:
         record = self.get(email)
@@ -50,10 +54,10 @@ class JsonlStore:
         err = (record.get("error") or "").lower()
         return any(k in err for k in ["restricted", "disabled", "banned", "phone verification", "verifikasi nomor", "phone_verification"])
 
-    def get_all_done_emails(self) -> Set[str]:
+    def get_all_done_emails(self, require_api_key: bool = False) -> Set[str]:
         return {
             email.lower() for email, rec in self._records.items()
-            if rec.get("status") == FlowState.DONE
+            if rec.get("status") == FlowState.DONE and (not require_api_key or bool(rec.get("apiKey")))
         }
 
     def get_all_failed_emails(self) -> Set[str]:
@@ -73,7 +77,7 @@ class JsonlStore:
         with open(self.filepath, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
-def read_emails_from_result_file(filepath: Union[str, List[str]]) -> Set[str]:
+def read_emails_from_result_file(filepath: Union[str, List[str]], require_api_key: bool = False) -> Set[str]:
     emails: Set[str] = set()
     paths = [filepath] if isinstance(filepath, str) else filepath
     email_regex = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
@@ -90,12 +94,48 @@ def read_emails_from_result_file(filepath: Union[str, List[str]]) -> Set[str]:
                 # Delimited by : or |
                 parts = [p.strip() for p in main_part.replace("|", ":").split(":") if p.strip()]
                 if parts and "@" in parts[0]:
-                    emails.add(parts[0].lower().strip())
+                    email = parts[0].lower().strip()
+                    if require_api_key:
+                        has_key = any(p.startswith("thk_") or (len(p) > 25 and p != "ALREADY_REGISTERED") for p in parts[1:])
+                        if has_key:
+                            emails.add(email)
+                    else:
+                        emails.add(email)
                 else:
                     m = email_regex.search(line)
-                    if m:
+                    if m and not require_api_key:
                         emails.add(m.group(0).lower().strip())
     return emails
+
+def load_already_registered_accounts(filepath: Union[str, List[str]]) -> List[Dict[str, str]]:
+    """
+    Extracts accounts from result files that are marked as ALREADY_REGISTERED
+    and do not yet have a valid thk_ API key.
+    Returns list of dict: [{'email': ..., 'password': ...}]
+    """
+    accounts: List[Dict[str, str]] = []
+    seen = set()
+    paths = [filepath] if isinstance(filepath, str) else filepath
+    for fp in paths:
+        if not fp or not os.path.exists(fp):
+            continue
+        with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                main_part = line.split(" #")[0].strip() if " #" in line else line
+                parts = [p.strip() for p in main_part.replace("|", ":").split(":") if p.strip()]
+                if len(parts) >= 2 and "@" in parts[0]:
+                    email = parts[0].strip()
+                    pwd = parts[1].strip()
+                    norm_email = email.lower()
+                    has_key = any(p.startswith("thk_") for p in parts[2:])
+                    is_already_reg = any(p == "ALREADY_REGISTERED" for p in parts[2:])
+                    if (is_already_reg or not has_key) and norm_email not in seen:
+                        seen.add(norm_email)
+                        accounts.append({"email": email, "password": pwd})
+    return accounts
 
 class ResultWriter:
     def __init__(
@@ -121,7 +161,7 @@ class ResultWriter:
             with open(kf, "a", encoding="utf-8") as f:
                 f.write(f"{api_key}\n")
 
-        # Save to account result file
+        # Save to account result file (in-place replacement if email already exists, e.g. upgrading ALREADY_REGISTERED)
         line = f"{email}:{password}" if password else email
         if api_key:
             line += f":{api_key}"
@@ -129,8 +169,31 @@ class ResultWriter:
             line += f":{extra}"
 
         os.makedirs(os.path.dirname(os.path.abspath(self.account_result_file)), exist_ok=True)
-        with open(self.account_result_file, "a", encoding="utf-8") as f:
-            f.write(f"{line}\n")
+        norm_email = email.lower().strip()
+        updated = False
+        if os.path.exists(self.account_result_file):
+            lines = []
+            with open(self.account_result_file, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            new_lines = []
+            for l in lines:
+                l_str = l.strip()
+                if l_str:
+                    main = l_str.split(" #")[0].strip() if " #" in l_str else l_str
+                    parts = [p.strip() for p in main.replace("|", ":").split(":") if p.strip()]
+                    if parts and parts[0].lower() == norm_email:
+                        new_lines.append(f"{line}\n")
+                        updated = True
+                        continue
+                new_lines.append(l)
+
+            if updated:
+                with open(self.account_result_file, "w", encoding="utf-8") as f:
+                    f.writelines(new_lines)
+
+        if not updated:
+            with open(self.account_result_file, "a", encoding="utf-8") as f:
+                f.write(f"{line}\n")
 
     def mark_failed(self, email: str, password_or_reason: str = "", reason: str = ""):
         if not reason:
@@ -151,16 +214,16 @@ class ResultWriter:
     def markFailed(self, email: str, password_or_reason: str = "", reason: str = ""):
         return self.mark_failed(email, password_or_reason, reason)
 
-    def get_successful_emails(self) -> Set[str]:
+    def get_successful_emails(self, require_api_key: bool = False) -> Set[str]:
         target_files = [self.account_result_file] + [f for f in self.fallback_result_files if f != self.account_result_file]
-        return read_emails_from_result_file(target_files)
+        return read_emails_from_result_file(target_files, require_api_key=require_api_key)
 
     def get_failed_emails(self) -> Set[str]:
         target_files = [self.account_failed_file] + [f for f in self.fallback_failed_files if f != self.account_failed_file]
         return read_emails_from_result_file(target_files)
 
-    def getSuccessfulEmails(self) -> Set[str]:
-        return self.get_successful_emails()
+    def getSuccessfulEmails(self, require_api_key: bool = False) -> Set[str]:
+        return self.get_successful_emails(require_api_key=require_api_key)
 
     def getFailedEmails(self) -> Set[str]:
         return self.get_failed_emails()

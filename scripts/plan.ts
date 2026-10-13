@@ -21,7 +21,7 @@ export const IS_TOOL: Record<AppName, boolean> = {
 export type Pace = "fast" | "human" | "careful";
 export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
-export type GsuiteMode = "create_new_key" | "skip_existing";
+export type GsuiteMode = "create_new_key" | "skip_existing" | "fetch_existing";
 
 export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io"];
 
@@ -228,7 +228,7 @@ export interface AppAccountStats {
   remaining: number;
 }
 
-export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd()): Set<string> {
+export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd(), requireApiKey = false): Set<string> {
   const completed = new Set<string>();
 
   const resultFiles: Record<AppName, string[]> = {
@@ -267,8 +267,17 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd()): Set
       for (const line of fs.readFileSync(fullPath, "utf8").split(/\r?\n/)) {
         const t = line.trim();
         if (!t || t.startsWith("#")) continue;
-        const email = t.split("#")[0].split(/[:|]/)[0].trim().toLowerCase();
-        if (email.includes("@")) completed.add(email);
+        const main = t.split(" #")[0].trim();
+        const parts = main.split(/[:|]/).map((p) => p.trim());
+        const email = parts[0]?.toLowerCase();
+        if (email && email.includes("@")) {
+          if (requireApiKey) {
+            const hasKey = parts.slice(1).some((p) => p.startsWith("thk_") || (p.length > 25 && p !== "ALREADY_REGISTERED"));
+            if (hasKey) completed.add(email);
+          } else {
+            completed.add(email);
+          }
+        }
       }
     }
   }
@@ -282,7 +291,11 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd()): Set
         try {
           const rec = JSON.parse(t);
           if (rec.email && rec.status === "DONE") {
-            completed.add(rec.email.toLowerCase());
+            if (requireApiKey) {
+              if (rec.apiKey) completed.add(rec.email.toLowerCase());
+            } else {
+              completed.add(rec.email.toLowerCase());
+            }
           }
         } catch {}
       }

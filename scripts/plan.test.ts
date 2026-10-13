@@ -105,6 +105,9 @@ describe("buildArgs", () => {
     const th2 = buildArgs({ ...base, app: "tokenharbor", authMethod: "google", gsuiteMode: "create_new_key" });
     expect(th2).toContain("--gsuite-mode");
     expect(th2).toContain("create_new_key");
+    const th3 = buildArgs({ ...base, app: "tokenharbor", authMethod: "google", gsuiteMode: "fetch_existing" });
+    expect(th3).toContain("--gsuite-mode");
+    expect(th3).toContain("fetch_existing");
   });
 
   it("fastrouter gets auth and domain flags when tempmail chosen", () => {

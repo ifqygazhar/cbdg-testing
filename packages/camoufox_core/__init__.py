@@ -14,7 +14,7 @@ from .google_oauth import (
     is_google_phone_verification,
 )
 from .loaders import load_accounts, load_proxies, Account, Proxy
-from .store import JsonlStore, ResultWriter, FlowState, read_emails_from_result_file
+from .store import JsonlStore, ResultWriter, FlowState, read_emails_from_result_file, load_already_registered_accounts
 from .turnstile import (
     resolve_turnstile_if_present,
     find_turnstile_sitekey,
@@ -52,6 +52,7 @@ __all__ = [
     "ResultWriter",
     "FlowState",
     "read_emails_from_result_file",
+    "load_already_registered_accounts",
     "create_logger",
     "Logger",
     "TempMailClient",

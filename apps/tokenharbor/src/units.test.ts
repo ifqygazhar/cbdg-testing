@@ -278,5 +278,17 @@ describe("tokenharbor CLI flags", () => {
     expect(parsed3.gsuiteMode).toBe("create_new_key");
     const env3 = applyArgsToEnv(parsed3, {});
     expect(env3.TOKENHARBOR_GSUITE_MODE).toBe("create_new_key");
+
+    const parsed4 = parseArgs(["--fetch-existing"]);
+    expect(parsed4.fetchExisting).toBe(true);
+    expect(parsed4.gsuiteMode).toBe("fetch_existing");
+    const env4 = applyArgsToEnv(parsed4, {});
+    expect(env4.TOKENHARBOR_GSUITE_MODE).toBe("fetch_existing");
+
+    const parsed5 = parseArgs(["--fetch-keys"]);
+    expect(parsed5.fetchExisting).toBe(true);
+    expect(parsed5.gsuiteMode).toBe("fetch_existing");
+    const env5 = applyArgsToEnv(parsed5, {});
+    expect(env5.TOKENHARBOR_GSUITE_MODE).toBe("fetch_existing");
   });
 });

@@ -272,15 +272,20 @@ async function askPlan(): Promise<RunPlan> {
   }
 
   let domain: string | undefined;
-  let gsuiteMode: "create_new_key" | "skip_existing" | undefined;
+  let gsuiteMode: "create_new_key" | "skip_existing" | "fetch_existing" | undefined;
   if (!reEnableFree && !reverifyEmail && app === "tokenharbor" && authMethod === "google") {
-    gsuiteMode = await select<"create_new_key" | "skip_existing">(
+    gsuiteMode = await select<"create_new_key" | "skip_existing" | "fetch_existing">(
       "Strategi untuk akun GSuite TokenHarbor:",
       [
         {
           value: "create_new_key",
           label: "Daftarkan ulang & buat API key baru (Default)",
           hint: "Skip akun di akun-result-tokenharbor.txt; jika akun terdaftar di server tapi belum ada di file hasil, buatkan API key baru",
+        },
+        {
+          value: "fetch_existing",
+          label: "Ambil/buat API key untuk akun ALREADY_REGISTERED (Recovery)",
+          hint: "Login akun-akun yang berstatus ALREADY_REGISTERED dan buatkan API key baru via + New key",
         },
         {
           value: "skip_existing",
@@ -411,7 +416,9 @@ ${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
       ? ([
           [
             "strategi",
-            plan.gsuiteMode === "skip_existing"
+            plan.gsuiteMode === "fetch_existing"
+              ? "ambil/buat API key baru untuk akun ALREADY_REGISTERED"
+              : plan.gsuiteMode === "skip_existing"
               ? "skip jika sudah terdaftar / sudah punya key / terverifikasi"
               : "daftarkan ulang & buat key baru jika belum di akun-result",
           ],

@@ -38,6 +38,7 @@ from packages.camoufox_core import (
     ResultWriter,
     FlowState,
     read_emails_from_result_file,
+    load_already_registered_accounts,
     create_logger,
     setup_process_signals,
     kill_descendant_processes,
@@ -940,9 +941,10 @@ async def run_single_google_account(
     password = account.password
 
     # Absolute safeguard: if account already completed or has api key in ANY result file / state, NEVER rerun!
-    completed_lookup = get_completed_emails(store, results, getattr(store, "filepath", "state.jsonl"))
-    if norm_email in completed_lookup or store.is_done(email) or store.is_done(norm_email):
-        logger.info(f"Safeguard: Akun {email} sudah terdaftar / sukses sebelumnya (tercatat di akun-result-tokenharbor.txt / state). Langsung lewati tanpa membuka browser!")
+    require_key_for_safeguard = (gsuite_mode == "fetch_existing")
+    completed_lookup = get_completed_emails(store, results, getattr(store, "filepath", "state.jsonl"), require_api_key=require_key_for_safeguard)
+    if norm_email in completed_lookup or store.is_done(email, require_api_key=require_key_for_safeguard) or store.is_done(norm_email, require_api_key=require_key_for_safeguard):
+        logger.info(f"Safeguard: Akun {email} sudah terdaftar & memiliki API key valid (tercatat di akun-result-tokenharbor.txt / state). Langsung lewati tanpa membuka browser!")
         return True
 
     logger.info(f"starting TokenHarbor Google OAuth signup for {email} (proxy={proxy.server if proxy else 'direct'}, pace={pace})")
@@ -2087,7 +2089,7 @@ def get_all_tokenharbor_state_files(current_state_file: str = "") -> List[str]:
             existing.append(abs_p)
     return existing
 
-def get_completed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str) -> Set[str]:
+def get_completed_emails(store: JsonlStore, results: ResultWriter, current_state_file: str, require_api_key: bool = False) -> Set[str]:
     """
     Returns the unified set of all email addresses that have successfully completed TokenHarbor registration
     and obtained an API key, checked across all sources:
@@ -2095,19 +2097,20 @@ def get_completed_emails(store: JsonlStore, results: ResultWriter, current_state
     2. Primary JsonlStore (status == FlowState.DONE)
     3. Fallback state files (state.jsonl, state-tokenharbor.jsonl, vps/state.jsonl)
     4. All candidate TokenHarbor result files across repo (vps, good, gsuite-api-key, etc.)
+    If require_api_key is True, only accounts that actually have a thk_ API key are returned.
     """
     completed: Set[str] = set()
-    completed.update(results.get_successful_emails())
-    completed.update(store.get_all_done_emails())
+    completed.update(results.get_successful_emails(require_api_key=require_api_key))
+    completed.update(store.get_all_done_emails(require_api_key=require_api_key))
 
     res_files = get_all_tokenharbor_result_files()
     if res_files:
-        completed.update(read_emails_from_result_file(res_files))
+        completed.update(read_emails_from_result_file(res_files, require_api_key=require_api_key))
 
     for sf in get_all_tokenharbor_state_files(current_state_file):
         try:
             alt = JsonlStore(sf)
-            completed.update(alt.get_all_done_emails())
+            completed.update(alt.get_all_done_emails(require_api_key=require_api_key))
         except Exception:
             pass
 
@@ -2156,19 +2159,28 @@ async def main_async():
     parser.add_argument("--reverify-email", action="store_true", help="Re-verify email for accounts/keys in apikey-need-verif-tokenharbor.txt")
     parser.add_argument(
         "--gsuite-mode",
-        choices=["create_new_key", "skip_existing"],
+        choices=["create_new_key", "skip_existing", "fetch_existing"],
         default=os.getenv("TOKENHARBOR_GSUITE_MODE", "create_new_key"),
-        help="GSuite registration mode: create_new_key (create new key if not in result file) or skip_existing (skip if already registered/verified/has keys)",
+        help="GSuite registration mode: create_new_key, skip_existing, or fetch_existing (fetch/create API keys for ALREADY_REGISTERED accounts)",
     )
     parser.add_argument(
         "--skip-existing",
         action="store_true",
         help="Alias for --gsuite-mode skip_existing",
     )
+    parser.add_argument(
+        "--fetch-existing",
+        "--fetch-keys",
+        dest="fetch_existing",
+        action="store_true",
+        help="Alias for --gsuite-mode fetch_existing (fetch/create API keys for accounts marked ALREADY_REGISTERED)",
+    )
     args = parser.parse_args()
 
     if args.skip_existing:
         args.gsuite_mode = "skip_existing"
+    elif args.fetch_existing:
+        args.gsuite_mode = "fetch_existing"
 
     # Resolve proxies file
     proxy_file = args.proxy_file
@@ -2350,45 +2362,95 @@ async def main_async():
 
     # ── GOOGLE OAUTH FLOW ───────────────────────────────────────────────────
     if args.auth == "google":
-        accounts_file = args.accounts_file
-        if not accounts_file:
-            if os.path.exists("tokenharbor-dataset/gsuite.txt"):
-                accounts_file = "tokenharbor-dataset/gsuite.txt"
-            elif os.path.exists("gsuite.txt"):
-                accounts_file = "gsuite.txt"
-            else:
-                logger.error("No accounts file found for Google OAuth (checked tokenharbor-dataset/gsuite.txt and gsuite.txt)")
-                sys.exit(1)
+        is_fetch_existing = (args.gsuite_mode == "fetch_existing")
 
-        accounts = load_accounts(accounts_file)
-        logger.info(f"Loaded {len(accounts)} Google accounts from {accounts_file}")
+        if is_fetch_existing:
+            # 1. Check all ALREADY_REGISTERED accounts in akun-result-tokenharbor.txt and fallback result files
+            raw_reg_accounts = load_already_registered_accounts([results.account_result_file] + results.fallback_result_files)
+            existing_reg_map = {a["email"].lower(): a["password"] for a in raw_reg_accounts}
 
-        completed_emails = get_completed_emails(store, results, args.state_file)
-        failed_emails = get_failed_emails(store, results, args.state_file)
+            # 2. Check if accounts_file is provided or discoverable to supply passwords or missing accounts
+            accounts_file = args.accounts_file
+            if not accounts_file:
+                if os.path.exists("tokenharbor-dataset/gsuite.txt"):
+                    accounts_file = "tokenharbor-dataset/gsuite.txt"
+                elif os.path.exists("gsuite.txt"):
+                    accounts_file = "gsuite.txt"
 
-        # Strictly exclude ANY account that has already completed successfully!
-        eligible_accounts = [
-            acc for acc in accounts
-            if acc.email.lower() not in completed_emails
-        ]
+            extra_accounts = load_accounts(accounts_file) if (accounts_file and os.path.exists(accounts_file)) else []
+            for ea in extra_accounts:
+                if ea.email.lower() in existing_reg_map and not existing_reg_map[ea.email.lower()] and ea.password:
+                    existing_reg_map[ea.email.lower()] = ea.password
 
-        if not args.retry_failed:
+            # Convert to Account objects
+            all_target_accounts: List[Account] = []
+            seen_emails = set()
+            for item in raw_reg_accounts:
+                em = item["email"].strip()
+                norm_em = em.lower()
+                pwd = existing_reg_map.get(norm_em) or item["password"]
+                if norm_em not in seen_emails:
+                    seen_emails.add(norm_em)
+                    all_target_accounts.append(Account(email=em, password=pwd))
+
+            # Also include any accounts from accounts_file that don't have a valid key in results
+            keys_held = get_completed_emails(store, results, args.state_file, require_api_key=True)
+            for ea in extra_accounts:
+                norm_ea = ea.email.lower().strip()
+                if norm_ea not in keys_held and norm_ea not in seen_emails:
+                    seen_emails.add(norm_ea)
+                    all_target_accounts.append(ea)
+
+            accounts = all_target_accounts
+            completed_emails = keys_held
             eligible_accounts = [
-                acc for acc in eligible_accounts
-                if acc.email.lower() not in failed_emails
+                acc for acc in all_target_accounts
+                if acc.email.lower() not in completed_emails
                 and not store.is_restricted_or_banned(acc.email)
             ]
+            logger.info(
+                f"Mode Recovery 'fetch_existing' aktif: {len(eligible_accounts)} akun (ALREADY_REGISTERED / belum memiliki key) siap diproses untuk generate API key baru."
+            )
         else:
-            logger.info("Retry mode active: prioritizing previously failed accounts at the front of the queue.")
-            # Even in retry mode, permanently unrecoverable accounts (restricted, banned, phone verification) must NOT be retried
+            accounts_file = args.accounts_file
+            if not accounts_file:
+                if os.path.exists("tokenharbor-dataset/gsuite.txt"):
+                    accounts_file = "tokenharbor-dataset/gsuite.txt"
+                elif os.path.exists("gsuite.txt"):
+                    accounts_file = "gsuite.txt"
+                else:
+                    logger.error("No accounts file found for Google OAuth (checked tokenharbor-dataset/gsuite.txt and gsuite.txt)")
+                    sys.exit(1)
+
+            accounts = load_accounts(accounts_file)
+            logger.info(f"Loaded {len(accounts)} Google accounts from {accounts_file}")
+
+            completed_emails = get_completed_emails(store, results, args.state_file, require_api_key=False)
+            failed_emails = get_failed_emails(store, results, args.state_file)
+
+            # Strictly exclude ANY account that has already completed successfully!
             eligible_accounts = [
-                acc for acc in eligible_accounts
-                if not store.is_restricted_or_banned(acc.email)
-                and acc.email.lower() not in completed_emails
+                acc for acc in accounts
+                if acc.email.lower() not in completed_emails
             ]
-            def sort_key(acc):
-                return 0 if acc.email.lower() in failed_emails else 1
-            eligible_accounts.sort(key=sort_key)
+
+            if not args.retry_failed:
+                eligible_accounts = [
+                    acc for acc in eligible_accounts
+                    if acc.email.lower() not in failed_emails
+                    and not store.is_restricted_or_banned(acc.email)
+                ]
+            else:
+                logger.info("Retry mode active: prioritizing previously failed accounts at the front of the queue.")
+                # Even in retry mode, permanently unrecoverable accounts (restricted, banned, phone verification) must NOT be retried
+                eligible_accounts = [
+                    acc for acc in eligible_accounts
+                    if not store.is_restricted_or_banned(acc.email)
+                    and acc.email.lower() not in completed_emails
+                ]
+                def sort_key(acc):
+                    return 0 if acc.email.lower() in failed_emails else 1
+                eligible_accounts.sort(key=sort_key)
 
         if not eligible_accounts:
             logger.info("All accounts have already been completed successfully! Nothing to do.")

@@ -52,6 +52,7 @@ export interface PythonRunnerOptions {
   auth?: string;
   gsuiteMode?: string;
   skipExisting?: boolean;
+  fetchExisting?: boolean;
   password?: string;
   reEnableFree?: boolean;
   reverifyEmail?: boolean;
@@ -122,6 +123,7 @@ export function spawnPythonRunner(runnerPath: string, opts: PythonRunnerOptions)
   if (opts.auth) args.push("--auth", opts.auth);
   if (opts.gsuiteMode) args.push("--gsuite-mode", opts.gsuiteMode);
   if (opts.skipExisting) args.push("--skip-existing");
+  if (opts.fetchExisting) args.push("--fetch-existing");
   if (opts.password) args.push("--password", opts.password);
   if (opts.reEnableFree) args.push("--re-enable-free");
   if (opts.reverifyEmail) args.push("--reverify-email");
