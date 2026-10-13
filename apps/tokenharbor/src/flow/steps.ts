@@ -9,6 +9,26 @@ const DEFAULT_SIGNUP_URL = "https://tokenharbor.ai/login?mode=signup";
 const DASHBOARD_URL = "https://tokenharbor.ai/dashboard";
 const API_KEYS_URL = "https://tokenharbor.ai/dashboard/api-keys";
 
+export function isDashboardUrl(url: string): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return (u.pathname === "/dashboard" || u.pathname.startsWith("/dashboard/")) && !u.pathname.includes("/oauth/finish");
+  } catch {
+    return false;
+  }
+}
+
+export function isOnboardingUrl(url: string): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return u.pathname.includes("/oauth/finish");
+  } catch {
+    return false;
+  }
+}
+
 export interface AccountSession {
   email: string;
   password: string;
@@ -96,6 +116,57 @@ export async function dismissCookieBanners(page: Page, log: ULog): Promise<void>
   }
 }
 
+/** Handles 'One more step' onboarding screen after signup / Google OAuth */
+export async function handleFinishAndStartChatting(page: Page, log: ULog): Promise<boolean> {
+  const currentUrl = page.url();
+  if (isDashboardUrl(currentUrl) && !isOnboardingUrl(currentUrl)) {
+    return false;
+  }
+
+  for (let i = 0; i < 15; i++) {
+    const url = page.url();
+    if (isDashboardUrl(url) && !isOnboardingUrl(url)) {
+      return true;
+    }
+
+    await dismissCookieBanners(page, log);
+
+    const finishBtn = await page.$(SELECTORS.finishAndStartChattingButton).catch(() => null);
+    if (finishBtn || isOnboardingUrl(url)) {
+      log("info", "detected 'One more step' onboarding screen, clicking 'Finish and start chatting'...", { url });
+      try {
+        if (finishBtn) {
+          await finishBtn.click();
+        } else {
+          await page.evaluate(() => {
+            const btn = Array.from(document.querySelectorAll("button")).find(b => (b.textContent || "").includes("Finish and start chatting")) ||
+                        document.querySelector('form button[type="submit"]');
+            if (btn) (btn as HTMLButtonElement).click();
+            else {
+              const form = document.querySelector("form");
+              if (form) form.requestSubmit();
+            }
+          });
+        }
+      } catch (err) {
+        log("warn", "click finish button failed, attempting fallback submit", { err });
+      }
+
+      for (let j = 0; j < 25; j++) {
+        await utils.sleep(500);
+        if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) {
+          log("info", "transitioned from onboarding screen to dashboard");
+          return true;
+        }
+      }
+    }
+
+    await utils.sleep(500);
+  }
+
+  return false;
+}
+
 /** Step 1: Navigates to signup page, fills credentials, and submits */
 export async function stepSignUp(
   page: Page,
@@ -154,7 +225,7 @@ export async function stepSignUp(
   log("info", "submitting signup form");
   const submitBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 10000);
   if (!submitBtn) {
-    if (!page.url().includes("/dashboard")) {
+    if (!isDashboardUrl(page.url())) {
       throw new Error("Create account button not found");
     }
   } else {
@@ -165,14 +236,18 @@ export async function stepSignUp(
   // Poll for dashboard redirect or immediate error / warning
   let signupError: string | null = null;
   for (let i = 0; i < 30; i++) {
-    if (page.url().includes("/dashboard")) break;
+    if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) break;
+    if (isOnboardingUrl(page.url()) || (await page.$(SELECTORS.finishAndStartChattingButton).catch(() => null))) {
+      await handleFinishAndStartChatting(page, log);
+      if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) break;
+    }
 
     // Check if Next.js 'Something snapped.' error screen appeared
     if (await checkSomethingSnapped(page)) {
       log("warn", "'Something snapped.' full-screen error detected! Recovering and repeating submit step...");
       const recovered = await recoverIfSomethingSnapped(page, DEFAULT_SIGNUP_URL, log);
       if (recovered) {
-        if (page.url().includes("/dashboard")) break;
+        if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) break;
         const retryBtn = await dom.waitForAnySelector(page, [SELECTORS.submitSignUpButton], 5000);
         if (retryBtn) {
           log("info", "re-submitting signup form after recovering from 'Something snapped'...");
@@ -215,14 +290,21 @@ export async function stepSignUp(
     page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 }).then(() => true).catch(() => false),
     (async () => {
       for (let i = 0; i < 20; i++) {
-        if (page.url().includes("/dashboard")) return true;
+        if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) return true;
+        if (isOnboardingUrl(page.url()) || (await page.$(SELECTORS.finishAndStartChattingButton).catch(() => null))) {
+          await handleFinishAndStartChatting(page, log);
+          if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) return true;
+        }
         await utils.sleep(500);
       }
       return false;
     })(),
   ]);
 
-  if (!reachedDashboard && !page.url().includes("/dashboard")) {
+  if (!reachedDashboard && !(isDashboardUrl(page.url()) && !isOnboardingUrl(page.url()))) {
+    if (isOnboardingUrl(page.url()) || (await page.$(SELECTORS.finishAndStartChattingButton).catch(() => null))) {
+      await handleFinishAndStartChatting(page, log);
+    }
     if (await checkSomethingSnapped(page)) {
       log("warn", "'Something snapped.' detected waiting for dashboard! Attempting recovery...");
       await recoverIfSomethingSnapped(page, DEFAULT_SIGNUP_URL, log);
@@ -234,7 +316,9 @@ export async function stepSignUp(
     if (errorText) {
       throw new Error(`Signup rejected: ${errorText}`);
     }
-    throw new Error(`Signup timed out without reaching /dashboard (URL: ${page.url()})`);
+    if (!isDashboardUrl(page.url())) {
+      throw new Error(`Signup timed out without reaching /dashboard (URL: ${page.url()})`);
+    }
   }
 
   log("info", "dashboard reached after signup", { url: page.url() });

@@ -10,6 +10,7 @@ import {
   PROXY_CAPABLE,
   buildArgs,
   commandLine,
+  getRemainingAccountsForApp,
   googleDirectEnabled,
   proxyReuseEnabled,
   readSeeds,
@@ -271,6 +272,28 @@ describe("seeds + warnings", () => {
   });
   it("proxy-capable list is exactly the apps that read the proxy file", () => {
     expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io"]);
+  });
+
+  it("getRemainingAccountsForApp differentiates ALREADY_REGISTERED based on requireApiKey", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rem-acc-"));
+    writeFileSync(join(dir, "gsuite.txt"), "acc1@x.com:p\nacc2@x.com:p\nacc3@x.com:p\n");
+    // acc1 has key, acc2 has ALREADY_REGISTERED, acc3 is not in results
+    writeFileSync(
+      join(dir, "akun-result-tokenharbor.txt"),
+      "acc1@x.com:p:thk_12345678901234567890123456\nacc2@x.com:p:ALREADY_REGISTERED\n",
+    );
+
+    const withoutKey = getRemainingAccountsForApp("tokenharbor", dir, false);
+    expect(withoutKey.total).toBe(3);
+    expect(withoutKey.completed).toBe(2);
+    expect(withoutKey.remaining).toBe(1);
+
+    const withKey = getRemainingAccountsForApp("tokenharbor", dir, true);
+    expect(withKey.total).toBe(3);
+    expect(withKey.completed).toBe(1);
+    expect(withKey.remaining).toBe(2);
+
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

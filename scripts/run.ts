@@ -354,7 +354,8 @@ async function askPlan(): Promise<RunPlan> {
     }
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
   } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
-    const rem = getRemainingAccountsForApp(app);
+    const requireKey = app === "tokenharbor" && (gsuiteMode === "fetch_existing" || gsuiteMode === "create_new_key");
+    const rem = getRemainingAccountsForApp(app, undefined, requireKey);
     if (rem.completed > 0) {
       console.log(
         ui.cyan(

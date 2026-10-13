@@ -94,6 +94,27 @@ DEFAULT_LOGIN_URL = "https://tokenharbor.ai/login"
 DASHBOARD_URL = "https://tokenharbor.ai/dashboard"
 API_KEYS_URL = "https://tokenharbor.ai/dashboard/api-keys"
 
+def is_dashboard_url(url: str) -> bool:
+    """Checks whether the URL path legitimately points to the TokenHarbor dashboard."""
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        # Note: /oauth/finish with ?next=/dashboard is onboarding, NOT the dashboard!
+        return (parsed.path == "/dashboard" or parsed.path.startswith("/dashboard/")) and "/oauth/finish" not in parsed.path
+    except Exception:
+        return False
+
+def is_onboarding_url(url: str) -> bool:
+    """Checks whether the URL is the TokenHarbor onboarding / finish screen."""
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        return "/oauth/finish" in parsed.path
+    except Exception:
+        return False
+
 def check_proxy_single_sync(
     proxy: Proxy,
     target_url: str = DEFAULT_SIGNUP_URL,
@@ -366,26 +387,81 @@ async def recover_if_something_snapped(page, target_url: Optional[str] = None, l
 
 async def handle_finish_and_start_chatting(page, logger) -> bool:
     """
-    Handles 'One more step' screen after Google OAuth signup (tokenharbor-dataset/oauth-finish-after-signup.html).
-    Returns True if onboarding screen was detected and clicked (new registration), False if directly dashboard.
+    Handles 'One more step' onboarding screen after Google OAuth signup (tokenharbor.ai/oauth/finish).
+    Returns True if onboarding screen was detected and completed (new registration), False if directly dashboard.
     """
-    for _ in range(12):
-        if "/dashboard" in page.url:
-            return False
+    if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+        return False
+
+    saw_screen = False
+    for attempt in range(15):
+        current_url = page.url
+        if is_dashboard_url(current_url) and not is_onboarding_url(current_url):
+            return saw_screen
+
         try:
-            finish_btn = await page.query_selector('button:has-text("Finish and start chatting"), button[type="submit"]:has-text("Finish and start chatting")')
-            if finish_btn:
-                logger.info("detected 'One more step' onboarding screen (Akun Baru), clicking 'Finish and start chatting'...")
-                try:
-                    await finish_btn.click(no_wait_after=True, timeout=10000)
-                except Exception:
-                    await finish_btn.click(force=True, no_wait_after=True, timeout=5000)
-                await human_delay(2000, 3500)
-                return True
+            await dismiss_cookie_banner(page)
         except Exception:
             pass
+
+        # Check for Cloudflare Turnstile if present on onboarding
+        try:
+            await resolve_turnstile_if_present(page, timeout_sec=6, logger=logger)
+        except Exception:
+            pass
+
+        try:
+            finish_btn = await page.query_selector(
+                'button:has-text("Finish and start chatting"), button[type="submit"]:has-text("Finish and start chatting"), button[type="submit"]:has-text("Finish")'
+            )
+            is_finish_page = is_onboarding_url(current_url)
+            if not finish_btn and is_finish_page:
+                finish_btn = await page.query_selector('form button[type="submit"], button.rounded-full.bg-foreground')
+
+            if finish_btn or is_finish_page:
+                saw_screen = True
+                logger.info(f"detected 'One more step' onboarding screen (Akun Baru, URL: {current_url}), clicking 'Finish and start chatting'...")
+
+                clicked = False
+                try:
+                    if finish_btn and await finish_btn.is_visible() and await finish_btn.is_enabled():
+                        await finish_btn.click(timeout=5000)
+                        clicked = True
+                except Exception as e:
+                    logger.warn(f"Standard click on finish button failed ({e}), attempting JS fallback click...")
+
+                if not clicked:
+                    try:
+                        await page.evaluate("""() => {
+                            const btn = Array.from(document.querySelectorAll('button')).find(b =>
+                                (b.textContent || '').includes('Finish and start chatting') || (b.textContent || '').includes('Finish')
+                            ) || document.querySelector('form button[type="submit"]') || document.querySelector('button.rounded-full');
+                            if (btn) {
+                                btn.click();
+                            } else {
+                                const form = document.querySelector('form');
+                                if (form) form.requestSubmit();
+                            }
+                        }""")
+                    except Exception as e:
+                        logger.warn(f"Evaluate submit on finish screen failed: {e}")
+
+                # Wait for transition to real dashboard
+                for _ in range(25):
+                    await asyncio.sleep(0.5)
+                    if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                        logger.info("Successfully transitioned from 'One more step' onboarding to /dashboard!")
+                        await human_delay(1500, 2500)
+                        return True
+
+                logger.warn(f"Still on onboarding page ({page.url}) after submit attempt #{attempt+1}, retrying...")
+                await recover_if_something_snapped(page, logger=logger)
+        except Exception as e:
+            logger.warn(f"Error handling 'Finish and start chatting': {e}")
+
         await asyncio.sleep(0.5)
-    return False
+
+    return saw_screen
 
 async def dismiss_cookie_banner(page, logger=None) -> bool:
     """Dismisses cookie / analytics banner if present on screen."""
@@ -941,7 +1017,7 @@ async def run_single_google_account(
     password = account.password
 
     # Absolute safeguard: if account already completed or has api key in ANY result file / state, NEVER rerun!
-    require_key_for_safeguard = (gsuite_mode == "fetch_existing")
+    require_key_for_safeguard = (gsuite_mode in ("create_new_key", "fetch_existing"))
     completed_lookup = get_completed_emails(store, results, getattr(store, "filepath", "state.jsonl"), require_api_key=require_key_for_safeguard)
     if norm_email in completed_lookup or store.is_done(email, require_api_key=require_key_for_safeguard) or store.is_done(norm_email, require_api_key=require_key_for_safeguard):
         status_tag = "memiliki API key valid" if require_key_for_safeguard else "sudah tercatat/terdaftar"
@@ -984,7 +1060,7 @@ async def run_single_google_account(
             await dismiss_cookie_banner(page, logger=logger)
 
             saw_onboarding = False
-            if "/dashboard" not in page.url:
+            if not is_dashboard_url(page.url):
                 # Cek apakah landing page terblokir Turnstile (jika pakai proxy)
                 if proxy and await is_turnstile_detected(page, logger=logger):
                     logger.warn(f"Cloudflare Turnstile captcha terdeteksi di landing page dengan proxy {proxy.server}! Langsung ganti proxy...")
@@ -1014,7 +1090,7 @@ async def run_single_google_account(
                 # Deteksi Turnstile saat proses SSO Google (jika pakai proxy langsung ganti proxy)
                 if proxy:
                     for _ in range(8):
-                        if "accounts.google.com" in page.url or "/dashboard" in page.url:
+                        if "accounts.google.com" in page.url or is_dashboard_url(page.url) or is_onboarding_url(page.url):
                             break
                         if await is_turnstile_detected(page, logger=logger):
                             logger.info(f"Cloudflare Turnstile captcha terdeteksi saat Google SSO dengan proxy {proxy.server}. Mencoba penyelesaian via Solver API & click...")
@@ -1052,7 +1128,7 @@ async def run_single_google_account(
                 # Deteksi Turnstile pada callback OAuth TokenHarbor
                 if proxy:
                     for _ in range(8):
-                        if "/dashboard" in page.url:
+                        if is_dashboard_url(page.url) or is_onboarding_url(page.url):
                             break
                         if await is_turnstile_detected(page, logger=logger):
                             logger.warn(f"Cloudflare Turnstile captcha terdeteksi di callback TokenHarbor dengan proxy {proxy.server}! Langsung ganti proxy...")
@@ -1067,21 +1143,27 @@ async def run_single_google_account(
 
             # ── 5. Ensure Reached Dashboard ────────────────────────────────
             reached_dashboard = False
-            for _ in range(25):
-                if "/dashboard" in page.url:
+            for _ in range(30):
+                if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
                     reached_dashboard = True
                     break
-                if await page.query_selector('button:has-text("Finish and start chatting")'):
+                if is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
                     if await handle_finish_and_start_chatting(page, logger):
                         saw_onboarding = True
+                        if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                            reached_dashboard = True
+                            break
                 await asyncio.sleep(0.5)
 
-            if not reached_dashboard and "/dashboard" not in page.url:
+            if not reached_dashboard and not is_dashboard_url(page.url):
                 await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
-                if "/dashboard" not in page.url:
+                if not (is_dashboard_url(page.url) and not is_onboarding_url(page.url)):
                     logger.info("navigating explicitly to dashboard...")
                     await page.goto(DASHBOARD_URL, wait_until="domcontentloaded")
                     await human_delay(2000, 3500)
+                    if is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
+                        if await handle_finish_and_start_chatting(page, logger):
+                            saw_onboarding = True
 
             if saw_onboarding:
                 logger.info(f"✨ Akun {email}: Status REGISTRASI BARU (pertama kali mendaftar di TokenHarbor)")
@@ -1114,21 +1196,25 @@ async def run_single_google_account(
 
             # ── Check GSuite Registration Strategy ─────────────────────────
             if gsuite_mode == "skip_existing":
-                has_existing_key = await check_account_has_existing_api_keys(page, logger=logger)
-                is_verified = not needs_verification
-                if has_existing_key or is_verified or (not saw_onboarding):
-                    reasons = []
-                    if has_existing_key:
-                        reasons.append("sudah memiliki API key")
-                    if is_verified:
-                        reasons.append("akun sudah terverifikasi")
-                    if not saw_onboarding:
-                        reasons.append("sudah terdaftar di server")
-                    reason_desc = " & ".join(reasons) if reasons else "sudah terdaftar di server TokenHarbor"
-                    logger.info(f"⏭️ Akun {email}: {reason_desc}. Sesuai opsi 'skip_existing', akun dilewati tanpa membuat API key baru!")
-                    store.upsert({"email": email, "status": FlowState.DONE, "is_new_registration": False, "note": f"skipped_existing: {reason_desc}"})
-                    results.mark_success(email=email, password=password, api_key="", extra="ALREADY_REGISTERED")
-                    return True
+                # Pastikan akun benar-benar sudah tiba di dashboard, bukan stuck di /oauth/finish
+                if not (is_dashboard_url(page.url) and not is_onboarding_url(page.url)):
+                    logger.warn(f"Akun {email} belum berada di dashboard (URL: {page.url}), tidak bisa diskip sebagai existing.")
+                else:
+                    has_existing_key = await check_account_has_existing_api_keys(page, logger=logger)
+                    is_verified = not needs_verification
+                    # Jika melihat onboarding (akun baru), JANGAN skip! Akun baru harus dibuatkan API key.
+                    # Hanya skip jika onboarding TIDAK terlihat DAN (sudah punya API key ATAU sudah terverifikasi).
+                    if not saw_onboarding and (has_existing_key or is_verified):
+                        reasons = []
+                        if has_existing_key:
+                            reasons.append("sudah memiliki API key")
+                        if is_verified:
+                            reasons.append("akun sudah terverifikasi")
+                        reason_desc = " & ".join(reasons) if reasons else "sudah terdaftar di server TokenHarbor"
+                        logger.info(f"⏭️ Akun {email}: {reason_desc}. Sesuai opsi 'skip_existing', akun dilewati tanpa membuat API key baru!")
+                        store.upsert({"email": email, "status": FlowState.DONE, "is_new_registration": False, "note": f"skipped_existing: {reason_desc}"})
+                        results.mark_success(email=email, password=password, api_key="", extra="ALREADY_REGISTERED")
+                        return True
 
             verify_url = None
             if not needs_verification:
@@ -1353,7 +1439,7 @@ async def run_single_account(
                 if solved:
                     await human_delay(1500, 2500)
                     # Re-click submit if still on login page
-                    if "/dashboard" not in page.url and await page.query_selector('button[type="submit"]'):
+                    if not is_dashboard_url(page.url) and await page.query_selector('button[type="submit"]'):
                         logger.info("Turnstile completed, re-submitting form...")
                         r_btn = await page.query_selector('button[type="submit"]')
                         if r_btn:
@@ -1367,8 +1453,12 @@ async def run_single_account(
                 speed_warning = None
                 signup_error = None
                 for _ in range(14):
-                    if "/dashboard" in page.url:
+                    if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
                         break
+                    if is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
+                        await handle_finish_and_start_chatting(page, logger)
+                        if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                            break
                     found_err = await page.evaluate("""() => {
                         const el = document.querySelector('form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500');
                         return el ? (el.textContent || '').trim() : null;
@@ -1382,7 +1472,7 @@ async def run_single_account(
                             break
                     await asyncio.sleep(0.5)
 
-                if "/dashboard" in page.url:
+                if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
                     break
 
                 if speed_warning:
@@ -1410,12 +1500,17 @@ async def run_single_account(
             # Confirm dashboard reached
             reached_dashboard = False
             for _ in range(25):
-                if "/dashboard" in page.url:
+                if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
                     reached_dashboard = True
                     break
+                if is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
+                    await handle_finish_and_start_chatting(page, logger)
+                    if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                        reached_dashboard = True
+                        break
                 await asyncio.sleep(0.5)
 
-            if not reached_dashboard and "/dashboard" not in page.url:
+            if not reached_dashboard and not is_dashboard_url(page.url):
                 await recover_if_something_snapped(page, target_url=DEFAULT_SIGNUP_URL, logger=logger)
                 err_text = await page.evaluate("""() => {
                     const el = document.querySelector('form p[data-bordered="true"], form p.border, [role="alert"], .text-destructive, .text-red-500');
@@ -1757,7 +1852,7 @@ async def run_single_reenable_account(
                 await recover_if_something_snapped(page, target_url=DEFAULT_LOGIN_URL, logger=logger)
                 await dismiss_cookie_banner(page, logger=logger)
 
-                if "/dashboard" not in page.url:
+                if not is_dashboard_url(page.url):
                     if proxy and await is_turnstile_detected(page, logger=logger):
                         logger.warn(f"Cloudflare Turnstile terdeteksi di landing page dengan proxy {proxy.server}! Langsung ganti proxy...")
                         raise TurnstileDetectedException(f"Turnstile detected on landing via proxy {proxy.server}")
@@ -1782,7 +1877,7 @@ async def run_single_reenable_account(
 
                     if proxy:
                         for _ in range(8):
-                            if "accounts.google.com" in page.url or "/dashboard" in page.url:
+                            if "accounts.google.com" in page.url or is_dashboard_url(page.url) or is_onboarding_url(page.url):
                                 break
                             if await is_turnstile_detected(page, logger=logger):
                                 logger.warn(f"Turnstile terdeteksi saat SSO Google dengan proxy {proxy.server}! Langsung ganti proxy...")
@@ -1805,7 +1900,7 @@ async def run_single_reenable_account(
 
                     if proxy:
                         for _ in range(8):
-                            if "/dashboard" in page.url:
+                            if is_dashboard_url(page.url) or is_onboarding_url(page.url):
                                 break
                             if await is_turnstile_detected(page, logger=logger):
                                 logger.warn(f"Turnstile terdeteksi di callback dengan proxy {proxy.server}! Langsung ganti proxy...")
@@ -1823,7 +1918,7 @@ async def run_single_reenable_account(
                 await recover_if_something_snapped(page, target_url=DEFAULT_LOGIN_URL, logger=logger)
                 await dismiss_cookie_banner(page, logger=logger)
 
-                if "/dashboard" not in page.url:
+                if not is_dashboard_url(page.url):
                     login_tab = await page.query_selector('button[data-analytics="login-tab-signin"], button:has-text("Sign in")')
                     if login_tab:
                         try:
@@ -1872,9 +1967,14 @@ async def run_single_reenable_account(
                     logger.info("waiting for navigation to /dashboard...")
                     redirected = False
                     for _ in range(25):
-                        if "/dashboard" in page.url:
+                        if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
                             redirected = True
                             break
+                        if is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
+                            if await handle_finish_and_start_chatting(page, logger):
+                                if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                                    redirected = True
+                                    break
                         err = await page.evaluate("""() => {
                             const el = document.querySelector('[role="alert"], .alert-danger, .text-danger, .text-red-500, .text-rose-500');
                             return el ? el.textContent : null;
@@ -1883,10 +1983,12 @@ async def run_single_reenable_account(
                             raise RuntimeError(f"Login ditolak oleh TokenHarbor: {err.strip()}")
                         await asyncio.sleep(1)
 
-                    if not redirected and "/dashboard" not in page.url:
+                    if not redirected and not is_dashboard_url(page.url):
                         logger.info("attempting manual navigation to /dashboard...")
                         await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout_ms)
                         await human_delay(1500, 2500)
+                        if is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
+                            await handle_finish_and_start_chatting(page, logger)
 
             # ── 2. Tangani dashboard, modal free models, dan verifikasi email ─
             logger.info("waiting for dashboard content to finish loading...")
@@ -2432,7 +2534,8 @@ async def main_async():
             accounts = load_accounts(accounts_file)
             logger.info(f"Loaded {len(accounts)} Google accounts from {accounts_file}")
 
-            completed_emails = get_completed_emails(store, results, args.state_file, require_api_key=False)
+            require_key_for_queue = (args.gsuite_mode in ("create_new_key", "fetch_existing"))
+            completed_emails = get_completed_emails(store, results, args.state_file, require_api_key=require_key_for_queue)
             failed_emails = get_failed_emails(store, results, args.state_file)
 
             # Strictly exclude ANY account that has already completed successfully!
@@ -2517,10 +2620,19 @@ async def main_async():
                 norm_email = account.email.strip().lower()
 
                 # Fast pre-check: strictly skip accounts that are already in akun-result-tokenharbor.txt or completed
-                if args.gsuite_mode in ("skip_existing", "create_new_key"):
+                if args.gsuite_mode == "skip_existing":
                     if norm_email in completed_emails or norm_email in results.get_successful_emails(require_api_key=False):
                         logger.info(
                             f"⏭️ [SKIP] Akun {account.email} sudah tercatat di akun-result-tokenharbor.txt. "
+                            f"Langsung dilewati tanpa mengambil proxy & tanpa membuka browser!"
+                        )
+                        async with lock:
+                            in_flight -= 1
+                        continue
+                elif args.gsuite_mode in ("create_new_key", "fetch_existing"):
+                    if norm_email in completed_emails or norm_email in results.get_successful_emails(require_api_key=True):
+                        logger.info(
+                            f"⏭️ [SKIP] Akun {account.email} sudah memiliki API key di akun-result-tokenharbor.txt. "
                             f"Langsung dilewati tanpa mengambil proxy & tanpa membuka browser!"
                         )
                         async with lock:

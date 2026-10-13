@@ -152,7 +152,8 @@ export function buildArgs(plan: RunPlan): string[] {
   }
   if (plan.limit !== undefined && plan.limit > 0) {
     if (plan.authMethod === "google") {
-      const rem = getRemainingAccountsForApp(plan.app);
+      const requireKey = plan.app === "tokenharbor" && (plan.gsuiteMode === "fetch_existing" || plan.gsuiteMode === "create_new_key");
+      const rem = getRemainingAccountsForApp(plan.app, undefined, requireKey);
       const effectiveLimit = rem.remaining > 0 ? Math.min(plan.limit, rem.remaining) : plan.limit;
       args.push("--limit", String(effectiveLimit));
     } else {
@@ -305,7 +306,11 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd(), requ
   return completed;
 }
 
-export function getRemainingAccountsForApp(app: AppName, cwd = process.cwd()): AppAccountStats {
+export function getRemainingAccountsForApp(
+  app: AppName,
+  cwd = process.cwd(),
+  requireApiKey = false,
+): AppAccountStats {
   const candidateFiles = [
     path.join(cwd, "gsuite.txt"),
     path.join(cwd, `${app}-dataset/gsuite.txt`),
@@ -323,7 +328,7 @@ export function getRemainingAccountsForApp(app: AppName, cwd = process.cwd()): A
     .map((l) => l.split(/[:|]/)[0].trim().toLowerCase())
     .filter((l) => l.includes("@"));
 
-  const completed = getCompletedEmailsForApp(app, cwd);
+  const completed = getCompletedEmailsForApp(app, cwd, requireApiKey);
   const remainingAccounts = allAccounts.filter((acc) => !completed.has(acc));
 
   return {
@@ -362,7 +367,8 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
     out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
   }
   if (plan.authMethod === "google") {
-    const rem = getRemainingAccountsForApp(plan.app);
+    const requireKey = plan.app === "tokenharbor" && (plan.gsuiteMode === "fetch_existing" || plan.gsuiteMode === "create_new_key");
+    const rem = getRemainingAccountsForApp(plan.app, undefined, requireKey);
     if (rem.total > 0) {
       if (rem.remaining === 0) {
         out.push(
