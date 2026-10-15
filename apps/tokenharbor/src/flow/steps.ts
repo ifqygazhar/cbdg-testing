@@ -116,6 +116,39 @@ export async function dismissCookieBanners(page: Page, log: ULog): Promise<void>
   }
 }
 
+/** Checks for Sonner toasts, alerts, or rejection banners on onboarding screen */
+export async function checkOnboardingError(page: Page): Promise<string | null> {
+  try {
+    return await page.evaluate(() => {
+      // 1. Sonner toast notifications
+      const toasts = Array.from(document.querySelectorAll("[data-sonner-toast]"));
+      for (const toast of toasts) {
+        const title = toast.querySelector("[data-title]")?.textContent || "";
+        const desc = toast.querySelector("[data-description]")?.textContent || "";
+        const text = (title + " " + desc).trim() || toast.textContent?.trim() || "";
+        if (text && !text.toLowerCase().includes("welcome")) return text;
+      }
+      // 2. Form errors or alerts
+      const alert = document.querySelector('[role="alert"], .text-destructive, .text-red-500, .text-rose-500, form p.border, form p[data-bordered="true"]');
+      if (alert) {
+        const text = alert.textContent?.trim();
+        if (text) return text;
+      }
+      // 3. Rejection / IP restriction text in body
+      const bodyText = document.body?.innerText || "";
+      if (bodyText.includes("Your IP or email provider is not supported")) {
+        return "Your IP or email provider is not supported for Token Harbor accounts.";
+      }
+      if (bodyText.includes("Too many requests") || bodyText.includes("Rate limit")) {
+        return "Rate limit / Too many requests detected on onboarding.";
+      }
+      return null;
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Handles 'One more step' onboarding screen after signup / Google OAuth */
 export async function handleFinishAndStartChatting(page: Page, log: ULog): Promise<boolean> {
   const currentUrl = page.url();
@@ -123,48 +156,123 @@ export async function handleFinishAndStartChatting(page: Page, log: ULog): Promi
     return false;
   }
 
-  for (let i = 0; i < 15; i++) {
+  let sawScreen = false;
+  const maxAttempts = 4;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const url = page.url();
     if (isDashboardUrl(url) && !isOnboardingUrl(url)) {
-      return true;
+      return sawScreen;
     }
 
     await dismissCookieBanners(page, log);
 
     const finishBtn = await page.$(SELECTORS.finishAndStartChattingButton).catch(() => null);
     if (finishBtn || isOnboardingUrl(url)) {
-      log("info", "detected 'One more step' onboarding screen, clicking 'Finish and start chatting'...", { url });
-      try {
-        if (finishBtn) {
-          await finishBtn.click();
-        } else {
-          await page.evaluate(() => {
-            const btn = Array.from(document.querySelectorAll("button")).find(b => (b.textContent || "").includes("Finish and start chatting")) ||
-                        document.querySelector('form button[type="submit"]');
-            if (btn) (btn as HTMLButtonElement).click();
-            else {
-              const form = document.querySelector("form");
-              if (form) form.requestSubmit();
-            }
-          });
+      sawScreen = true;
+
+      // Check for pre-existing errors
+      const existingErr = await checkOnboardingError(page);
+      if (existingErr) {
+        log("warn", `Onboarding error detected on screen: "${existingErr}"`);
+        if (/not supported|too many requests|rate limit/i.test(existingErr)) {
+          throw new Error(`Signup rejected: ${existingErr}`);
         }
-      } catch (err) {
-        log("warn", "click finish button failed, attempting fallback submit", { err });
       }
 
-      for (let j = 0; j < 25; j++) {
+      log("info", `detected 'One more step' onboarding screen, attempting submit #${attempt + 1}...`, { url });
+
+      // Check if button is in pending/loading state
+      const btnState = await page.evaluate(() => {
+        const btn = document.querySelector('form button[type="submit"]') ||
+                    Array.from(document.querySelectorAll("button")).find(b => (b.textContent || "").includes("Finish"));
+        if (!btn) return null;
+        return {
+          disabled: (btn as HTMLButtonElement).disabled || btn.hasAttribute("disabled") || btn.classList.contains("disabled"),
+          loading: btn.getAttribute("aria-busy") === "true" || !!btn.querySelector(".animate-spin") || (btn.textContent || "").includes("Loading"),
+        };
+      }).catch(() => null);
+
+      if (btnState && (btnState.loading || btnState.disabled)) {
+        log("info", "Submit button is currently in pending/loading state, waiting for completion...");
+      } else {
+        // 1. Standard button click
+        try {
+          if (finishBtn) {
+            await finishBtn.click();
+          }
+        } catch (err) {
+          log("warn", "Standard finish button click failed", { err });
+        }
+
+        // 2. Form requestSubmit dispatch
+        try {
+          await page.evaluate(() => {
+            const form = document.querySelector("form");
+            if (form) {
+              try {
+                form.requestSubmit();
+              } catch {
+                const btn = form.querySelector('button[type="submit"]') || document.querySelector("button.rounded-full");
+                if (btn) (btn as HTMLButtonElement).click();
+              }
+            }
+          });
+        } catch {}
+
+        // 3. Press Enter on invite_code input
+        try {
+          const inputEl = await page.$('input[name="invite_code"]').catch(() => null);
+          if (inputEl) {
+            await inputEl.focus();
+            await page.keyboard.press("Enter");
+          }
+        } catch {}
+      }
+
+      // Wait for transition to real dashboard (poll for 8 seconds)
+      for (let j = 0; j < 16; j++) {
         await utils.sleep(500);
         if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) {
-          log("info", "transitioned from onboarding screen to dashboard");
+          log("info", "Successfully transitioned from onboarding screen to dashboard!");
           return true;
         }
+
+        const submitErr = await checkOnboardingError(page);
+        if (submitErr) {
+          log("warn", `Onboarding error detected after submit: "${submitErr}"`);
+          if (/not supported|too many requests|rate limit/i.test(submitErr)) {
+            throw new Error(`Signup rejected: ${submitErr}`);
+          }
+        }
+      }
+
+      // Test direct navigation to DASHBOARD_URL
+      log("info", `Still on onboarding (${page.url()}) after attempt #${attempt + 1}. Testing direct navigation to ${DASHBOARD_URL}...`);
+      try {
+        await page.goto(DASHBOARD_URL, { waitUntil: "domcontentloaded", timeout: 15000 });
+        await utils.sleep(1500);
+        if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) {
+          log("info", "Successfully reached dashboard via direct navigation after onboarding submit!");
+          return true;
+        }
+      } catch (err) {
+        log("warn", "Direct dashboard navigation test failed", { err });
+      }
+
+      // If bounced back to onboarding, reload page before next attempt to reset stale form
+      if (attempt < maxAttempts - 1 && isOnboardingUrl(page.url())) {
+        try {
+          log("info", "Reloading onboarding page to reset form state for next attempt...");
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+          await utils.sleep(1500);
+        } catch {}
       }
     }
 
     await utils.sleep(500);
   }
 
-  return false;
+  return sawScreen;
 }
 
 /** Step 1: Navigates to signup page, fills credentials, and submits */
@@ -235,9 +343,11 @@ export async function stepSignUp(
 
   // Poll for dashboard redirect or immediate error / warning
   let signupError: string | null = null;
+  let handledOnboarding = false;
   for (let i = 0; i < 30; i++) {
     if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) break;
-    if (isOnboardingUrl(page.url()) || (await page.$(SELECTORS.finishAndStartChattingButton).catch(() => null))) {
+    if (!handledOnboarding && (isOnboardingUrl(page.url()) || (await page.$(SELECTORS.finishAndStartChattingButton).catch(() => null)))) {
+      handledOnboarding = true;
       await handleFinishAndStartChatting(page, log);
       if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) break;
     }
@@ -291,10 +401,6 @@ export async function stepSignUp(
     (async () => {
       for (let i = 0; i < 20; i++) {
         if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) return true;
-        if (isOnboardingUrl(page.url()) || (await page.$(SELECTORS.finishAndStartChattingButton).catch(() => null))) {
-          await handleFinishAndStartChatting(page, log);
-          if (isDashboardUrl(page.url()) && !isOnboardingUrl(page.url())) return true;
-        }
         await utils.sleep(500);
       }
       return false;

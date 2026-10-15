@@ -385,6 +385,37 @@ async def recover_if_something_snapped(page, target_url: Optional[str] = None, l
 
     return not await check_something_snapped(page)
 
+async def check_onboarding_error(page) -> Optional[str]:
+    """Checks for Sonner toasts, alerts, or rejection banners on onboarding screen."""
+    try:
+        return await page.evaluate("""() => {
+            // 1. Sonner toast notifications
+            const toasts = Array.from(document.querySelectorAll('[data-sonner-toast]'));
+            for (const toast of toasts) {
+                const title = toast.querySelector('[data-title]')?.textContent || '';
+                const desc = toast.querySelector('[data-description]')?.textContent || '';
+                const text = (title + ' ' + desc).trim() || toast.textContent?.trim() || '';
+                if (text && !text.toLowerCase().includes('welcome')) return text;
+            }
+            // 2. Form errors or alerts
+            const alert = document.querySelector('[role="alert"], .text-destructive, .text-red-500, .text-rose-500, form p.border, form p[data-bordered="true"]');
+            if (alert) {
+                const text = alert.textContent?.trim();
+                if (text) return text;
+            }
+            // 3. Rejection / IP restriction text in body
+            const bodyText = document.body?.innerText || '';
+            if (bodyText.includes("Your IP or email provider is not supported")) {
+                return "Your IP or email provider is not supported for Token Harbor accounts.";
+            }
+            if (bodyText.includes("Too many requests") || bodyText.includes("Rate limit")) {
+                return "Rate limit / Too many requests detected on onboarding.";
+            }
+            return null;
+        }""")
+    except Exception:
+        return None
+
 async def handle_finish_and_start_chatting(page, logger) -> bool:
     """
     Handles 'One more step' onboarding screen after Google OAuth signup (tokenharbor.ai/oauth/finish).
@@ -394,7 +425,8 @@ async def handle_finish_and_start_chatting(page, logger) -> bool:
         return False
 
     saw_screen = False
-    for attempt in range(15):
+    max_attempts = 4
+    for attempt in range(max_attempts):
         current_url = page.url
         if is_dashboard_url(current_url) and not is_onboarding_url(current_url):
             return saw_screen
@@ -406,7 +438,8 @@ async def handle_finish_and_start_chatting(page, logger) -> bool:
 
         # Check for Cloudflare Turnstile if present on onboarding
         try:
-            await resolve_turnstile_if_present(page, timeout_sec=6, logger=logger)
+            if await is_turnstile_detected(page, logger=logger):
+                await resolve_turnstile_if_present(page, timeout_sec=10, logger=logger)
         except Exception:
             pass
 
@@ -420,43 +453,111 @@ async def handle_finish_and_start_chatting(page, logger) -> bool:
 
             if finish_btn or is_finish_page:
                 saw_screen = True
-                logger.info(f"detected 'One more step' onboarding screen (Akun Baru, URL: {current_url}), clicking 'Finish and start chatting'...")
 
-                clicked = False
-                try:
-                    if finish_btn and await finish_btn.is_visible() and await finish_btn.is_enabled():
-                        await finish_btn.click(timeout=5000)
-                        clicked = True
-                except Exception as e:
-                    logger.warn(f"Standard click on finish button failed ({e}), attempting JS fallback click...")
+                # Check if there's an error on the screen before submit
+                existing_err = await check_onboarding_error(page)
+                if existing_err:
+                    logger.warn(f"Onboarding error detected on screen: '{existing_err}'")
+                    if "not supported" in existing_err.lower() or "too many requests" in existing_err.lower() or "rate limit" in existing_err.lower():
+                        raise RuntimeError(f"Signup rejected: {existing_err}")
 
-                if not clicked:
+                logger.info(f"detected 'One more step' onboarding screen (Akun Baru, URL: {current_url}), attempting submit #{attempt+1}...")
+
+                # Check if button is currently in pending/loading state
+                btn_state = await page.evaluate("""() => {
+                    const btn = document.querySelector('form button[type="submit"]') ||
+                                Array.from(document.querySelectorAll('button')).find(b => (b.textContent || '').includes('Finish'));
+                    if (!btn) return null;
+                    return {
+                        disabled: btn.disabled || btn.hasAttribute('disabled') || btn.classList.contains('disabled'),
+                        loading: btn.getAttribute('aria-busy') === 'true' || !!btn.querySelector('.animate-spin') || (btn.textContent || '').includes('Loading'),
+                        text: btn.textContent?.trim() || ''
+                    };
+                }""")
+
+                if btn_state and (btn_state.get('loading') or btn_state.get('disabled')):
+                    logger.info("Submit button is currently in pending/loading state, waiting for completion...")
+                else:
+                    # 1. Standard button click
+                    try:
+                        if finish_btn and await finish_btn.is_visible():
+                            await finish_btn.scroll_into_view_if_needed(timeout=2000)
+                            await finish_btn.click(timeout=4000)
+                    except Exception as e:
+                        logger.warn(f"Standard click on finish button failed: {e}")
+
+                    # 2. Form requestSubmit (direct Server Action dispatch)
                     try:
                         await page.evaluate("""() => {
-                            const btn = Array.from(document.querySelectorAll('button')).find(b =>
-                                (b.textContent || '').includes('Finish and start chatting') || (b.textContent || '').includes('Finish')
-                            ) || document.querySelector('form button[type="submit"]') || document.querySelector('button.rounded-full');
-                            if (btn) {
-                                btn.click();
-                            } else {
-                                const form = document.querySelector('form');
-                                if (form) form.requestSubmit();
+                            const form = document.querySelector('form');
+                            if (form) {
+                                try {
+                                    form.requestSubmit();
+                                } catch (e) {
+                                    const btn = form.querySelector('button[type="submit"]') || document.querySelector('button.rounded-full');
+                                    if (btn) btn.click();
+                                }
                             }
                         }""")
                     except Exception as e:
-                        logger.warn(f"Evaluate submit on finish screen failed: {e}")
+                        logger.warn(f"Form requestSubmit failed: {e}")
 
-                # Wait for transition to real dashboard
-                for _ in range(25):
+                    # 3. Press Enter on invite_code input
+                    try:
+                        input_el = await page.query_selector('input[name="invite_code"]')
+                        if input_el:
+                            await input_el.focus()
+                            await page.keyboard.press("Enter")
+                    except Exception:
+                        pass
+
+                # Wait for transition to real dashboard (poll for 8 seconds)
+                for _ in range(16):
                     await asyncio.sleep(0.5)
                     if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
                         logger.info("Successfully transitioned from 'One more step' onboarding to /dashboard!")
                         await human_delay(1500, 2500)
                         return True
 
-                logger.warn(f"Still on onboarding page ({page.url}) after submit attempt #{attempt+1}, retrying...")
-                await recover_if_something_snapped(page, logger=logger)
+                    # Check for Turnstile during submission
+                    if await is_turnstile_detected(page):
+                        logger.info("Turnstile detected during onboarding submit, resolving...")
+                        await resolve_turnstile_if_present(page, timeout_sec=10, logger=logger)
+
+                    # Check if error toast or alert appeared
+                    submit_err = await check_onboarding_error(page)
+                    if submit_err:
+                        logger.warn(f"Onboarding error detected after submit: '{submit_err}'")
+                        if "not supported" in submit_err.lower() or "too many requests" in submit_err.lower() or "rate limit" in submit_err.lower():
+                            raise RuntimeError(f"Signup rejected: {submit_err}")
+
+                # If still on onboarding: Test direct navigation to DASHBOARD_URL
+                # Often the Server Action already updated the database session, and simply navigating to /dashboard will succeed!
+                logger.info(f"Still on onboarding ({page.url}) after attempt #{attempt+1}. Testing direct navigation to {DASHBOARD_URL}...")
+                try:
+                    await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=15000)
+                    await human_delay(1500, 2500)
+                    if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                        logger.info("Successfully reached /dashboard via direct navigation after onboarding submit!")
+                        return True
+                except Exception as e:
+                    logger.warn(f"Direct dashboard navigation test failed: {e}")
+
+                await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
+                if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                    return True
+
+                # If still on onboarding, reload page before next attempt to reset any stale form state
+                if attempt < max_attempts - 1 and is_onboarding_url(page.url):
+                    try:
+                        logger.info("Reloading onboarding page to reset form state for next attempt...")
+                        await page.reload(wait_until="domcontentloaded", timeout=15000)
+                        await human_delay(1500, 2500)
+                    except Exception:
+                        pass
         except Exception as e:
+            if "Signup rejected" in str(e):
+                raise
             logger.warn(f"Error handling 'Finish and start chatting': {e}")
 
         await asyncio.sleep(0.5)
@@ -1143,27 +1244,25 @@ async def run_single_google_account(
 
             # ── 5. Ensure Reached Dashboard ────────────────────────────────
             reached_dashboard = False
-            for _ in range(30):
+            for _ in range(12):
                 if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
                     reached_dashboard = True
                     break
-                if is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
-                    if await handle_finish_and_start_chatting(page, logger):
-                        saw_onboarding = True
-                        if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
-                            reached_dashboard = True
-                            break
                 await asyncio.sleep(0.5)
 
             if not reached_dashboard and not is_dashboard_url(page.url):
                 await recover_if_something_snapped(page, target_url=DASHBOARD_URL, logger=logger)
                 if not (is_dashboard_url(page.url) and not is_onboarding_url(page.url)):
                     logger.info("navigating explicitly to dashboard...")
-                    await page.goto(DASHBOARD_URL, wait_until="domcontentloaded")
+                    await page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=20000)
                     await human_delay(2000, 3500)
-                    if is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
+                    if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                        reached_dashboard = True
+                    elif is_onboarding_url(page.url) or await page.query_selector('button:has-text("Finish and start chatting")'):
                         if await handle_finish_and_start_chatting(page, logger):
                             saw_onboarding = True
+                            if is_dashboard_url(page.url) and not is_onboarding_url(page.url):
+                                reached_dashboard = True
 
             if saw_onboarding:
                 logger.info(f"✨ Akun {email}: Status REGISTRASI BARU (pertama kali mendaftar di TokenHarbor)")
