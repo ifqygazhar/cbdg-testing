@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "proxy-check" | "key-checker";
+export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "proxy-check" | "key-checker";
 
 /** Maintenance actions have no accounts, pace or proxy of their own. */
 export const IS_TOOL: Record<AppName, boolean> = {
@@ -15,6 +15,7 @@ export const IS_TOOL: Record<AppName, boolean> = {
   tokenharbor: false,
   groqcloud: false,
   llm7io: false,
+  inferbase: false,
   "proxy-check": true,
   "key-checker": true,
 };
@@ -23,7 +24,7 @@ export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
 export type GsuiteMode = "create_new_key" | "skip_existing" | "fetch_existing";
 
-export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io"];
+export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io", "inferbase"];
 
 export interface RunPlan {
   app: AppName;
@@ -70,12 +71,13 @@ export const APP_ENTRY: Record<AppName, string> = {
   tokenharbor: "apps/tokenharbor/src/cli.ts",
   groqcloud: "apps/groqcloud/src/cli.ts",
   llm7io: "apps/llm7io/src/cli.ts",
+  inferbase: "apps/inferbase/src/cli.ts",
   "proxy-check": "scripts/proxy-check.ts",
   "key-checker": "entrim_crusoe_key_checker_cli.ts",
 };
 
 /** Apps whose accounts can be spread over the harvested proxies. */
-export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io"];
+export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase"];
 
 /**
  * Whether Google's sign-in will bypass the proxy on this run. Defaults on; the
@@ -246,6 +248,7 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd(), requ
     webshare: ["akun-result-webshare.txt"],
     groqcloud: ["akun-result-groqcloud.txt"],
     llm7io: ["akun-result-llm7io.txt", "apikey-llm7io.txt", "vps/apikey-llm7io.txt"],
+    inferbase: ["akun-result-inferbase.txt", "vps/akun-result-inferbase.txt", "apikey-inferbase.txt", "inferbase-ai-dataset/akun-result-inferbase.txt"],
     "proxy-check": [],
     "key-checker": [],
   };
@@ -258,6 +261,7 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd(), requ
     webshare: ["state-webshare.jsonl"],
     groqcloud: ["state-groqcloud.jsonl", "state.jsonl"],
     llm7io: ["state-llm7io.jsonl", "state.jsonl"],
+    inferbase: ["state-inferbase.jsonl", "state.jsonl"],
     "proxy-check": [],
     "key-checker": [],
   };

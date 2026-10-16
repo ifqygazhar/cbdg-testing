@@ -40,9 +40,13 @@ export class TempMailClient {
   private readonly defaultDomain: string;
 
   constructor(config: TempMailConfig = {}) {
-    this.baseUrl = (config.baseUrl ?? process.env.TEMPMAIL_BASE_URL ?? "https://temp-postservice.verifwebsitepro.workers.dev").replace(/\/+$/, "");
+    let rawBase = config.baseUrl ?? process.env.TEMPMAIL_BASE_URL ?? "https://temp-postservice.verifwebsitepro.workers.dev";
+    if (!rawBase.startsWith("http")) rawBase = `https://${rawBase}`;
+    this.baseUrl = rawBase.replace(/\/+$/, "");
     this.apiKey = config.apiKey ?? process.env.TEMPMAIL_API_KEY ?? "anjingmemekkontol";
-    this.defaultDomain = config.defaultDomain ?? process.env.TEMPMAIL_DOMAIN ?? "ifqy.net";
+    let dom = config.defaultDomain ?? process.env.TEMPMAIL_DOMAIN ?? "ifqy.net";
+    if (dom.startsWith("temp.")) dom = dom.slice(5);
+    this.defaultDomain = dom;
   }
 
   private headers(): Record<string, string> {
@@ -56,7 +60,12 @@ export class TempMailClient {
    * Creates a new temporary email address.
    */
   async createEmail(domain?: string, username?: string): Promise<CreatedEmail> {
-    const targetDomain = domain ?? this.defaultDomain;
+    let targetDomain = domain ?? this.defaultDomain;
+    if (targetDomain.startsWith("temp.")) targetDomain = targetDomain.slice(5);
+    if (targetDomain.includes("://")) {
+      targetDomain = targetDomain.split("://")[1].split("/")[0];
+      if (targetDomain.startsWith("temp.")) targetDomain = targetDomain.slice(5);
+    }
     const body: Record<string, string> = { domain: targetDomain };
     if (username) body.username = username;
 
@@ -116,8 +125,8 @@ export class TempMailClient {
   ): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? 75000;
     const intervalMs = opts.intervalMs ?? 3000;
-    const filterSender = (opts.filterSender ?? "tokenharbor").toLowerCase();
-    const linkRegex = opts.linkRegex ?? /https:\/\/tokenharbor\.ai\/verify-email\?token=[A-Za-z0-9_\-]+/;
+    const filterSender = (opts.filterSender ?? "").toLowerCase().trim();
+    const linkRegex = opts.linkRegex ?? /https?:\/\/[^\s"'<>]+verify[^\s"'<>]+/;
 
     const startTime = Date.now();
 
@@ -130,7 +139,7 @@ export class TempMailClient {
             const body = `${mail["content-plain"] ?? ""} ${mail["content-html"] ?? ""}`;
             const match = body.match(linkRegex);
             if (match) {
-              return match[0];
+              return match[0].replace(/[\)>\]"'.,]+$/, "");
             }
           }
         }

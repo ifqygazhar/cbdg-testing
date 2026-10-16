@@ -1,0 +1,19 @@
+register :https://inferbase.ai/register
+
+nama random, password nya seragam pakai torabikA1# untuk metode register via email dari temp mail temp.ifqy.net, untuk yang via google oauth gsuite tidak perlu set password
+
+setelah register akan masuk ke link : https://inferbase.ai/onboarding namun verifikasi email saja dulu diambil dari temp mail saya
+
+
+ini contoh link verif email : https://inferbase.ai/verify-email?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiZGRkMGQxMS1iMDhlLTRkNDEtYWMzMS0yY2Q2N2IyNTA5NGEiLCJ0eXBlIjoiZW1haWxfdmVyaWZ5IiwiZW1haWwiOiJhbGFAaHV6dC5teS5pZCIsImV4cCI6MTc5MjIyMzgxMX0.bRiPQ4e_bHt5vGt8cSt4lt5Su-megWRad3apnVD1gik
+
+jika verifikasi email akan muncul halaman email verified dan klik tombol go to playground
+
+setelah klik go to playground dari halaman verifikasi email maka akan masuk ke onboarding lagi : https://inferbase.ai/onboarding terus klik tombol get started, ketika sudah masuk ke pilihan onboarding klik tombol skip skip terus sampe merender your account is ready dan klik go to dashboard
+
+setelah klik go to dashboard maka halaman nya ke dashboard : https://inferbase.ai/dashboard
+
+ketika sudah ke dashboard masuk ke halaman api key : https://inferbase.ai/api-keys terus create key dan isi nama bebas terus create key lagi sampai muncul apikey dan quickstart serta tombol done
+
+setelah apikey sudah di copy simpan ke file apikey-inferbase.txt
+

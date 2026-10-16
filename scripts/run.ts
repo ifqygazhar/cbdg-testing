@@ -54,6 +54,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "tokenharbor", label: "tokenharbor", hint: "daftar TokenHarbor (TempMail / GSuite) → API key ke apikey-tokenharbor.txt" },
     { value: "groqcloud", label: "groqcloud", hint: "daftar GroqCloud (TempMail + Turnstile) → API key ke apikey-groqcloud.txt" },
     { value: "llm7io", label: "llm7io", hint: "daftar LLM7.io (TempMail / GSuite) → API key ke apikey-llm7io.txt" },
+    { value: "inferbase", label: "inferbase", hint: "daftar Inferbase (TempMail / Google OAuth) → API key ke apikey-inferbase.txt" },
   ]);
 
   if (IS_TOOL[app]) {
@@ -113,6 +114,7 @@ async function askPlan(): Promise<RunPlan> {
       { value: "https://tokenharbor.ai", label: "TokenHarbor", hint: "uji liveness + akses langsung ke tokenharbor.ai" },
       { value: "https://fastrouter.ai", label: "FastRouter", hint: "uji liveness + akses langsung ke fastrouter.ai" },
       { value: "https://console.crusoecloud.com", label: "Crusoe", hint: "uji liveness + akses langsung ke crusoecloud.com" },
+      { value: "https://inferbase.ai", label: "Inferbase", hint: "uji liveness + akses langsung ke inferbase.ai" },
       { value: "https://www.codebuddy.ca", label: "CodeBuddy", hint: "uji liveness + akses langsung ke codebuddy.ca" },
     ]);
     const appendMode = await select<boolean>("Mode penulisan ke proxy-live.txt?", [
@@ -153,7 +155,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;
@@ -252,9 +254,9 @@ async function askPlan(): Promise<RunPlan> {
   }
 
   let authMethod: "google" | "tempmail" | undefined;
-  if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io")) {
+  if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io" || app === "inferbase")) {
     authMethod = await select<"tempmail" | "google">(
-      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : "FastRouter"}?`,
+      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : app === "inferbase" ? "Inferbase" : "FastRouter"}?`,
       [
         {
           value: "google",
@@ -267,7 +269,7 @@ async function askPlan(): Promise<RunPlan> {
           hint: "otomatis buat email & verif link / OTP",
         },
       ],
-      seeds.accounts > 0 ? 0 : 1,
+      app === "inferbase" ? 1 : (seeds.accounts > 0 ? 0 : 1),
     );
   }
 
@@ -330,7 +332,7 @@ async function askPlan(): Promise<RunPlan> {
       defaultLimit,
       " akun",
     );
-  } else if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io") && authMethod === "tempmail")) {
+  } else if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io" || app === "inferbase") && authMethod === "tempmail")) {
     domain = await select<string>(
       app === "llm7io"
         ? "Domain TempMail? (Catatan: LLM7.io memblokir ifqy.net, meongtopup.my.id, huzt.my.id)"
@@ -352,8 +354,11 @@ async function askPlan(): Promise<RunPlan> {
     if (domain === "custom") {
       domain = await askText("Masukkan domain email kustom", app === "llm7io" ? "" : "ifqy.net");
     }
+    if (domain && domain.startsWith("temp.")) {
+      domain = domain.slice(5);
+    }
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
-  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
+  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io" || app === "inferbase") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
     const requireKey = app === "tokenharbor" && (gsuiteMode === "fetch_existing" || gsuiteMode === "create_new_key");
     const rem = getRemainingAccountsForApp(app, undefined, requireKey);
     if (rem.completed > 0) {

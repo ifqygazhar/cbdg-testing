@@ -212,6 +212,15 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
         for f in page.frames:
             url = f.url or ""
             if "challenges.cloudflare.com" in url or "turnstile" in url:
+                # Ensure frame is scrolled into view first so coordinates match the viewport
+                try:
+                    el = await f.frame_element()
+                    if el:
+                        await el.scroll_into_view_if_needed(timeout=3000)
+                        await asyncio.sleep(0.15)
+                except Exception:
+                    pass
+
                 # 1a. Try to locate specific checkbox or label element inside frame
                 for sel in [
                     "input[type='checkbox']",
@@ -226,8 +235,8 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
                             b = await loc.bounding_box()
                             if b and b["width"] > 0 and b["height"] > 0:
                                 if b["width"] > 60:
-                                    # Large container or label: checkbox is on the left (~32px in)
-                                    click_x = b["x"] + 32
+                                    # Large container or label: checkbox is on the left (~34px in)
+                                    click_x = b["x"] + 34
                                     click_y = b["y"] + (b["height"] / 2)
                                 else:
                                     click_x = b["x"] + (b["width"] / 2)
@@ -259,6 +268,11 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
         count = await turnstile_loc.count()
         for i in range(count):
             ifr = turnstile_loc.nth(i)
+            try:
+                await ifr.scroll_into_view_if_needed(timeout=3000)
+                await asyncio.sleep(0.15)
+            except Exception:
+                pass
             box = await ifr.bounding_box()
             if box and box["width"] >= 80 and box["height"] >= 20:
                 click_x = box["x"] + 34
@@ -338,11 +352,16 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
             parent = resp_input.first.locator("xpath=ancestor::div[contains(@id, 'captcha') or @data-cl-interactive='true'][1]")
             if await parent.count() == 0:
                 parent = resp_input.first.locator("xpath=..")
+            try:
+                await parent.scroll_into_view_if_needed(timeout=3000)
+                await asyncio.sleep(0.15)
+            except Exception:
+                pass
             box = await parent.bounding_box()
             if box and box["height"] >= 30 and box["width"] >= 80:
                 widget_w = min(360, box["width"])
                 widget_left = box["x"] + (box["width"] - widget_w) / 2
-                click_x = widget_left + 42
+                click_x = widget_left + 34
                 click_y = box["y"] + (box["height"] / 2)
                 return {"x": click_x, "y": click_y, "source": "response_input_parent", "box": box}
     except Exception:
@@ -364,17 +383,60 @@ async def is_turnstile_solved(page: Page) -> bool:
     except Exception:
         return False
 
+async def dismiss_turnstile_modal(page: Page, logger: Optional[Logger] = None) -> bool:
+    """Closes Cloudflare Turnstile error/troubleshooting popup modal if present."""
+    dismissed = False
+    try:
+        await page.keyboard.press("Escape")
+    except Exception:
+        pass
+
+    try:
+        for f in page.frames:
+            try:
+                res = await f.evaluate("""() => {
+                    const closeBtns = document.querySelectorAll('button[aria-label*="close" i], button[aria-label*="關閉" i], [role="dialog"] button, button.close, svg[aria-label*="close" i]');
+                    for (const b of closeBtns) {
+                        b.click();
+                        return true;
+                    }
+                    return false;
+                }""")
+                if res:
+                    dismissed = True
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        res = await page.evaluate("""() => {
+            const closeBtns = document.querySelectorAll('button[aria-label*="close" i], button[aria-label*="關閉" i], [role="dialog"] button, button.close');
+            for (const b of closeBtns) {
+                b.click();
+                return true;
+            }
+            return false;
+        }""")
+        if res:
+            dismissed = True
+    except Exception:
+        pass
+
+    if dismissed and logger:
+        logger.info("[turnstile] Pop-up modal troubleshooting Cloudflare ditutup.")
+    return dismissed
+
 async def resolve_turnstile_if_present(
     page: Page,
     timeout_sec: int = 25,
-    logger: Optional[Logger] = None
+    logger: Optional[Logger] = None,
+    use_api: bool = False,
+    allow_click: bool = True,
 ) -> bool:
     """
-    Detects and automatically clicks the Cloudflare Turnstile CAPTCHA checkbox
-    if it appears on the page (e.g. Clerk's 'Security check: Complete this verification').
-
-    Uses coordinate mouse navigation to click into the checkbox even through
-    closed shadow DOM / cross-origin iframes.
+    Detects and clicks the Cloudflare Turnstile CAPTCHA checkbox if present.
+    Safely targets only the checkbox square and avoids clicking help / troubleshooting links.
     """
     start_time = time.time()
     click_attempts = 0
@@ -383,9 +445,12 @@ async def resolve_turnstile_if_present(
         if page.is_closed():
             return False
 
-        # If already redirected to Google or next step, we are done
+        # If already solved, return immediately
         if await is_turnstile_solved(page):
             return True
+
+        # Dismiss any troubleshooting modal if it popped up
+        await dismiss_turnstile_modal(page, logger)
 
         target = await find_turnstile_target(page)
         if target:
@@ -402,8 +467,9 @@ async def resolve_turnstile_if_present(
                     f"Posisi: ({box['x']:.0f}, {box['y']:.0f}), {box['width']:.0f}x{box['height']:.0f}. "
                     f"Target checkbox: ({click_x:.1f}, {click_y:.1f}){sk_msg}"
                 )
-            # ── 0. Fast-track via Turnstile Solver API if sitekey available ──
-            if sk_info:
+
+            # ── 0. Optional Fast-track via API if explicitly enabled ──
+            if use_api and sk_info:
                 sitekey = sk_info[0]
                 token = await solve_turnstile_via_api(page.url, sitekey, timeout_sec=15.0, logger=logger)
                 if token:
@@ -414,58 +480,41 @@ async def resolve_turnstile_if_present(
                             logger.info(f"[turnstile] Verifikasi sukses via API clearance token! URL: {page.url[:80]}...")
                         return True
 
+            if not allow_click:
+                await asyncio.sleep(0.8)
+                continue
+
             # Wait briefly for widget to fully settle before clicking
             await asyncio.sleep(random.uniform(0.6, 1.2))
 
-            # ── 1. Real human mouse movement to checkbox coordinates ──────
+            # ── 1. Clean mouse click directly on checkbox square ──────
             try:
-                await page.mouse.move(click_x, click_y, steps=random.randint(10, 20))
-                await asyncio.sleep(random.uniform(0.12, 0.25))
+                await page.mouse.move(click_x, click_y, steps=random.randint(12, 20))
+                await asyncio.sleep(random.uniform(0.15, 0.25))
                 await page.mouse.down()
-                await asyncio.sleep(random.uniform(0.06, 0.12))
+                await asyncio.sleep(random.uniform(0.08, 0.14))
                 await page.mouse.up()
                 click_attempts += 1
                 if logger:
-                    logger.info(f"[turnstile] Mouse click #{click_attempts} terkirim ke ({click_x:.1f}, {click_y:.1f})!")
+                    logger.info(f"[turnstile] Mouse click #{click_attempts} terkirim ke checkbox ({click_x:.1f}, {click_y:.1f})!")
             except Exception as e:
                 if logger:
                     logger.warn(f"[turnstile] Mouse click gagal: {e}")
 
-            # ── 2. Click with horizontal offsets into the active label area ─
-            # In Cloudflare Turnstile, the entire label (.ctp-checkbox-label)
-            # spanning both the checkbox square and the verification text is
-            # interactive. Offsets ensure hitting the active target even with styling variations.
-            for offset_x in [16, 32]:
-                try:
-                    await asyncio.sleep(0.18)
-                    await page.mouse.click(click_x + offset_x, click_y)
-                except Exception:
-                    pass
-
-            # ── 3. Internal frame evaluate click fallback ─────────────────
-            try:
-                for f in page.frames:
-                    url = f.url or ""
-                    if "challenges.cloudflare.com" in url or "turnstile" in url:
-                        await f.evaluate("""() => {
-                            const sel = 'input[type="checkbox"], .ctp-checkbox-label, #challenge-stage, .cb-lb, span.mark';
-                            const el = document.querySelector(sel);
-                            if (el) el.click();
-                        }""")
-            except Exception:
-                pass
-
-            # ── 4. Verification loop: wait up to 4s for token / redirect ───
+            # ── 2. Verification loop: wait up to 4s for token / redirect ───
             for _ in range(8):
                 await asyncio.sleep(0.5)
+                await dismiss_turnstile_modal(page, logger)
                 if await is_turnstile_solved(page):
                     if logger:
                         logger.info(f"[turnstile] Verifikasi sukses! Challenge teratasi. URL: {page.url[:80]}...")
                     return True
 
             if logger:
-                logger.info("[turnstile] Belum ada respon redirect/token, mencoba deteksi dan klik ulang...")
+                logger.info("[turnstile] Belum ada respon token, mengecek ulang...")
 
         await asyncio.sleep(0.6)
 
+    await dismiss_turnstile_modal(page, logger)
     return await is_turnstile_solved(page)
+

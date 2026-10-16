@@ -61,3 +61,8 @@ akun-bad-llm7io.txt
 akun-good-llm7io.txt
 apikey-good-llm7io.txt
 gsuite-api-key.txt
+state-inferbase.jsonl
+akun-result-inferbase.txt
+akun-failed-inferbase.txt
+screenshots-inferbase/
+apikey-inferbase.txt

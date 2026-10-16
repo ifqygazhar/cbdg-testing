@@ -80,18 +80,26 @@ POPULAR_RESOLUTIONS = [
     (1920, 1200),
 ]
 
-def generate_random_fingerprint_options() -> Dict[str, Any]:
+_DIVERSE_OS_SEQUENCE = ["windows", "macos", "windows", "linux", "macos", "windows"]
+_OS_CYCLE_INDEX = random.randint(0, 5)
+
+def generate_random_fingerprint_options(target_os: Optional[str] = None) -> Dict[str, Any]:
     """
     Generates randomized OS, screen window, humanize, and locale parameters
     to ensure every worker process and account gets a unique, anonymous fingerprint.
     """
-    # Weighted OS selection: Windows (60%), macOS (30%), Linux (10%)
-    os_choice = random.choices(["windows", "macos", "linux"], weights=[0.60, 0.30, 0.10], k=1)[0]
+    global _OS_CYCLE_INDEX
+    if target_os:
+        os_choice = target_os
+    else:
+        # Rotate OS sequence so consecutive accounts receive distinct operating systems & profiles
+        os_choice = _DIVERSE_OS_SEQUENCE[_OS_CYCLE_INDEX % len(_DIVERSE_OS_SEQUENCE)]
+        _OS_CYCLE_INDEX += 1
 
     # Randomize realistic window dimensions
     base_w, base_h = random.choice(POPULAR_RESOLUTIONS)
-    jitter_w = max(1024, base_w - random.randint(0, 100))
-    jitter_h = max(700, base_h - random.randint(40, 120))
+    jitter_w = max(1024, base_w - random.randint(0, 120))
+    jitter_h = max(700, base_h - random.randint(40, 140))
 
     # Randomize humanize cursor speed between 0.8s and 1.8s
     humanize_speed = round(random.uniform(0.8, 1.8), 2)
@@ -104,17 +112,32 @@ def generate_random_fingerprint_options() -> Dict[str, Any]:
 
 async def get_browser_fingerprint_info(page: Page) -> Dict[str, Any]:
     """
-    Retrieves the active fingerprint information (UA, Platform, Screen, Viewport, Cores)
+    Retrieves the active fingerprint information (UA, Platform, Screen, Viewport, Cores, GPU renderer)
     rendered inside the Camoufox page session.
     """
     try:
-        return await page.evaluate("""() => ({
-            ua: navigator.userAgent || 'unknown',
-            platform: navigator.platform || 'unknown',
-            cores: navigator.hardwareConcurrency || 0,
-            screen: (screen.width || 0) + 'x' + (screen.height || 0),
-            viewport: (window.innerWidth || 0) + 'x' + (window.innerHeight || 0),
-        })""")
+        return await page.evaluate("""() => {
+            let renderer = 'unknown';
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (ext) {
+                        renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || 'unknown';
+                    }
+                }
+            } catch(e) {}
+            return {
+                ua: navigator.userAgent || 'unknown',
+                platform: navigator.platform || 'unknown',
+                cores: navigator.hardwareConcurrency || 0,
+                memory: navigator.deviceMemory || undefined,
+                screen: (screen.width || 0) + 'x' + (screen.height || 0),
+                viewport: (window.innerWidth || 0) + 'x' + (window.innerHeight || 0),
+                renderer: renderer,
+            };
+        }""")
     except Exception:
         return {}
 

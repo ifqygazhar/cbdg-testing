@@ -74,6 +74,8 @@ describe("buildArgs", () => {
     expect(llm7Python).toEqual(expect.arrayContaining(["--engine", "python"]));
     const wsPython = buildArgs({ ...base, app: "webshare", engine: "python" });
     expect(wsPython).toEqual(expect.arrayContaining(["--engine", "python"]));
+    const ibPython = buildArgs({ ...base, app: "inferbase", engine: "python" });
+    expect(ibPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     // bun engine is default so no flag needed
     const frBun = buildArgs({ ...base, app: "fastrouter", engine: "bun" });
     expect(frBun).not.toContain("--engine");
@@ -85,6 +87,8 @@ describe("buildArgs", () => {
     expect(llm7Bun).not.toContain("--engine");
     const wsBun = buildArgs({ ...base, app: "webshare", engine: "bun" });
     expect(wsBun).not.toContain("--engine");
+    const ibBun = buildArgs({ ...base, app: "inferbase", engine: "bun" });
+    expect(ibBun).not.toContain("--engine");
     // cbdg doesn't support camoufox engine
     const cbdg = buildArgs({ ...base, app: "cbdg", engine: "python" });
     expect(cbdg).not.toContain("--engine");
@@ -271,7 +275,7 @@ describe("seeds + warnings", () => {
     expect(w.join(" ")).toContain("0 detik");
   });
   it("proxy-capable list is exactly the apps that read the proxy file", () => {
-    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io"]);
+    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase"]);
   });
 
   it("getRemainingAccountsForApp differentiates ALREADY_REGISTERED based on requireApiKey", () => {

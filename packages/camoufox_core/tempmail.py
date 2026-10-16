@@ -18,9 +18,15 @@ class TempMailClient:
         base_url: Optional[str] = None,
         default_domain: Optional[str] = None,
     ):
-        self.base_url = (base_url or os.getenv("TEMPMAIL_BASE_URL", "https://temp-postservice.verifwebsitepro.workers.dev")).rstrip("/")
+        raw_base = base_url or os.getenv("TEMPMAIL_BASE_URL", "https://temp.ifqy.net")
+        if not raw_base.startswith("http"):
+            raw_base = f"https://{raw_base}"
+        self.base_url = raw_base.rstrip("/")
         self.api_key = api_key or os.getenv("TEMPMAIL_API_KEY", "anjingmemekkontol")
-        self.default_domain = default_domain or os.getenv("TEMPMAIL_DOMAIN", "ifqy.net")
+        dom = default_domain or os.getenv("TEMPMAIL_DOMAIN", "ifqy.net")
+        if dom.startswith("temp."):
+            dom = dom[5:]
+        self.default_domain = dom
 
     def _headers(self) -> Dict[str, str]:
         return {
@@ -32,6 +38,12 @@ class TempMailClient:
     def create_email(self, domain: Optional[str] = None, username: Optional[str] = None) -> Dict[str, Any]:
         """Creates a new temporary email address."""
         target_domain = domain or self.default_domain
+        if target_domain.startswith("temp."):
+            target_domain = target_domain[5:]
+        if "://" in target_domain:
+            target_domain = target_domain.split("://")[1].split("/")[0]
+            if target_domain.startswith("temp."):
+                target_domain = target_domain[5:]
         payload: Dict[str, str] = {"domain": target_domain}
         if username:
             payload["username"] = username
@@ -73,12 +85,12 @@ class TempMailClient:
         address: str,
         timeout_sec: int = 75,
         interval_sec: float = 3.0,
-        filter_sender: str = "tokenharbor",
+        filter_sender: str = "",
         link_pattern: Optional[re.Pattern] = None,
     ) -> str:
         """Polls inbox until verification email arrives and returns the link."""
-        pattern = link_pattern or re.compile(r"https://tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-]+")
-        filter_sender_lower = filter_sender.lower() if filter_sender else ""
+        pattern = link_pattern or re.compile(r"https?://[^\s\"'<>]+verify[^\s\"'<>]+")
+        filter_sender_lower = filter_sender.lower().strip() if filter_sender else ""
         start_time = asyncio.get_event_loop().time()
 
         while asyncio.get_event_loop().time() - start_time < timeout_sec:
@@ -90,7 +102,8 @@ class TempMailClient:
                         body = f"{mail.get('content-plain', '')} {mail.get('content-html', '')}"
                         match = pattern.search(body)
                         if match:
-                            return match.group(0)
+                            clean_link = match.group(0).rstrip(")>]\"',.")
+                            return clean_link
             except Exception:
                 pass
 

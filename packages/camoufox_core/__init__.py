@@ -17,6 +17,7 @@ from .loaders import load_accounts, load_proxies, Account, Proxy
 from .store import JsonlStore, ResultWriter, FlowState, read_emails_from_result_file, load_already_registered_accounts
 from .turnstile import (
     resolve_turnstile_if_present,
+    dismiss_turnstile_modal,
     find_turnstile_sitekey,
     KNOWN_SITEKEYS,
     solve_turnstile_via_api,
@@ -39,6 +40,7 @@ __all__ = [
     "GooglePhoneVerificationException",
     "is_google_phone_verification",
     "resolve_turnstile_if_present",
+    "dismiss_turnstile_modal",
     "find_turnstile_sitekey",
     "KNOWN_SITEKEYS",
     "solve_turnstile_via_api",
