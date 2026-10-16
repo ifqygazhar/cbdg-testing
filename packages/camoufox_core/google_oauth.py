@@ -212,24 +212,40 @@ async def perform_google_oauth(
         open_pages = [p for p in context.pages if not p.is_closed()]
         google_pages = [p for p in open_pages if GOOGLE_AUTH_URL_RE.search(p.url)]
 
-        # If there are NO active pages remaining on accounts.google.com, OAuth has completed!
+        # If there are NO active pages remaining on accounts.google.com, verify whether OAuth has truly completed
         if not google_pages:
-            logger.info("No active Google authentication page remaining (OAuth redirect complete or popup closed).")
-            await human_delay(1000, 2000)
-            if not page.is_closed():
-                try:
-                    await page.bring_to_front()
-                except Exception:
-                    pass
-                return page
-            for p in open_pages:
-                if p.url != "about:blank":
+            # Check if any open page is in a transient state (about:blank or not http)
+            transient = any(p.url == "about:blank" or not p.url.startswith("http") for p in open_pages)
+            if transient:
+                await asyncio.sleep(1)
+                continue
+
+            # Check if any open page has landed on an external non-Google relying party page
+            non_google_pages = [
+                p for p in open_pages
+                if p.url.startswith("http") and not GOOGLE_AUTH_URL_RE.search(p.url)
+            ]
+            if non_google_pages:
+                # Wait briefly to let any intermediate redirects settle (e.g. auth callbacks)
+                await human_delay(1500, 2500)
+                open_pages_check = [p for p in context.pages if not p.is_closed()]
+                google_pages_check = [p for p in open_pages_check if GOOGLE_AUTH_URL_RE.search(p.url)]
+                if not google_pages_check:
+                    logger.info("No active Google authentication page remaining (OAuth redirect complete or popup closed).")
+                    chosen = non_google_pages[0]
+                    if not page.is_closed() and not GOOGLE_AUTH_URL_RE.search(page.url) and page.url.startswith("http"):
+                        chosen = page
                     try:
-                        await p.bring_to_front()
+                        await chosen.bring_to_front()
                     except Exception:
                         pass
-                    return p
-            return target_page
+                    return chosen
+                # If Google page reappeared (redirected to another consent/approval step), stay in loop
+                continue
+
+            # Still settling
+            await asyncio.sleep(1)
+            continue
 
         # There is still an active Google page (popup or tab). Flow is still ongoing!
         target_page = google_pages[0]
@@ -291,89 +307,157 @@ async def perform_google_oauth(
             await human_delay(1500, 2500)
             continue
 
-        # Check for Google Speedbump / Workspace Terms of Service ("I understand", "Saya mengerti", "I agree", etc.)
-        is_speedbump = bool(re.search(r"speedbump|termsofservice|tos|welcome", current_url, re.I))
-        if is_speedbump:
-            logger.info(f"detected Google Workspace Terms of Service speedbump ({current_url}), clicking 'I understand'...")
-            try:
-                clicked_text = await target_page.evaluate("""() => {
-                    const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-                    const needles = [
-                        'i understand', 'saya mengerti', 'i agree', 'saya setuju',
-                        'accept all', 'accept', 'terima', 'continue', 'lanjutkan',
-                        'confirm', 'agree', 'entiendo', "j'ai compris", 'ich verstehe'
-                    ];
-                    // 1. Check all buttons, role=button, and inputs
-                    const btns = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
-                    for (const btn of btns) {
-                        const txt = norm(btn.textContent || btn.value || btn.getAttribute('aria-label'));
-                        if (needles.some(n => txt.includes(n))) {
-                            btn.scrollIntoView({ behavior: 'instant', block: 'center' });
-                            btn.focus();
-                            btn.click();
-                            return txt;
+        # Check if password, email, or phone input is currently active on screen
+        has_cred_input = await target_page.evaluate("""() => {
+            const inputs = Array.from(document.querySelectorAll(
+                'input[type="password"], input#identifierId, input[name="identifier"], input[type="tel"], #phoneNumberId'
+            ));
+            return inputs.some(el => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+            });
+        }""")
+        if has_cred_input:
+            await asyncio.sleep(1)
+            continue
+
+        # Smart DOM evaluator for Google OAuth consent, speedbump, permissions, TOS, and confirmations
+        clicked_info = None
+        try:
+            clicked_info = await target_page.evaluate("""() => {
+                const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+
+                // Never click Cancel / Close / Switch account / Back / Learn more
+                const negativeNeedles = [
+                    'cancel', 'batal', '取消', 'close', 'tutup', '关闭',
+                    'learn more', 'pelajari lebih lanjut', '了解详情',
+                    'switch account', 'ganti akun', '切换帐号',
+                    'back', 'kembali', '返回', 'reject', 'tolak', '拒绝'
+                ];
+
+                // Priority 1: High-confidence consent / continue / approval needles
+                const p1Needles = [
+                    'continue', 'lanjutkan', '继续',
+                    'allow', 'izinkan', '允许',
+                    'confirm', 'konfirmasi', '确认',
+                    'i understand', 'saya mengerti', '我了解', '我明白',
+                    'i agree', 'saya setuju', '我同意',
+                    'accept all', 'accept', 'terima', '同意'
+                ];
+
+                // Priority 2: Secondary advance needles
+                const p2Needles = [
+                    'next', 'berikutnya', '下一步',
+                    'got it', 'mengerti', '知道了',
+                    'done', 'selesai', '完成'
+                ];
+
+                const isVisible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 &&
+                           style.display !== 'none' && style.visibility !== 'hidden' &&
+                           !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+                };
+
+                const candidates = Array.from(document.querySelectorAll(
+                    'button, [role="button"], input[type="submit"], input[type="button"], a[role="button"]'
+                )).filter(isVisible);
+
+                let bestEl = null;
+                let bestScore = -1;
+                let bestText = '';
+
+                for (const el of candidates) {
+                    const txt = norm([
+                        el.textContent,
+                        el.value,
+                        el.getAttribute('aria-label'),
+                        el.getAttribute('title')
+                    ].filter(Boolean).join(' '));
+
+                    if (!txt) continue;
+
+                    // Skip negative
+                    if (negativeNeedles.some(n => txt === n || txt.startsWith(n + ' ') || txt.endsWith(' ' + n))) {
+                        continue;
+                    }
+
+                    // Score Priority 1
+                    for (const needle of p1Needles) {
+                        if (txt === needle) {
+                            if (bestScore < 100) { bestScore = 100; bestEl = el; bestText = txt; }
+                        } else if (txt.includes(needle)) {
+                            if (bestScore < 80) { bestScore = 80; bestEl = el; bestText = txt; }
                         }
                     }
-                    // 2. Google primary action button: button[jsname="LgbsSe"]
-                    const lgbs = Array.from(document.querySelectorAll('button[jsname="LgbsSe"]')).filter(b => !b.disabled);
-                    if (lgbs.length > 0) {
-                        const btn = lgbs[lgbs.length - 1];
-                        btn.scrollIntoView({ behavior: 'instant', block: 'center' });
-                        btn.focus();
-                        btn.click();
-                        return norm(btn.textContent) || 'LgbsSe';
-                    }
-                    return null;
-                }""")
-                if clicked_text:
-                    logger.info(f"successfully clicked Google speedbump button via DOM evaluate: '{clicked_text}'")
-                    await human_delay(2000, 3500)
-                    continue
-            except Exception as e:
-                logger.warn(f"speedbump DOM evaluate click exception: {e}")
 
-        # General speedbump / consent / passkey skip button selectors (Playwright locators fallback)
-        speedbump_handled = False
-        speedbump_selectors = [
-            'button:has-text("I understand")',
-            'button:has-text("Saya mengerti")',
-            'button:has-text("I agree")',
-            'button:has-text("Saya setuju")',
-            'button:has-text("Accept all")',
-            'button:has-text("Accept")',
-            'button:has-text("Terima")',
-            'button:has-text("Continue")',
-            'button:has-text("Lanjutkan")',
-            'button:has-text("Confirm")',
-            'button:has-text("Konfirmasi")',
+                    // Score Priority 2
+                    for (const needle of p2Needles) {
+                        if (txt === needle) {
+                            if (bestScore < 60) { bestScore = 60; bestEl = el; bestText = txt; }
+                        } else if (txt.includes(needle)) {
+                            if (bestScore < 40) { bestScore = 40; bestEl = el; bestText = txt; }
+                        }
+                    }
+                }
+
+                // Priority 3: Google primary action button (e.g. button[jsname="LgbsSe"]), but never cancel
+                if (!bestEl) {
+                    const primaryBtns = Array.from(document.querySelectorAll('button[jsname="LgbsSe"], [role="button"][jsname="LgbsSe"]')).filter(isVisible);
+                    for (const btn of primaryBtns) {
+                        const txt = norm(btn.textContent || btn.getAttribute('aria-label') || '');
+                        if (!negativeNeedles.some(n => txt.includes(n))) {
+                            bestEl = btn;
+                            bestText = txt || 'LgbsSe';
+                            break;
+                        }
+                    }
+                }
+
+                if (bestEl) {
+                    bestEl.scrollIntoView({ behavior: 'instant', block: 'center' });
+                    bestEl.focus();
+                    bestEl.click();
+                    return bestText;
+                }
+                return null;
+            }""")
+            if clicked_info:
+                logger.info(f"successfully clicked Google consent/speedbump button via DOM evaluate: '{clicked_info}'")
+                await human_delay(2000, 3500)
+                continue
+        except Exception as e:
+            logger.warn(f"consent DOM evaluate click exception: {e}")
+
+        # Fallback Playwright locators for consent / speedbump buttons
+        fallback_selectors = [
+            'button:has-text("Continue"), [role="button"]:has-text("Continue")',
+            'button:has-text("Lanjutkan"), [role="button"]:has-text("Lanjutkan")',
+            'button:has-text("继续"), [role="button"]:has-text("继续")',
+            'button:has-text("I understand"), [role="button"]:has-text("I understand")',
+            'button:has-text("Saya mengerti"), [role="button"]:has-text("Saya mengerti")',
+            'button:has-text("Confirm"), [role="button"]:has-text("Confirm")',
+            'button:has-text("Konfirmasi"), [role="button"]:has-text("Konfirmasi")',
+            'button:has-text("Allow"), [role="button"]:has-text("Allow")',
+            'button:has-text("Izinkan"), [role="button"]:has-text("Izinkan")',
             '#submit_approve_access',
-            'button:has-text("Allow")',
-            'button:has-text("Izinkan")',
             '#confirm',
-            'button:has-text("Not now")',
-            'button:has-text("Jangan sekarang")',
-            'button:has-text("Skip")',
-            'button:has-text("Lewati")',
-            'button[jsname="LgbsSe"]',
-            'button:has-text("Next")',
-            'button:has-text("Berikutnya")',
+            'button:has-text("Next"), [role="button"]:has-text("Next")',
+            'button:has-text("Berikutnya"), [role="button"]:has-text("Berikutnya")',
+            'button:has-text("下一步"), [role="button"]:has-text("下一步")',
         ]
-        for sel in speedbump_selectors:
+        speedbump_handled = False
+        for sel in fallback_selectors:
             try:
                 btns = await target_page.query_selector_all(sel)
                 for btn in btns:
                     if await btn.is_visible() and await btn.is_enabled():
                         btn_text = (await btn.text_content() or "").strip()
-                        # Avoid clicking Next if we are still at email, password, or phone input step
-                        if btn_text.lower() in ("next", "berikutnya") and (
-                            await target_page.query_selector('input[type="password"]')
-                            or await target_page.query_selector('#identifierId')
-                            or await target_page.query_selector('input[type="tel"]')
-                            or await target_page.query_selector('#phoneNumberId')
-                            or await target_page.query_selector('input[name="phoneNumber"]')
-                        ):
+                        if any(neg in btn_text.lower() for neg in ["cancel", "batal", "取消", "close", "tutup"]):
                             continue
-                        logger.info(f"detected Google consent / speedbump button ('{btn_text}'), clicking...")
+                        logger.info(f"detected Google consent / speedbump fallback button ('{btn_text}'), clicking...")
                         await btn.scroll_into_view_if_needed()
                         try:
                             await btn.click(no_wait_after=True, timeout=10000)
@@ -386,6 +470,9 @@ async def perform_google_oauth(
                     break
             except Exception:
                 pass
+
+        if speedbump_handled:
+            continue
 
         await asyncio.sleep(1)
 

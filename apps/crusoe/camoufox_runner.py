@@ -100,52 +100,124 @@ async def run_single_account(
                 email=account.email,
                 password=account.password,
                 recovery_email=account.recovery_email,
-                timeout_sec=60,
+                timeout_sec=90,
                 logger=logger,
             )
             page = post_auth_page
-            await human_delay(2000, 4000)
+            await human_delay(2000, 3500)
 
-            # ── 4. Complete Signup / Accept Invitation if present ──────────
-            name_input = await page.query_selector('input[aria-label="Name"], input#name')
-            if name_input:
+            # Helper: Crusoe SPA error boundary check and recovery
+            async def check_and_recover_react_error(p: Page) -> bool:
+                try:
+                    c = (await p.content() or "").lower()
+                    if "unexpected application error" in c or "cannot read properties of undefined" in c:
+                        logger.warn(f"Crusoe React error boundary detected on {p.url} -> reloading...")
+                        await p.reload(wait_until="domcontentloaded")
+                        await human_delay(2000, 4000)
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            # Ensure we have landed on Crusoe Cloud
+            auth_redirect_deadline = time.time() + 45
+            while time.time() < auth_redirect_deadline:
+                for p in browser.contexts[0].pages if browser.contexts else [page]:
+                    if "crusoecloud.com" in (p.url or "") and not p.is_closed():
+                        page = p
+                        break
+                if "crusoecloud.com" in (page.url or ""):
+                    break
+                await asyncio.sleep(1)
+
+            # ── 4. Complete Signup / Accept Invitation OR Direct Dashboard ──
+            logger.info("waiting for Crusoe signup completion form or dashboard...")
+            form_deadline = time.time() + 45
+            has_signup_form = False
+            is_dashboard = False
+
+            while time.time() < form_deadline:
+                await check_and_recover_react_error(page)
+
+                # Check if already on dashboard ("Get API Key" button)
+                get_key_el = await page.query_selector(
+                    'button[aria-label="Get API Key"], button:has-text("Get API Key"), button:has-text("Create API Key")'
+                )
+                if get_key_el and await get_key_el.is_visible():
+                    is_dashboard = True
+                    logger.info("Foundry dashboard detected directly (already registered / post-onboarding)")
+                    break
+
+                # Check if complete signup form is visible
+                comp_input = await page.query_selector('input[aria-label="Company Name"], input#company')
+                name_input = await page.query_selector('input[aria-label="Name"], input#name')
+                if (comp_input and await comp_input.is_visible()) or (name_input and await name_input.is_visible()):
+                    has_signup_form = True
+                    break
+
+                await asyncio.sleep(1)
+
+            if has_signup_form:
                 logger.info("filling complete signup details (Name & Company)...")
                 user_part = email.split("@")[0].capitalize()
-                await human_type(page, 'input[aria-label="Name"], input#name', user_part)
-                await human_delay(300, 600)
+
+                name_input = await page.query_selector('input[aria-label="Name"], input#name')
+                if name_input:
+                    val = (await name_input.input_value() or "").strip()
+                    if not val:
+                        await human_type(page, 'input[aria-label="Name"], input#name', f"{user_part} User")
+                        await human_delay(300, 600)
 
                 company_input = await page.query_selector('input[aria-label="Company Name"], input#company')
                 if company_input:
-                    await human_type(page, 'input[aria-label="Company Name"], input#company', f"{user_part} Tech")
-                    await human_delay(300, 600)
+                    val = (await company_input.input_value() or "").strip()
+                    if not val:
+                        await human_type(page, 'input[aria-label="Company Name"], input#company', f"{user_part} Technologies")
+                        await human_delay(300, 600)
 
-                # Check consent checkbox
+                # Check consent checkbox (PrivacyShield ps-contract-target)
                 checkbox = await page.query_selector("input.ps-contract-target, input[type='checkbox']")
                 if checkbox:
                     try:
-                        await checkbox.check()
+                        checked = await checkbox.is_checked()
+                        if not checked:
+                            await checkbox.check()
                     except Exception:
                         await page.evaluate("el => el.checked = true", checkbox)
                     await human_delay(400, 800)
 
-                submit_btn = await page.query_selector('button:has-text("Create account"), button:has-text("Accept"), button[type="submit"]')
+                submit_btn = await page.query_selector(
+                    'button:has-text("Create account and login"), button:has-text("Create account"), button:has-text("Accept"), button[type="submit"]'
+                )
                 if submit_btn:
                     logger.info("submitting complete signup...")
-                    await submit_btn.click()
-                    await human_delay(3000, 5000)
+                    try:
+                        await submit_btn.click(timeout=10000)
+                    except Exception:
+                        await submit_btn.click(force=True, timeout=5000)
+                    await human_delay(3000, 6000)
 
             # ── 5. Foundry Dashboard / Get API Key ──────────────────────────
             logger.info("waiting for Crusoe dashboard and 'Get API Key' button...")
-            get_key_btn = await page.wait_for_selector(
-                'button[aria-label="Get API Key"], button:has-text("Get API Key"), button:has-text("Create API Key")',
-                timeout=30000,
-            )
+            get_key_btn = None
+            dash_deadline = time.time() + 45
+            while time.time() < dash_deadline:
+                await check_and_recover_react_error(page)
+                get_key_btn = await page.query_selector(
+                    'button[aria-label="Get API Key"], button:has-text("Get API Key"), button:has-text("Create API Key")'
+                )
+                if get_key_btn and await get_key_btn.is_visible():
+                    break
+                await asyncio.sleep(1)
+
             if not get_key_btn:
                 # Check if credit visible
                 content = await page.content()
                 if CREDITS_RE.search(content):
                     logger.info("bonus credit $5.00 verified on page!")
-                raise RuntimeError("Get API Key button not found on dashboard")
+                ss_path = os.path.join(screenshot_dir, f"crusoe_no_dashboard_{sanitized_email}.png")
+                await page.screenshot(path=ss_path)
+                raise RuntimeError(f"Get API Key button not found on dashboard (saved screenshot {ss_path})")
 
             logger.info("clicking 'Get API Key' button to open flyout modal...")
             await get_key_btn.click()

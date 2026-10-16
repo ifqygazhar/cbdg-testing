@@ -17,6 +17,7 @@ interface Args {
   dryRun?: boolean;
   retryFailed?: boolean;
   delaySec?: number;
+  limit?: number;
   useProxy?: boolean;
   proxyFile?: string;
   googleDirect?: boolean;
@@ -53,6 +54,7 @@ export function parseArgs(argv: string[]): Args {
     else if (a === "--retry-failed") args.retryFailed = true;
     else if (a === "--no-retry-failed") args.retryFailed = false;
     else if (a === "--delay") args.delaySec = Number(next());
+    else if (a === "--limit" || a === "-l") args.limit = Number(next());
     else if (a === "--no-proxy") args.useProxy = false;
     else if (a === "--proxy") { args.useProxy = true; args.proxyFile = next(); }
     else if (a === "--with-proxy") args.useProxy = true;
@@ -106,6 +108,7 @@ export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
       useProxy: args.useProxy,
       proxyFile: args.proxyFile,
       delaySec: args.delaySec,
+      limit: args.limit,
       retryFailed: args.retryFailed,
       stateFile: args.state ?? cfg.stateFile,
       dryRun: args.dryRun,
