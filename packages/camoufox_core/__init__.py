@@ -6,6 +6,10 @@ from .browser import (
     human_type,
     setup_process_signals,
     kill_descendant_processes,
+    cleanup_leftover_browser_processes,
+    cleanup_temp_profiles,
+    get_vps_system_status,
+    safe_close_browser,
     get_descendant_pids,
 )
 from .google_oauth import (
@@ -35,6 +39,10 @@ __all__ = [
     "human_type",
     "setup_process_signals",
     "kill_descendant_processes",
+    "cleanup_leftover_browser_processes",
+    "cleanup_temp_profiles",
+    "get_vps_system_status",
+    "safe_close_browser",
     "get_descendant_pids",
     "perform_google_oauth",
     "GooglePhoneVerificationException",

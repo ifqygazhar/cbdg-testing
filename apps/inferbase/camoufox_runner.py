@@ -39,6 +39,10 @@ from packages.camoufox_core import (
     create_logger,
     setup_process_signals,
     kill_descendant_processes,
+    cleanup_leftover_browser_processes,
+    cleanup_temp_profiles,
+    get_vps_system_status,
+    safe_close_browser,
     TempMailClient,
     resolve_turnstile_if_present,
     dismiss_turnstile_modal,
@@ -102,11 +106,12 @@ def check_proxy_single_sync(
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         }
+        connect_timeout = min(max(timeout_sec / 2, 2.0), 3.5)
         resp = requests.get(
             target_url,
             proxies=proxies,
             headers=headers,
-            timeout=timeout_sec,
+            timeout=(connect_timeout, timeout_sec),
             allow_redirects=True,
         )
         elapsed = round(time.time() - t0, 2)
@@ -136,9 +141,32 @@ def check_proxy_batch_sync(
     max_workers: int = 15,
 ) -> List[Tuple[Proxy, bool, Union[int, str], float]]:
     workers = min(max_workers, max(1, len(candidates)))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(check_proxy_single_sync, p, target_url, timeout_sec) for p in candidates]
-        return [f.result() for f in futures]
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+    try:
+        future_map = {
+            executor.submit(check_proxy_single_sync, p, target_url, timeout_sec): p
+            for p in candidates
+        }
+        # Hard wait deadline: timeout_sec + 2.0s
+        done, not_done = concurrent.futures.wait(
+            future_map.keys(),
+            timeout=timeout_sec + 2.0,
+        )
+        results: List[Tuple[Proxy, bool, Union[int, str], float]] = []
+        for f in done:
+            try:
+                results.append(f.result())
+            except Exception as e:
+                p = future_map[f]
+                results.append((p, False, type(e).__name__, timeout_sec))
+        for f in not_done:
+            p = future_map[f]
+            f.cancel()
+            results.append((p, False, "batch_timeout", timeout_sec))
+        return results
+    finally:
+        # Crucial for VPS stability: cancel and do NOT wait indefinitely on stuck threads
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 class SmartProxyPool:
@@ -574,6 +602,7 @@ async def run_single_account(
     sanitized_email = re.sub(r"[^a-zA-Z0-9]", "_", email)
     delay_mult = 1.3 if pace == "careful" else (0.85 if pace == "fast" else 1.0)
 
+    active_browser = None
     try:
         browser_ctx = await launch_camoufox(
             headless=not headed,
@@ -582,6 +611,7 @@ async def run_single_account(
         )
 
         async with browser_ctx as browser:
+            active_browser = browser
             # Rule 1: Always new_context then new_page
             context = await browser.new_context(ignore_https_errors=True)
             page = await context.new_page()
@@ -764,6 +794,9 @@ async def run_single_account(
         store.upsert({"email": email, "status": FlowState.FAILED, "notes": error_msg})
         results.mark_failed(email, error_msg)
         return False
+    finally:
+        if active_browser:
+            await safe_close_browser(active_browser)
 
 
 async def run_single_google_account(
@@ -786,6 +819,7 @@ async def run_single_google_account(
     sanitized_email = re.sub(r"[^a-zA-Z0-9]", "_", email)
     delay_mult = 1.3 if pace == "careful" else (0.85 if pace == "fast" else 1.0)
 
+    active_browser = None
     try:
         browser_ctx = await launch_camoufox(
             headless=not headed,
@@ -794,6 +828,7 @@ async def run_single_google_account(
         )
 
         async with browser_ctx as browser:
+            active_browser = browser
             # Rule 1: Always new_context then new_page
             context = await browser.new_context(ignore_https_errors=True)
             page = await context.new_page()
@@ -862,6 +897,9 @@ async def run_single_google_account(
         store.upsert({"email": email, "status": FlowState.FAILED, "notes": error_msg})
         results.mark_failed(email, error_msg)
         return False
+    finally:
+        if active_browser:
+            await safe_close_browser(active_browser)
 
 
 def get_all_inferbase_result_files() -> List[str]:
@@ -994,16 +1032,35 @@ async def main_async():
                         f"(Fresh remaining: {proxy_pool.fresh_count}, Good pool: {proxy_pool.good_count})"
                     )
                 acc_logger = create_logger(f"w{worker_id}:{account.email}")
-                ok = await run_single_google_account(
-                    account=account,
-                    proxy=proxy,
-                    store=store,
-                    results=results,
-                    headed=args.headed,
-                    screenshot_dir=screenshot_dir,
-                    logger=acc_logger,
-                    pace=args.pace,
-                )
+                logger.info(f"Worker #{worker_id} VPS status: {get_vps_system_status()}")
+                ok = False
+                try:
+                    ok = await asyncio.wait_for(
+                        run_single_google_account(
+                            account=account,
+                            proxy=proxy,
+                            store=store,
+                            results=results,
+                            headed=args.headed,
+                            screenshot_dir=screenshot_dir,
+                            logger=acc_logger,
+                            pace=args.pace,
+                        ),
+                        timeout=240.0,
+                    )
+                except asyncio.TimeoutError:
+                    acc_logger.error(f"HARD TIMEOUT: Eksekusi akun Google {account.email} melebihi batas 240 detik! Dibatalkan paksa.")
+                    store.upsert({"email": account.email, "status": FlowState.FAILED, "notes": "HARD_TIMEOUT_240S"})
+                    results.mark_failed(account.email, "HARD_TIMEOUT_240S")
+                    ok = False
+                except Exception as e:
+                    acc_logger.error(f"Worker #{worker_id} unhandled error on {account.email}: {e}")
+                    ok = False
+                finally:
+                    if worker_count == 1:
+                        cleanup_leftover_browser_processes()
+                        cleanup_temp_profiles()
+
                 if proxy_pool and proxy:
                     proxy_pool.mark_result(proxy, ok)
 
@@ -1084,19 +1141,37 @@ async def main_async():
 
             password = "torabikA1#"
             acc_logger = create_logger(f"w{worker_id}:{email}")
+            logger.info(f"Worker #{worker_id} VPS status: {get_vps_system_status()}")
 
-            ok = await run_single_account(
-                email=email,
-                password=password,
-                proxy=proxy,
-                store=store,
-                results=results,
-                temp_mail=temp_mail,
-                headed=args.headed,
-                screenshot_dir=screenshot_dir,
-                logger=acc_logger,
-                pace=args.pace,
-            )
+            ok = False
+            try:
+                ok = await asyncio.wait_for(
+                    run_single_account(
+                        email=email,
+                        password=password,
+                        proxy=proxy,
+                        store=store,
+                        results=results,
+                        temp_mail=temp_mail,
+                        headed=args.headed,
+                        screenshot_dir=screenshot_dir,
+                        logger=acc_logger,
+                        pace=args.pace,
+                    ),
+                    timeout=240.0,
+                )
+            except asyncio.TimeoutError:
+                acc_logger.error(f"HARD TIMEOUT: Eksekusi akun {email} melebihi batas 240 detik! Dibatalkan paksa untuk mencegah VPS hang.")
+                store.upsert({"email": email, "status": FlowState.FAILED, "notes": "HARD_TIMEOUT_240S"})
+                results.mark_failed(email, "HARD_TIMEOUT_240S")
+                ok = False
+            except Exception as e:
+                acc_logger.error(f"Worker #{worker_id} unhandled error on {email}: {e}")
+                ok = False
+            finally:
+                if worker_count == 1:
+                    cleanup_leftover_browser_processes()
+                    cleanup_temp_profiles()
 
             if proxy_pool and proxy:
                 proxy_pool.mark_result(proxy, ok)

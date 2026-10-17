@@ -1,11 +1,15 @@
 import asyncio
 import atexit
+import gc
+import glob
 import os
 import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import time
 from typing import Optional, Dict, Any, List, Union
 from urllib.parse import urlparse
 from camoufox.async_api import AsyncCamoufox
@@ -38,6 +42,84 @@ def kill_descendant_processes(sig: signal.Signals = signal.SIGKILL) -> None:
             os.kill(pid, sig)
         except OSError:
             pass
+
+def cleanup_leftover_browser_processes() -> int:
+    """
+    Specifically targets and terminates orphan/stale browser child processes (camoufox, firefox, node)
+    that remain lingering under the current process without killing unrelated tasks.
+    Returns number of killed processes.
+    """
+    pids = get_descendant_pids()
+    killed = 0
+    for pid in reversed(pids):
+        try:
+            cmd = ""
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    cmd = f.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            if any(k in cmd.lower() for k in ["camoufox", "firefox", "playwright", "node"]):
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+        except Exception:
+            pass
+    return killed
+
+def cleanup_temp_profiles(max_age_sec: int = 60) -> int:
+    """
+    Purges abandoned Playwright / Camoufox temporary profiles and artifacts in /tmp
+    to prevent disk and tmpfs full errors on resource-constrained VPS environments.
+    """
+    patterns = ["/tmp/playwright*", "/tmp/camoufox*"]
+    cleaned = 0
+    now = time.time()
+    for pat in patterns:
+        for path in glob.glob(pat):
+            try:
+                st = os.stat(path)
+                if now - st.st_mtime > max_age_sec:
+                    if os.path.isdir(path):
+                        shutil.rmtree(path, ignore_errors=True)
+                    else:
+                        os.remove(path)
+                    cleaned += 1
+            except Exception:
+                pass
+    return cleaned
+
+def get_vps_system_status() -> str:
+    """
+    Reads Linux /proc/meminfo and child process count to provide real-time VPS resource diagnostics.
+    """
+    mem_str = "unknown"
+    try:
+        with open("/proc/meminfo", "r") as f:
+            lines = {line.split(":")[0].strip(): int(line.split(":")[1].split()[0]) for line in f if ":" in line}
+        total = lines.get("MemTotal", 0) // 1024
+        avail = lines.get("MemAvailable", 0) // 1024
+        used = total - avail
+        pct = round(used / total * 100, 1) if total > 0 else 0
+        mem_str = f"{used}MB/{total}MB ({pct}%)"
+    except Exception:
+        pass
+
+    proc_count = len(get_descendant_pids())
+    return f"RAM: {mem_str} | Child procs: {proc_count}"
+
+async def safe_close_browser(browser: Optional[Browser], timeout_sec: float = 6.0) -> None:
+    """
+    Safely closes a Playwright Browser instance with an explicit timeout
+    to prevent indefinite hanging if IPC or socket is deadlocked.
+    """
+    if not browser:
+        return
+    try:
+        await asyncio.wait_for(browser.close(), timeout=timeout_sec)
+    except Exception:
+        pass
+    finally:
+        gc.collect()
 
 def _cleanup_on_exit():
     kill_descendant_processes(signal.SIGKILL)
