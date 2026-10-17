@@ -1687,10 +1687,12 @@ async def run_single_account(
             logger.info("waiting for verification email from TempMail...")
             verify_url = await temp_mail.wait_for_verification_link(
                 address=email,
-                timeout_sec=75,
+                timeout_sec=120,
                 interval_sec=2.5,
                 filter_sender="tokenharbor",
                 link_pattern=VERIFY_LINK_RE,
+                target_domain="tokenharbor.ai",
+                logger=logger,
             )
             logger.info(f"verification URL received: {verify_url}")
 
@@ -2185,10 +2187,12 @@ async def run_single_reenable_account(
                 elif temp_mail:
                     v_url = await temp_mail.wait_for_verification_link(
                         address=email,
-                        timeout_sec=75,
+                        timeout_sec=120,
                         interval_sec=2.5,
                         filter_sender="tokenharbor",
                         link_pattern=VERIFY_LINK_RE,
+                        target_domain="tokenharbor.ai",
+                        logger=logger,
                     )
 
                 if v_url:

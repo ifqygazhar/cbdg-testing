@@ -29,7 +29,7 @@ from .turnstile import (
     inject_turnstile_token,
 )
 from .log import create_logger, Logger
-from .tempmail import TempMailClient
+from .tempmail import TempMailClient, extract_link_from_mail
 
 __all__ = [
     "launch_camoufox",
@@ -66,5 +66,7 @@ __all__ = [
     "create_logger",
     "Logger",
     "TempMailClient",
+    "extract_link_from_mail",
 ]
+
 

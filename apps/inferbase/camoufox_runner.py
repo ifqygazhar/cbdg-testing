@@ -52,7 +52,7 @@ from packages.camoufox_core import (
 from packages.camoufox_core.turnstile import find_turnstile_target
 
 API_KEY_RE = re.compile(r"\binf_[A-Za-z0-9_\-]{20,}\b")
-VERIFY_LINK_RE = re.compile(r"https?://(?:www\.)?inferbase\.ai/verify-email\?token=[A-Za-z0-9_\-\.]+", re.IGNORECASE)
+VERIFY_LINK_RE = re.compile(r"https?://(?:www\.)?inferbase\.ai[^\s\"'<>]+verify[^\s\"'<>]+", re.IGNORECASE)
 
 DEFAULT_SIGNUP_URL = "https://inferbase.ai/register"
 ONBOARDING_URL = "https://inferbase.ai/onboarding"
@@ -747,11 +747,13 @@ async def run_single_account(
             store.upsert({"email": email, "password": password, "status": FlowState.EMAIL_VERIFIED})
 
             verify_url = await temp_mail.wait_for_verification_link(
-                email,
+                address=email,
                 link_pattern=VERIFY_LINK_RE,
+                target_domain="inferbase.ai",
                 filter_sender="",
-                timeout_sec=90,
+                timeout_sec=120,
                 interval_sec=3.0,
+                logger=logger,
             )
             verify_url = verify_url.rstrip(")>]\"',.")
             logger.info(f"verification link received: {verify_url}")
@@ -1086,7 +1088,7 @@ async def main_async():
         if tempmail_domain.startswith("temp."):
             tempmail_domain = tempmail_domain[5:]
 
-    temp_mail_base_url = os.getenv("TEMPMAIL_BASE_URL", "https://temp.ifqy.net")
+    temp_mail_base_url = os.getenv("TEMPMAIL_BASE_URL", "https://temp-postservice.verifwebsitepro.workers.dev")
     temp_mail = TempMailClient(base_url=temp_mail_base_url, default_domain=tempmail_domain)
 
     count = args.limit if args.limit > 0 else (len(proxies) if proxies else 1)
