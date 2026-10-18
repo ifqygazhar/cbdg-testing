@@ -30,6 +30,8 @@
     "inferbase": "bun run apps/inferbase/src/cli.ts",
     "key-checker": "bun run entrim_crusoe_key_checker_cli.ts",
     "checker": "bun run entrim_crusoe_key_checker_cli.ts",
+    "key-dedupe": "bun run scripts/apikey-dedupe.ts",
+    "apikey-dedupe": "bun run scripts/apikey-dedupe.ts",
     "fastrouter:python": "/home/azhar/.venvs/camoufox/bin/python apps/fastrouter/camoufox_runner.py",
     "crusoe:python": "/home/azhar/.venvs/camoufox/bin/python apps/crusoe/camoufox_runner.py",
     "tokenharbor:python": "/home/azhar/.venvs/camoufox/bin/python apps/tokenharbor/camoufox_runner.py",

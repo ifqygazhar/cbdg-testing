@@ -351,6 +351,32 @@ describe("key-checker as a menu action", () => {
   });
 });
 
+describe("key-dedupe as a menu action", () => {
+  const plan: RunPlan = {
+    app: "key-dedupe",
+    pace: "human",
+    headless: false,
+    retryFailed: false,
+    dryRun: false,
+    delaySec: 0,
+    workers: 1,
+  };
+  it("takes no run-shaping flags", () => {
+    expect(buildArgs(plan)).toEqual([]);
+    expect(commandLine(plan)).toBe("bun run key-dedupe");
+  });
+  it("is flagged as a tool, not an account run", () => {
+    expect(IS_TOOL["key-dedupe"]).toBe(true);
+  });
+  it("has APP_ENTRY file on disk", async () => {
+    expect(await Bun.file(APP_ENTRY["key-dedupe"]).exists()).toBe(true);
+  });
+  it("has no seed warnings", () => {
+    expect(warningsFor(plan, { accounts: 0, proxies: 0, live: 0, liveAddresses: 0, cards: 0 })).toEqual([]);
+  });
+});
+
+
 // ── bundle untuk VPS ───────────────────────────────────────────────
 describe("runner-entry", () => {
   it("mengenali setiap app dan menolak yang lain", async () => {

@@ -48,6 +48,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "webshare", label: "webshare", hint: "daftar via Google → panen proxy gratis ke proxy.txt" },
     { value: "proxy-check", label: "cek proxy", hint: "proxy.txt → uji hidup/mati / format & dedupe unik" },
     { value: "key-checker", label: "cek apikey", hint: "uji status valid / kuota / rate limit API key berbagai provider" },
+    { value: "key-dedupe", label: "dedupe apikey", hint: "hapus duplikat API key TokenHarbor, Inferbase, GroqCloud, dll." },
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
     { value: "fastrouter", label: "fastrouter", hint: "daftar FastRouter → kredit $1 + API key ke apikey-fastrouter" },
     { value: "cbdg", label: "cbdg", hint: "daftar CodeBuddy → kredit new-user (+ VCC opsional)" },
@@ -58,7 +59,7 @@ async function askPlan(): Promise<RunPlan> {
   ]);
 
   if (IS_TOOL[app]) {
-    if (app === "key-checker") {
+    if (app === "key-checker" || app === "key-dedupe") {
       return {
         app,
         pace: "human",

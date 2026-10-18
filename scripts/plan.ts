@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "proxy-check" | "key-checker";
+export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "proxy-check" | "key-checker" | "key-dedupe";
 
 /** Maintenance actions have no accounts, pace or proxy of their own. */
 export const IS_TOOL: Record<AppName, boolean> = {
@@ -18,7 +18,9 @@ export const IS_TOOL: Record<AppName, boolean> = {
   inferbase: false,
   "proxy-check": true,
   "key-checker": true,
+  "key-dedupe": true,
 };
+
 export type Pace = "fast" | "human" | "careful";
 export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
@@ -74,7 +76,9 @@ export const APP_ENTRY: Record<AppName, string> = {
   inferbase: "apps/inferbase/src/cli.ts",
   "proxy-check": "scripts/proxy-check.ts",
   "key-checker": "entrim_crusoe_key_checker_cli.ts",
+  "key-dedupe": "scripts/apikey-dedupe.ts",
 };
+
 
 /** Apps whose accounts can be spread over the harvested proxies. */
 export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase"];
@@ -105,7 +109,7 @@ export function buildArgs(plan: RunPlan): string[] {
   // The checker takes no run-shaping flags: it reads proxy.txt and writes
   // proxy-live.txt with its own defaults. Optional target & append flags can be passed.
   if (IS_TOOL[plan.app]) {
-    if (plan.app === "key-checker") return [];
+    if (plan.app === "key-checker" || plan.app === "key-dedupe") return [];
     const toolArgs: string[] = [];
     if (plan.proxyDedupe) {
       toolArgs.push("--dedupe");
