@@ -40,7 +40,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): InferbaseConfi
 
   const defaultPassword = env.INFERBASE_PASSWORD || "torabikA1#";
   const tempMailApiKey = env.TEMPMAIL_API_KEY || "anjingmemekkontol";
-  const tempMailBaseUrl = env.TEMPMAIL_BASE_URL || "https://temp.ifqy.net";
+  const tempMailBaseUrl = env.TEMPMAIL_BASE_URL || "https://temp-postservice.verifwebsitepro.workers.dev";
   let tempMailDomain = env.TEMPMAIL_DOMAIN || "ifqy.net";
   if (tempMailDomain.startsWith("temp.")) {
     tempMailDomain = tempMailDomain.slice(5);

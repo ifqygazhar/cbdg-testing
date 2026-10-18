@@ -16,10 +16,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-DEFAULT_BASE_URLS = [
-    "https://temp-postservice.verifwebsitepro.workers.dev",
-    "https://temp.ifqy.net",
-]
+DEFAULT_BASE_URL = "https://temp-postservice.verifwebsitepro.workers.dev"
 
 def extract_link_from_mail(
     mail: Dict[str, Any],
@@ -76,18 +73,10 @@ class TempMailClient:
         base_url: Optional[str] = None,
         default_domain: Optional[str] = None,
     ):
-        raw_base = base_url or os.getenv("TEMPMAIL_BASE_URL", DEFAULT_BASE_URLS[0])
+        raw_base = base_url or os.getenv("TEMPMAIL_BASE_URL", DEFAULT_BASE_URL)
         if not raw_base.startswith("http"):
             raw_base = f"https://{raw_base}"
-        primary = raw_base.rstrip("/")
-
-        # Assemble base URLs with primary first, followed by known fallbacks without duplicates
-        self.base_urls: List[str] = [primary]
-        for fb in DEFAULT_BASE_URLS:
-            if fb.rstrip("/") != primary:
-                self.base_urls.append(fb.rstrip("/"))
-
-        self.base_url = self.base_urls[0]
+        self.base_url = raw_base.rstrip("/")
         self.api_key = api_key or os.getenv("TEMPMAIL_API_KEY", "anjingmemekkontol")
         dom = default_domain or os.getenv("TEMPMAIL_DOMAIN", "ifqy.net")
         if dom.startswith("temp."):
@@ -112,31 +101,21 @@ class TempMailClient:
         clean_path = path.lstrip("/")
         headers = self._headers()
         payload = json.dumps(data).encode("utf-8") if data is not None else None
+        url = f"{self.base_url}/{clean_path}"
+        req = urllib.request.Request(url, data=payload, headers=headers, method=method)
 
-        last_error = None
-        for base in self.base_urls:
-            url = f"{base}/{clean_path}"
-            req = urllib.request.Request(url, data=payload, headers=headers, method=method)
-            try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    resp_bytes = resp.read().decode("utf-8")
-                    if not resp_bytes.strip():
-                        return {}
-                    return json.loads(resp_bytes)
-            except urllib.error.HTTPError as e:
-                # 404 on inbox endpoint simply means empty inbox
-                if "inbox" in path and e.code == 404:
-                    return {"status": "ok", "mails": []}
-                # If 401, 403, 429, or 5xx, try fallback endpoint
-                last_error = e
-                continue
-            except Exception as e:
-                last_error = e
-                continue
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                resp_bytes = resp.read().decode("utf-8")
+                if not resp_bytes.strip():
+                    return {}
+                return json.loads(resp_bytes)
+        except urllib.error.HTTPError as e:
+            # 404 on inbox endpoint simply means empty inbox
+            if "inbox" in path and e.code == 404:
+                return {"status": "ok", "mails": []}
+            raise
 
-        if last_error:
-            raise last_error
-        raise RuntimeError(f"All TempMail endpoints failed for {path}")
 
     def create_email(self, domain: Optional[str] = None, username: Optional[str] = None) -> Dict[str, Any]:
         """Creates a new temporary email address."""
