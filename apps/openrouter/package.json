@@ -1,0 +1,11 @@
+{
+  "name": "@ifqy/openrouter-signup",
+  "version": "0.1.0",
+  "description": "OpenRouter AI signup automation (TempMail / Google OAuth + Clerk email verification + onboarding + API key generation) on Bun + Puppeteer & Python + Camoufox",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ifqy/google-oauth": "workspace:*",
+    "puppeteer-core": "^23.0.0"
+  }
+}

@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "proxy-check" | "key-checker" | "key-dedupe";
+export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "openrouter" | "proxy-check" | "key-checker" | "key-dedupe";
 
 /** Maintenance actions have no accounts, pace or proxy of their own. */
 export const IS_TOOL: Record<AppName, boolean> = {
@@ -16,6 +16,7 @@ export const IS_TOOL: Record<AppName, boolean> = {
   groqcloud: false,
   llm7io: false,
   inferbase: false,
+  openrouter: false,
   "proxy-check": true,
   "key-checker": true,
   "key-dedupe": true,
@@ -26,7 +27,7 @@ export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
 export type GsuiteMode = "create_new_key" | "skip_existing" | "fetch_existing";
 
-export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io", "inferbase"];
+export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter"];
 
 export interface RunPlan {
   app: AppName;
@@ -74,6 +75,7 @@ export const APP_ENTRY: Record<AppName, string> = {
   groqcloud: "apps/groqcloud/src/cli.ts",
   llm7io: "apps/llm7io/src/cli.ts",
   inferbase: "apps/inferbase/src/cli.ts",
+  openrouter: "apps/openrouter/src/cli.ts",
   "proxy-check": "scripts/proxy-check.ts",
   "key-checker": "entrim_crusoe_key_checker_cli.ts",
   "key-dedupe": "scripts/apikey-dedupe.ts",
@@ -81,7 +83,7 @@ export const APP_ENTRY: Record<AppName, string> = {
 
 
 /** Apps whose accounts can be spread over the harvested proxies. */
-export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase"];
+export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter"];
 
 /**
  * Whether Google's sign-in will bypass the proxy on this run. Defaults on; the
@@ -253,8 +255,10 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd(), requ
     groqcloud: ["akun-result-groqcloud.txt"],
     llm7io: ["akun-result-llm7io.txt", "apikey-llm7io.txt", "vps/apikey-llm7io.txt"],
     inferbase: ["akun-result-inferbase.txt", "vps/akun-result-inferbase.txt", "apikey-inferbase.txt", "inferbase-ai-dataset/akun-result-inferbase.txt"],
+    openrouter: ["akun-result-openrouter.txt", "vps/akun-result-openrouter.txt", "apikey-openrouter.txt", "openrouter-dataset/akun-result-openrouter.txt"],
     "proxy-check": [],
     "key-checker": [],
+    "key-dedupe": [],
   };
 
   const stateFiles: Record<AppName, string[]> = {
@@ -266,8 +270,10 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd(), requ
     groqcloud: ["state-groqcloud.jsonl", "state.jsonl"],
     llm7io: ["state-llm7io.jsonl", "state.jsonl"],
     inferbase: ["state-inferbase.jsonl", "state.jsonl"],
+    openrouter: ["state-openrouter.jsonl", "state.jsonl"],
     "proxy-check": [],
     "key-checker": [],
+    "key-dedupe": [],
   };
 
   for (const rf of resultFiles[app] ?? []) {
@@ -370,7 +376,8 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
   }
   const isTempMail =
     plan.app === "groqcloud" ||
-    ((plan.app === "tokenharbor" || plan.app === "fastrouter" || plan.app === "llm7io") && plan.authMethod !== "google");
+    plan.app === "openrouter" ||
+    ((plan.app === "tokenharbor" || plan.app === "fastrouter" || plan.app === "llm7io" || plan.app === "inferbase") && plan.authMethod !== "google");
   if (!isTempMail && !plan.reEnableFree && !plan.reverifyEmail && seeds.accounts === 0) {
     out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
   }

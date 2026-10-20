@@ -275,7 +275,7 @@ describe("seeds + warnings", () => {
     expect(w.join(" ")).toContain("0 detik");
   });
   it("proxy-capable list is exactly the apps that read the proxy file", () => {
-    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase"]);
+    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter"]);
   });
 
   it("getRemainingAccountsForApp differentiates ALREADY_REGISTERED based on requireApiKey", () => {
