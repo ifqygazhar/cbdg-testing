@@ -31,33 +31,52 @@ logger = create_logger("tokenharbor_verify")
 VERIFY_LINK_RE = re.compile(r"https?://(?:www\.)?tokenharbor\.ai/verify-email\?token=[a-zA-Z0-9_\-]+", re.I)
 
 
-def verify_tokenharbor_key_api(api_key: str, timeout_sec: float = 8.0) -> Tuple[bool, int, str]:
+def verify_tokenharbor_key_api(api_key: str, timeout_sec: float = 20.0, max_retries: int = 2) -> Tuple[bool, int, str]:
     if not api_key:
         return False, 0, "no_key"
-    try:
-        resp = requests.post(
-            "https://tokenharbor.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-v4-flash:free",
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 5,
-            },
-            timeout=timeout_sec,
-        )
-        if resp.status_code == 200:
-            return True, 200, "ok"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    }
+    payload = {
+        "model": "deepseek-v4-flash:free",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 5,
+    }
+
+    last_err = ""
+    last_status = 0
+    for attempt in range(max_retries):
         try:
-            data = resp.json()
-            err_msg = data.get("error", {}).get("message", f"HTTP_{resp.status_code}")
-        except Exception:
-            err_msg = f"HTTP_{resp.status_code}"
-        return False, resp.status_code, err_msg
-    except Exception as e:
-        return False, 0, str(e)
+            resp = requests.post(
+                "https://tokenharbor.ai/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=timeout_sec,
+            )
+            if resp.status_code == 200:
+                return True, 200, "ok"
+            try:
+                data = resp.json()
+                err_msg = data.get("error", {}).get("message", f"HTTP_{resp.status_code}")
+            except Exception:
+                err_msg = f"HTTP_{resp.status_code}"
+
+            if resp.status_code in (401, 403):
+                return False, resp.status_code, err_msg
+
+            last_status = resp.status_code
+            last_err = err_msg
+        except Exception as e:
+            last_status = 0
+            last_err = str(e)
+
+        if attempt < max_retries - 1:
+            time.sleep(2.0)
+
+    return False, last_status, last_err
 
 
 async def handle_speedbump_robust(page) -> bool:

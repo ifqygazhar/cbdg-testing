@@ -728,7 +728,7 @@ async def ensure_free_models_enabled(page, logger=None, timeout_sec: int = 8) ->
 
     return handled_modal
 
-def verify_tokenharbor_key_api(api_key: str, timeout_sec: float = 8.0) -> Tuple[bool, int, str]:
+def verify_tokenharbor_key_api(api_key: str, timeout_sec: float = 20.0, max_retries: int = 2) -> Tuple[bool, int, str]:
     """
     Directly tests an API key against TokenHarbor /v1/chat/completions with deepseek-v4-flash:free.
     Returns (is_valid, http_status, message).
@@ -736,30 +736,49 @@ def verify_tokenharbor_key_api(api_key: str, timeout_sec: float = 8.0) -> Tuple[
     """
     if not api_key:
         return False, 0, "no_key"
-    try:
-        resp = requests.post(
-            "https://tokenharbor.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-v4-flash:free",
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 5,
-            },
-            timeout=timeout_sec,
-        )
-        if resp.status_code == 200:
-            return True, 200, "ok"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    }
+    payload = {
+        "model": "deepseek-v4-flash:free",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 5,
+    }
+
+    last_err = ""
+    last_status = 0
+    for attempt in range(max_retries):
         try:
-            data = resp.json()
-            err_msg = data.get("error", {}).get("message", f"HTTP_{resp.status_code}")
-        except Exception:
-            err_msg = f"HTTP_{resp.status_code}"
-        return False, resp.status_code, err_msg
-    except requests.exceptions.RequestException as e:
-        return False, 0, str(e)
+            resp = requests.post(
+                "https://tokenharbor.ai/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=timeout_sec,
+            )
+            if resp.status_code == 200:
+                return True, 200, "ok"
+            try:
+                data = resp.json()
+                err_msg = data.get("error", {}).get("message", f"HTTP_{resp.status_code}")
+            except Exception:
+                err_msg = f"HTTP_{resp.status_code}"
+
+            if resp.status_code in (401, 403):
+                return False, resp.status_code, err_msg
+
+            last_status = resp.status_code
+            last_err = err_msg
+        except requests.exceptions.RequestException as e:
+            last_status = 0
+            last_err = str(e)
+
+        if attempt < max_retries - 1:
+            time.sleep(2.0)
+
+    return False, last_status, last_err
 
 
 
@@ -1398,8 +1417,14 @@ async def run_single_google_account(
             store.upsert({"email": email, "status": FlowState.API_KEY})
             api_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
 
+            # Safeguard: Save the extracted API key immediately so it is NEVER lost
+            results.mark_success(email, password, api_key)
+            store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
+            logger.info(f"💾 API key saved to apikey-tokenharbor.txt and akun-result-tokenharbor.txt -> {api_key[:12]}...")
+
             # ── 9. Validate API Key against TokenHarbor Completion API ──────
-            is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=8.0)
+            logger.info("testing live API completion with generated key...")
+            is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=20.0)
             if not is_valid:
                 is_verif_needed = ("verify your email" in err_msg.lower() or "confirmation link" in err_msg.lower() or "email_verification" in err_msg.lower())
                 if status_code == 403 and is_verif_needed:
@@ -1410,14 +1435,19 @@ async def run_single_google_account(
                         await page.goto(recovery_url, wait_until="domcontentloaded", timeout=timeout_ms)
                         await human_delay(3000, 5000)
                         verify_url = recovery_url
-                        is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=8.0)
+                        store.upsert({"email": email, "verificationLink": verify_url})
+                        is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=20.0)
 
                 if not is_valid:
-                    raise RuntimeError(f"API key created but live API verification failed: HTTP {status_code} ({err_msg})")
+                    logger.warn(
+                        f"⚠️ API key saved, but live verification check returned HTTP {status_code} ({err_msg}). "
+                        f"Key is safely preserved in apikey-tokenharbor.txt."
+                    )
+                else:
+                    logger.info(f"🎉 SUCCESS: API key verified LIVE (HTTP 200 OK) -> {api_key[:12]}...")
+            else:
+                logger.info(f"🎉 SUCCESS: API key extracted & verified LIVE (HTTP 200 OK) -> {api_key[:12]}...")
 
-            logger.info(f"SUCCESS: API key extracted & verified LIVE (HTTP 200 OK) -> {api_key[:12]}...")
-            store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
-            results.mark_success(email, password, api_key)
             return True
 
     except GooglePhoneVerificationException as e:
@@ -1706,14 +1736,22 @@ async def run_single_account(
             store.upsert({"email": email, "status": FlowState.API_KEY})
             api_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
 
-            # ── 7. Validate API Key against TokenHarbor Completion API ──────
-            is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=8.0)
-            if not is_valid:
-                raise RuntimeError(f"API key created but live API verification failed: HTTP {status_code} ({err_msg})")
-
-            logger.info(f"SUCCESS: API key extracted & verified LIVE (HTTP 200 OK) -> {api_key[:12]}...")
-            store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
+            # Safeguard: Save the extracted API key immediately so it is NEVER lost
             results.mark_success(email, password, api_key)
+            store.upsert({"email": email, "status": FlowState.DONE, "apiKey": api_key, "verificationLink": verify_url})
+            logger.info(f"💾 API key saved to apikey-tokenharbor.txt and akun-result-tokenharbor.txt -> {api_key[:12]}...")
+
+            # ── 7. Validate API Key against TokenHarbor Completion API ──────
+            logger.info("testing live API completion with generated key...")
+            is_valid, status_code, err_msg = verify_tokenharbor_key_api(api_key, timeout_sec=20.0)
+            if not is_valid:
+                logger.warn(
+                    f"⚠️ API key saved, but live verification check returned HTTP {status_code} ({err_msg}). "
+                    f"Key is safely preserved in apikey-tokenharbor.txt."
+                )
+            else:
+                logger.info(f"🎉 SUCCESS: API key verified LIVE (HTTP 200 OK) -> {api_key[:12]}...")
+
             return True
 
     except Exception as e:
@@ -2216,7 +2254,7 @@ async def run_single_reenable_account(
             active_key = api_key
             is_valid = False
             if active_key:
-                is_valid, status, msg = verify_tokenharbor_key_api(active_key, timeout_sec=8.0)
+                is_valid, status, msg = verify_tokenharbor_key_api(active_key, timeout_sec=20.0)
                 if is_valid:
                     logger.info(f"API key ({active_key[:12]}...) BERHASIL TERVERIFIKASI & AKTIF! Live API HTTP 200 OK.")
 
@@ -2225,17 +2263,18 @@ async def run_single_reenable_account(
                 try:
                     new_key = await create_and_extract_api_key(page, email, screenshot_dir, logger)
                     if new_key:
-                        is_valid, status, msg = verify_tokenharbor_key_api(new_key, timeout_sec=8.0)
+                        active_key = new_key
+                        await reenable_store.mark_success(email, password, active_key)
+                        store.upsert({"email": email, "status": FlowState.DONE, "apiKey": active_key, "reenabled": True})
+                        is_valid, status, msg = verify_tokenharbor_key_api(new_key, timeout_sec=20.0)
                         if is_valid:
                             logger.info(f"API key baru ({new_key[:12]}...) BERHASIL DIBUAT & DIAKTIFKAN! Live API HTTP 200 OK.")
-                            active_key = new_key
                         else:
-                            logger.warn(f"API key baru dibuat tapi status live API masih HTTP {status} ({msg})")
-                            active_key = new_key
+                            logger.warn(f"API key baru dibuat tapi status live API masih HTTP {status} ({msg}). Menyimpan API key...")
                 except Exception as e:
                     logger.warn(f"Gagal membuat API key baru: {e}")
 
-            if is_valid and active_key:
+            if active_key:
                 await reenable_store.mark_success(email, password, active_key)
                 store.upsert({"email": email, "status": FlowState.DONE, "apiKey": active_key, "reenabled": True})
                 return True, active_key
