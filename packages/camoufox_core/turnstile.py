@@ -391,6 +391,60 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
 
     return None
 
+class TurnstileFailedException(Exception):
+    """Raised when Cloudflare Turnstile explicitly reports 'Verification failed' (flagged/dirty IP)."""
+    pass
+
+async def is_turnstile_failed(page: Page) -> bool:
+    """
+    Checks if Cloudflare Turnstile explicitly reported verification failed / troubleshoot.
+    This occurs when Cloudflare rejects the IP or browser fingerprint automatically.
+    """
+    if page.is_closed():
+        return False
+
+    # 1. Check all child frames (specifically challenges.cloudflare.com)
+    try:
+        for f in page.frames:
+            url = f.url or ""
+            if "challenges.cloudflare.com" in url or "turnstile" in url:
+                try:
+                    res = await f.evaluate("""() => {
+                        const body = document.body ? document.body.innerText || '' : '';
+                        if (body.includes('Verification failed') || body.includes('Troubleshoot') || body.includes('Unable to verify')) {
+                            return true;
+                        }
+                        if (document.querySelector('#challenge-error-title, #challenge-error-text, .fail, #fail, [aria-label*="failed" i]')) {
+                            return true;
+                        }
+                        return false;
+                    }""")
+                    if res:
+                        return True
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # 2. Check main page containers
+    try:
+        res = await page.evaluate("""() => {
+            const wrap = document.querySelector('.turnstile-wrap, #clerk-captcha, [data-cl-interactive="true"]');
+            if (wrap) {
+                const text = wrap.innerText || '';
+                if (text.includes('Verification failed') || text.includes('Troubleshoot') || text.includes('Unable to verify')) {
+                    return true;
+                }
+            }
+            return false;
+        }""")
+        if res:
+            return True
+    except Exception:
+        pass
+
+    return False
+
 async def is_turnstile_solved(page: Page) -> bool:
     """Checks if Turnstile challenge has been passed or token generated."""
     try:
@@ -471,6 +525,12 @@ async def resolve_turnstile_if_present(
         if await is_turnstile_solved(page):
             return True
 
+        # Check if Turnstile failed explicitly (flagged / blocked IP)
+        if await is_turnstile_failed(page):
+            if logger:
+                logger.warn("[turnstile] ❌ Cloudflare Turnstile Verification failed (dirty/flagged IP detected).")
+            raise TurnstileFailedException("Cloudflare Turnstile Verification failed (dirty/flagged IP)")
+
         # Dismiss any troubleshooting modal if it popped up
         await dismiss_turnstile_modal(page, logger)
 
@@ -531,6 +591,10 @@ async def resolve_turnstile_if_present(
                     if logger:
                         logger.info(f"[turnstile] Verifikasi sukses! Challenge teratasi. URL: {page.url[:80]}...")
                     return True
+                if await is_turnstile_failed(page):
+                    if logger:
+                        logger.warn("[turnstile] ❌ Cloudflare Turnstile Verification failed (dirty/flagged IP detected).")
+                    raise TurnstileFailedException("Cloudflare Turnstile Verification failed (dirty/flagged IP)")
 
             if logger:
                 logger.info("[turnstile] Belum ada respon token, mengecek ulang...")
@@ -538,5 +602,9 @@ async def resolve_turnstile_if_present(
         await asyncio.sleep(0.6)
 
     await dismiss_turnstile_modal(page, logger)
+    if await is_turnstile_failed(page):
+        if logger:
+            logger.warn("[turnstile] ❌ Cloudflare Turnstile Verification failed (dirty/flagged IP detected).")
+        raise TurnstileFailedException("Cloudflare Turnstile Verification failed (dirty/flagged IP)")
     return await is_turnstile_solved(page)
 

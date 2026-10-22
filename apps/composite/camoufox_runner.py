@@ -50,6 +50,8 @@ from packages.camoufox_core import (
     setup_turnstile_interceptor,
     inject_turnstile_token,
     read_emails_from_result_file,
+    TurnstileFailedException,
+    is_turnstile_failed,
 )
 from packages.camoufox_core.turnstile import find_turnstile_target
 
@@ -468,7 +470,7 @@ async def run_composite_single(
                 logger.info("🛡️ Checking and auto-verifying Cloudflare Turnstile...")
                 turnstile_solved = await resolve_turnstile_if_present(page, timeout_sec=30, logger=logger)
                 if not turnstile_solved:
-                    logger.warning("Turnstile check not definitively solved before submit, attempting click anyway...")
+                    logger.warn("Turnstile check not definitively solved before submit, attempting click anyway...")
 
                 # Click Create account
                 submit_btn = page.locator('form:not([hidden]) button[type="submit"], button[type="submit"]:has-text("Create account")').first
@@ -526,6 +528,18 @@ async def run_composite_single(
 
             logger.info(f"🎉 Successfully created Composite account and extracted API key: {api_key}")
             return True
+
+        except TurnstileFailedException as tfe:
+            logger.error(f"❌ Turnstile Verification FAILED for {email} ({proxy.server if proxy else 'direct IP'}). Discarding proxy immediately.")
+            store.upsert({
+                "email": email,
+                "password": password,
+                "status": FlowState.FAILED,
+                "notes": "TURNSTILE_FAILED_FLAGGED_IP",
+                "updatedAt": int(time.time() * 1000),
+            })
+            results.mark_failed(email, "TURNSTILE_FAILED_FLAGGED_IP")
+            raise
 
         except Exception as e:
             err_msg = str(e)
@@ -594,7 +608,7 @@ async def main():
             proxies = load_proxies(p_file)
             logger.info(f"Loaded {len(proxies)} proxies for Composite (reuse={args.reuse_proxy})")
         else:
-            logger.warning("No proxy file found, falling back to direct connection.")
+            logger.warn("No proxy file found, falling back to direct connection.")
             args.use_proxy = False
 
     proxy_pool = CompositeProxyPool(proxies, reuse_proxy=args.reuse_proxy) if (args.use_proxy and proxies) else None
@@ -648,7 +662,7 @@ async def main():
                     enable_precheck=(not args.skip_proxy_precheck),
                 )
                 if proxy is None:
-                    logger.warning(f"Worker #{worker_id}: All proxies have been exhausted or blacklisted. No usable proxies left.")
+                    logger.warn(f"Worker #{worker_id}: All proxies have been exhausted or blacklisted. No usable proxies left.")
                     break
                 proxy_addr = proxy_pool.address_of(proxy)
                 reuse_tag = " [reused good IP]" if proxy in proxy_pool.good_proxies else ""
@@ -688,15 +702,28 @@ async def main():
                 acc_logger.error(f"HARD TIMEOUT: Execution of {email} exceeded 240s.")
                 store.upsert({"email": email, "status": FlowState.FAILED, "notes": "HARD_TIMEOUT_240S"})
                 results.mark_failed(email, "HARD_TIMEOUT_240S")
+                ok = False
+            except TurnstileFailedException:
+                ok = False
+                if proxy_pool and proxy:
+                    proxy_pool.mark_result(proxy, False)
+                    acc_logger.warn(f"🚫 Flagged proxy {proxy.server} permanently discarded from pool due to Turnstile failure.")
+                elif not proxy:
+                    acc_logger.error(
+                        "❌ IP mesin langsung (direct) gagal verifikasi Cloudflare Turnstile ('Verification failed'). "
+                        "IP VPS/datacenter umumnya langsung diblokir oleh Cloudflare Turnstile auto-check. "
+                        "Harap jalankan dengan proxy (--with-proxy) agar otomatis merotasi ke IP fresh."
+                    )
             except Exception as e:
                 acc_logger.error(f"Worker #{worker_id} unhandled error: {e}")
+                ok = False
 
-            if proxy_pool and proxy:
-                proxy_pool.mark_result(proxy, ok)
-                if ok:
-                    acc_logger.info(f"Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
-                else:
-                    acc_logger.warning(f"Proxy {proxy.server} failed/rejected. Discarded.")
+            if proxy_pool and proxy and ok:
+                proxy_pool.mark_result(proxy, True)
+                acc_logger.info(f"Proxy {proxy.server} verified GOOD! Added to reusable proxy pool.")
+            elif proxy_pool and proxy and not ok:
+                proxy_pool.mark_result(proxy, False)
+                acc_logger.warn(f"Proxy {proxy.server} failed/rejected. Discarded.")
 
             if ok:
                 async with lock:

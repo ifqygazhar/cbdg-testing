@@ -27,6 +27,9 @@ from .turnstile import (
     solve_turnstile_via_api,
     setup_turnstile_interceptor,
     inject_turnstile_token,
+    is_turnstile_failed,
+    is_turnstile_solved,
+    TurnstileFailedException,
 )
 from .log import create_logger, Logger
 from .tempmail import TempMailClient, extract_link_from_mail
@@ -54,6 +57,9 @@ __all__ = [
     "solve_turnstile_via_api",
     "setup_turnstile_interceptor",
     "inject_turnstile_token",
+    "is_turnstile_failed",
+    "is_turnstile_solved",
+    "TurnstileFailedException",
     "load_accounts",
     "load_proxies",
     "Account",

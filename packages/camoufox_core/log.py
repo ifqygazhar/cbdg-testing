@@ -23,6 +23,9 @@ class Logger:
     def warn(self, msg: str, **extra):
         self._log("warn", msg, **extra)
 
+    def warning(self, msg: str, **extra):
+        self._log("warn", msg, **extra)
+
     def error(self, msg: str, **extra):
         self._log("error", msg, **extra)
 
