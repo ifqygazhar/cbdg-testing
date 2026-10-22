@@ -12,6 +12,8 @@ BYCF_SOLVE_API = "https://bycf.snowping.cfd/api/solve"
 
 KNOWN_SITEKEYS: Dict[str, str] = {
     "tokenharbor.ai": "0x4AAAAAADBuC8Knz1EJZx9-",
+    "composite.lucidity.sh": "0x4AAAAAAEj33CmRmAyr9C5C",
+    "lucidity.sh": "0x4AAAAAAEj33CmRmAyr9C5C",
 }
 
 async def solve_turnstile_via_api(
@@ -345,11 +347,11 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
     except Exception:
         pass
 
-    # ── Source 6: Hidden response input parent container ─────────────
+    # ── Source 6: Hidden response input parent container or .turnstile-wrap ─────────────
     try:
         resp_input = page.locator("input[name='cf-turnstile-response']")
         if await resp_input.count() > 0:
-            parent = resp_input.first.locator("xpath=ancestor::div[contains(@id, 'captcha') or @data-cl-interactive='true'][1]")
+            parent = resp_input.first.locator("xpath=ancestor::div[contains(@id, 'captcha') or @data-cl-interactive='true' or contains(@class, 'turnstile-wrap')][1]")
             if await parent.count() == 0:
                 parent = resp_input.first.locator("xpath=..")
             try:
@@ -364,6 +366,26 @@ async def find_turnstile_target(page: Page) -> Optional[Dict[str, Any]]:
                 click_x = widget_left + 34
                 click_y = box["y"] + (box["height"] / 2)
                 return {"x": click_x, "y": click_y, "source": "response_input_parent", "box": box}
+    except Exception:
+        pass
+
+    # ── Source 7: .turnstile-wrap container ─────────────
+    try:
+        tw_loc = page.locator(".turnstile-wrap")
+        if await tw_loc.count() > 0:
+            el = tw_loc.first
+            try:
+                await el.scroll_into_view_if_needed(timeout=3000)
+                await asyncio.sleep(0.15)
+            except Exception:
+                pass
+            box = await el.bounding_box()
+            if box and box["height"] >= 30 and box["width"] >= 80:
+                widget_w = min(360, box["width"])
+                widget_left = box["x"] + (box["width"] - widget_w) / 2
+                click_x = widget_left + 34
+                click_y = box["y"] + (box["height"] / 2)
+                return {"x": click_x, "y": click_y, "source": "turnstile_wrap", "box": box}
     except Exception:
         pass
 

@@ -57,6 +57,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "llm7io", label: "llm7io", hint: "daftar LLM7.io (TempMail / GSuite) → API key ke apikey-llm7io.txt" },
     { value: "inferbase", label: "inferbase", hint: "daftar Inferbase (TempMail / Google OAuth) → API key ke apikey-inferbase.txt" },
     { value: "openrouter", label: "openrouter", hint: "daftar OpenRouter (TempMail / Google OAuth) → API key ke apikey-openrouter.txt" },
+    { value: "composite", label: "composite", hint: "daftar Composite Lucidity (TempMail + Turnstile) → API key ke apikey-composite.txt" },
   ]);
 
   if (IS_TOOL[app]) {
@@ -157,7 +158,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" || app === "openrouter" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" || app === "openrouter" || app === "composite" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;
@@ -256,7 +257,9 @@ async function askPlan(): Promise<RunPlan> {
   }
 
   let authMethod: "google" | "tempmail" | undefined;
-  if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io" || app === "inferbase" || app === "openrouter")) {
+  if (app === "composite") {
+    authMethod = "tempmail";
+  } else if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io" || app === "inferbase" || app === "openrouter")) {
     authMethod = await select<"tempmail" | "google">(
       `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : app === "inferbase" ? "Inferbase" : app === "openrouter" ? "OpenRouter" : "FastRouter"}?`,
       [
@@ -334,7 +337,7 @@ async function askPlan(): Promise<RunPlan> {
       defaultLimit,
       " akun",
     );
-  } else if (app === "groqcloud" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io" || app === "inferbase" || app === "openrouter") && authMethod === "tempmail")) {
+  } else if (app === "groqcloud" || app === "composite" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io" || app === "inferbase" || app === "openrouter") && authMethod === "tempmail")) {
     domain = await select<string>(
       app === "llm7io"
         ? "Domain TempMail? (Catatan: LLM7.io memblokir ifqy.net, meongtopup.my.id, huzt.my.id)"

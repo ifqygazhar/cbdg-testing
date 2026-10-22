@@ -76,6 +76,8 @@ describe("buildArgs", () => {
     expect(wsPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     const ibPython = buildArgs({ ...base, app: "inferbase", engine: "python" });
     expect(ibPython).toEqual(expect.arrayContaining(["--engine", "python"]));
+    const cmpPython = buildArgs({ ...base, app: "composite", engine: "python" });
+    expect(cmpPython).toEqual(expect.arrayContaining(["--engine", "python"]));
     // bun engine is default so no flag needed
     const frBun = buildArgs({ ...base, app: "fastrouter", engine: "bun" });
     expect(frBun).not.toContain("--engine");
@@ -275,7 +277,7 @@ describe("seeds + warnings", () => {
     expect(w.join(" ")).toContain("0 detik");
   });
   it("proxy-capable list is exactly the apps that read the proxy file", () => {
-    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter"]);
+    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter", "composite"]);
   });
 
   it("getRemainingAccountsForApp differentiates ALREADY_REGISTERED based on requireApiKey", () => {

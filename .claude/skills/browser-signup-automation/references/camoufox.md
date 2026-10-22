@@ -123,3 +123,27 @@ If `await checkbox.check()` fails due to Tailwind or custom CSS overlays, use:
 await page.evaluate("el => el.checked = true", checkbox)
 ```
 Followed by clicking the parent label.
+
+### 8. `human_delay` Pacing Support
+`human_delay` supports optional `pace`:
+```python
+await human_delay(1500, 2500, pace=args.pace)
+```
+Behind the scenes in `packages.camoufox_core.browser`, `pace="fast"` scales the duration by 0.6x, while `pace="careful"` scales by 1.5x.
+
+### 9. Clean Lifecycle Teardown in `finally`
+Always cleanly close `page` and `context` in a `try ... finally` block before exiting the `async with browser_ctx as browser:` block:
+```python
+finally:
+    try:
+        if page and not page.is_closed():
+            await page.close()
+    except Exception:
+        pass
+    try:
+        if context:
+            await context.close()
+    except Exception:
+        pass
+```
+This guarantees no unawaited coroutines or orphan child processes remain lingering on the system.

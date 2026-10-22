@@ -1,0 +1,11 @@
+{
+  "name": "@ifqy/composite-signup",
+  "version": "0.1.0",
+  "description": "Composite Lucidity AI signup automation (TempMail-Pro + Cloudflare Turnstile auto-solve + API key generation) on Bun + Puppeteer & Python + Camoufox",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ifqy/google-oauth": "workspace:*",
+    "puppeteer-core": "^23.0.0"
+  }
+}

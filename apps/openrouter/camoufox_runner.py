@@ -826,7 +826,7 @@ async def main():
     api_key_file = "apikey-openrouter.txt"
 
     store = JsonlStore(state_file)
-    results = ResultWriter(result_success_file, result_failed_file, api_key_file)
+    results = ResultWriter([api_key_file], result_success_file, result_failed_file)
 
     # Load proxies
     proxies: List[Proxy] = []

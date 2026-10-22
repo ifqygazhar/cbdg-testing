@@ -110,6 +110,49 @@ Hashed CSS classes (e.g. `.css-c4xhxe`, `.btn-v3-blue`) change with every platfo
   - Inside the opened detail view, wait for message body to render, click the `Verify email` button (handling popup tab if opened), and extract the unescaped verification URL (`google.com/url?q=...`).
 - **Re-Verification Runner Mode**: Implement `--reverify-email` in the runner. The flow supports logging in via Google OAuth (if GSuite account) or password form (if TempMail), clicking the verification/resend button on the dashboard, opening the email in Gmail direct, clicking the verification link, and confirming HTTP 200 API status before moving the account to `akun-good-<app>.txt`.
 
+### Rule 8: Camoufox Lifecycle, Pacing & Clean Disposal
+- **Signature Discipline for `human_delay`**:
+  `human_delay(min_ms, max_ms, pace=..., **kwargs)` must support optional `pace` (e.g. `fast`, `human`, `careful`) and dynamically scale timing (0.6x for fast, 1.5x for careful) without throwing `TypeError: unexpected keyword argument 'pace'`.
+- **Explicit Page & Context Closure in `finally`**:
+  When using `async with browser_ctx as browser:`, closing `browser` is automatic, but active `page` and `context` must be awaited explicitly:
+  ```python
+  finally:
+      try:
+          if page and not page.is_closed():
+              await page.close()
+      except Exception:
+          pass
+      try:
+          if context:
+              await context.close()
+      except Exception:
+          pass
+  ```
+  **NEVER** do `await safe_close_browser(context, page)` or pass unawaited coroutines, which triggers `RuntimeWarning: coroutine was never awaited`.
+- **Distinct Fingerprint Logging per Account**:
+  Every account launch generates fresh randomized fingerprints (`generate_random_fingerprint_options()`, OS cycle, screen resolution jitter, WebGL/GPU, cores, and `geoip=True`). Always log active fingerprint properties immediately after opening `page`:
+  ```python
+  fp_info = await get_browser_fingerprint_info(page)
+  if fp_info:
+      logger.info(f"🛡️ Camoufox Fingerprint: OS={fp_info.get('platform')} | Screen={fp_info.get('screen')} | Viewport={fp_info.get('viewport')} | Cores={fp_info.get('cores')} | UA={fp_info.get('ua')}")
+  ```
+
+### Rule 9: TempMail-Pro Implementation Architecture & Usecase Matrix
+- **Exclusively Route to Single Endpoint**:
+  Always use `https://temp-postservice.verifwebsitepro.workers.dev` with header `x-api-key: anjingmemekkontol` (or env `TEMPMAIL_API_KEY`). Never route to deprecated or random endpoints.
+- **Domains**: `@ifqy.net` (primary default), `@meongtopup.my.id`, `@huzt.my.id`.
+- **Usecase Matrix**:
+  1. **Direct Registration without Email Verification** (e.g. Composite Lucidity):
+     Generate email via `client.create_email()`, fill form with Turnstile auto-solve, submit, and proceed directly to dashboard/API keys without inbox polling.
+  2. **Activation Link Verification** (e.g. TokenHarbor):
+     Poll `/api/email/inbox?address=...` for emails matching sender/subject, extract link using regex, unescape HTML entities, and navigate to link in same authenticated session.
+  3. **Magic Link / Stytch Authentication** (e.g. GroqCloud):
+     Extract `https://stytch.com/v1/magic_links/redirect?...`, navigate to complete session authentication.
+  4. **6-Digit OTP Verification** (e.g. OpenRouter reverification / FastRouter):
+     Extract PIN via `r"\b\d{6}\b"` from `content-plain` / `content-html` and type into `input[data-input-otp="true"]` or verification input.
+  5. **Clean Unescaping**:
+     Always run `html.unescape()` and strip tracking wrapper `google.com/url?q=...`.
+
 ---
 
 ## 5. Integrating New Apps into the Master Runner

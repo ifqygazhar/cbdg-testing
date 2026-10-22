@@ -66,3 +66,13 @@ akun-result-inferbase.txt
 akun-failed-inferbase.txt
 screenshots-inferbase/
 apikey-inferbase.txt
+state-openrouter.jsonl
+akun-result-openrouter.txt
+akun-failed-openrouter.txt
+screenshots-openrouter/
+apikey-openrouter.txt
+state-composite.jsonl
+akun-result-composite.txt
+akun-failed-composite.txt
+screenshots-composite/
+apikey-composite.txt

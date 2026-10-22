@@ -64,12 +64,21 @@ This reference documents the pattern for using temporary disposable email addres
 
 ---
 
-## 3. Supported Verification Patterns
+## 3. Supported Registration & Verification Patterns
+
+### Pattern 0: Direct Registration without Email Verification (e.g. Composite Lucidity)
+- **Flow**: Target site does NOT mandate email link or OTP confirmation. Registering with username, TempMail email, password, and solving Turnstile creates the session immediately.
+- **Action**:
+  1. Call `temp_mail.create_email(domain="ifqy.net")` to obtain valid disposable address.
+  2. Fill form (`#reg-username`, `#reg-email`, `#reg-password`, `#reg-confirm`).
+  3. Solve Cloudflare Turnstile via Camoufox mouse click (`resolve_turnstile_if_present`).
+  4. Submit form and wait for redirect directly to `/dashboard.html` or `/apikeys.html`.
+  5. **No inbox polling needed**. Proceed straight to API key creation.
 
 ### Pattern A: Direct Activation Link (e.g. TokenHarbor)
 - **Email Content**: Contains `<a href="https://tokenharbor.ai/verify-email?token=...">`
 - **Regex**: `r"https?://(?:www\.)?tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-\.%]+"`
-- **Action**: Navigate browser directly to the link. Verify dashboard renders.
+- **Action**: Poll inbox (`client.wait_for_verification_link`), navigate browser directly to the link, verify dashboard renders.
 
 ### Pattern B: Magic Link / Stytch Redirect (e.g. GroqCloud)
 - **Email Content**: Contains `<a href="https://stytch.com/v1/magic_links/redirect?public_token=...&token=...">`
@@ -77,51 +86,63 @@ This reference documents the pattern for using temporary disposable email addres
 - **Action**: Navigate browser to the magic link. Stytch handles authentication and redirects back to the console (`console.groq.com`).
 - **Post-Magic-Link Step**: Check for organization creation loading state or auto-redirect to `/home` before navigating to API keys.
 
-### Pattern C: 6-Digit OTP Verification Code
+### Pattern C: 6-Digit OTP Verification Code (e.g. OpenRouter Reverification, FastRouter)
 - **Email Content**: Contains a 6-digit confirmation PIN (e.g. `Your verification code is 492014`).
 - **Regex**: `r"\b\d{6}\b"`
-- **Action**: Locate the PIN input boxes or single numeric input, fill with `human_type`, and submit.
+- **Action**:
+  1. Poll inbox for latest mail matching sender or subject (`client.get_inbox(email)`).
+  2. Extract 6 digits using `re.search(r"\b(\d{6})\b", content)`.
+  3. Locate OTP input (`input[data-input-otp="true"]` or `input[autocomplete="one-time-code"]`).
+  4. Fill with `human_type` or single-char inputs and submit.
 
 ---
 
 ## 4. Reusable Client Usage
 
-### Bun / TypeScript
-```ts
-import { TempMailClient } from "@ifqy/google-oauth";
-
-const client = new TempMailClient({
-  apiKey: process.env.TEMPMAIL_API_KEY ?? "anjingmemekkontol",
-  defaultDomain: "ifqy.net",
-});
-
-const account = await client.createEmail();
-// 1. Submit email to signup form...
-// 2. Poll for verification / magic link
-const verifyUrl = await client.waitForVerificationLink(account.email, {
-  filterSender: "groq", // or "tokenharbor"
-  timeoutMs: 65_000,
-});
-await page.goto(verifyUrl);
-```
-
-### Python / Camoufox
+### Usecase 1: Direct Registration Only (Composite Lucidity)
 ```python
 from packages.camoufox_core import TempMailClient
 
-client = TempMailClient(default_domain="ifqy.net")
-account = client.create_email()
-email = account["email"]
+temp_mail = TempMailClient(
+    base_url="https://temp-postservice.verifwebsitepro.workers.dev",
+    default_domain="ifqy.net",
+    api_key="anjingmemekkontol",
+)
+acc = temp_mail.create_email(domain="ifqy.net")
+email = acc["email"]
 
-# 1. Submit email in Camoufox page...
-# 2. Poll for link
-verify_url = await client.wait_for_verification_link(
+# Directly fill email in signup form and solve Turnstile:
+await page.locator("#reg-email").fill(email)
+# Submit form -> redirects to /dashboard.html (no link polling needed)
+```
+
+### Usecase 2: Polling for Verification Link (TokenHarbor)
+```python
+verify_url = await temp_mail.wait_for_verification_link(
     email=email,
     filter_sender="tokenharbor",
     link_regex=r"https?://tokenharbor\.ai/verify-email\?token=[A-Za-z0-9_\-\.%]+",
     timeout_sec=65,
 )
 await page.goto(verify_url)
+```
+
+### Usecase 3: Polling for 6-Digit OTP Code (OpenRouter / FastRouter)
+```python
+import re
+
+async def poll_otp_code(temp_mail: TempMailClient, email: str, timeout_sec: int = 60) -> str:
+    start_t = time.time()
+    while time.time() - start_t < timeout_sec:
+        inbox = await asyncio.to_thread(temp_mail.get_inbox, email)
+        mails = inbox.get("mails", [])
+        for mail in mails:
+            body = (mail.get("content-plain") or "") + " " + (mail.get("content-html") or "")
+            m = re.search(r"\b(\d{6})\b", body)
+            if m:
+                return m.group(1)
+        await asyncio.sleep(3.0)
+    raise TimeoutError(f"OTP code did not arrive for {email} within {timeout_sec}s")
 ```
 
 ---

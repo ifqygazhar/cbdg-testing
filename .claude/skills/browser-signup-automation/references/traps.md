@@ -25,6 +25,51 @@ inconsistent hashes as bot/tampering signals, instantly rejecting the token exch
 
 ---
 
+## human_delay unexpected keyword argument 'pace'
+
+**Symptom.** Browser immediately force-closes or terminates mid-run with:
+`FAILED: human_delay() got an unexpected keyword argument 'pace'`
+
+**Cause.** Helper `human_delay` was invoked with `pace=args.pace`, but its function signature only accepted `(min_ms, max_ms)`.
+
+**Fix.**
+Define `human_delay` to accept optional `pace` and `**kwargs`:
+```python
+async def human_delay(min_ms: int = 400, max_ms: int = 1200, pace: Optional[str] = None, **kwargs):
+    multiplier = 0.6 if pace == "fast" else (1.5 if pace == "careful" else 1.0)
+    delay = random.uniform((min_ms * multiplier) / 1000.0, (max_ms * multiplier) / 1000.0)
+    await asyncio.sleep(delay)
+```
+
+---
+
+## Unawaited BrowserContext.close or mismatched safe_close_browser arguments
+
+**Symptom.** Python throws:
+`RuntimeWarning: coroutine 'BrowserContext.close' was never awaited` or
+`safe_close_browser(context, page)` fails or misinterprets `page` as `timeout_sec`.
+
+**Cause.** `safe_close_browser(browser)` expects a single browser target and its second argument is `timeout_sec: float`. Passing `(context, page)` passes the `page` object as `timeout_sec`, leaving `page.close()` uncalled and `context.close()` unawaited.
+
+**Fix.**
+In `finally:` block, explicitly close open pages and contexts:
+```python
+finally:
+    try:
+        if page and not page.is_closed():
+            await page.close()
+    except Exception:
+        pass
+    try:
+        if context:
+            await context.close()
+    except Exception:
+        pass
+```
+Do not call `safe_close_browser` with multiple positional arguments.
+
+---
+
 
 ## Forced headers break the site's own API
 

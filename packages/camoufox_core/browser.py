@@ -107,15 +107,18 @@ def get_vps_system_status() -> str:
     proc_count = len(get_descendant_pids())
     return f"RAM: {mem_str} | Child procs: {proc_count}"
 
-async def safe_close_browser(browser: Optional[Browser], timeout_sec: float = 6.0) -> None:
+async def safe_close_browser(target: Any, timeout_sec: float = 6.0) -> None:
     """
-    Safely closes a Playwright Browser instance with an explicit timeout
+    Safely closes a Playwright Browser or BrowserContext instance with an explicit timeout
     to prevent indefinite hanging if IPC or socket is deadlocked.
     """
-    if not browser:
+    if not target:
         return
     try:
-        await asyncio.wait_for(browser.close(), timeout=timeout_sec)
+        if hasattr(target, "close"):
+            res = target.close()
+            if asyncio.iscoroutine(res):
+                await asyncio.wait_for(res, timeout=timeout_sec)
     except Exception:
         pass
     finally:
@@ -327,8 +330,9 @@ async def launch_camoufox(
             return AsyncCamoufox(**launch_kwargs)
         raise
 
-async def human_delay(min_ms: int = 400, max_ms: int = 1200):
-    delay = random.uniform(min_ms / 1000.0, max_ms / 1000.0)
+async def human_delay(min_ms: int = 400, max_ms: int = 1200, pace: Optional[str] = None, **kwargs):
+    multiplier = 0.6 if pace == "fast" else (1.5 if pace == "careful" else 1.0)
+    delay = random.uniform((min_ms * multiplier) / 1000.0, (max_ms * multiplier) / 1000.0)
     await asyncio.sleep(delay)
 
 async def human_type(page: Page, selector: str, text: str, min_delay_ms: int = 50, max_delay_ms: int = 120, timeout: int = 30000):
