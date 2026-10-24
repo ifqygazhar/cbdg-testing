@@ -76,3 +76,8 @@ akun-result-composite.txt
 akun-failed-composite.txt
 screenshots-composite/
 apikey-composite.txt
+state-inferencedahl.jsonl
+akun-result-inferencedahl.txt
+akun-failed-inferencedahl.txt
+screenshots-inferencedahl/
+apikey-inferencedahl.txt

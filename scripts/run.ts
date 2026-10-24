@@ -58,6 +58,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "inferbase", label: "inferbase", hint: "daftar Inferbase (TempMail / Google OAuth) → API key ke apikey-inferbase.txt" },
     { value: "openrouter", label: "openrouter", hint: "daftar OpenRouter (TempMail / Google OAuth) → API key ke apikey-openrouter.txt" },
     { value: "composite", label: "composite", hint: "daftar Composite Lucidity (TempMail + Turnstile) → API key ke apikey-composite.txt" },
+    { value: "inferencedahl", label: "inferencedahl", hint: "daftar Inference Dahl Global (Auto Username + Allocate 100M) → API key ke apikey-inferencedahl.txt" },
   ]);
 
   if (IS_TOOL[app]) {
@@ -158,7 +159,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" || app === "openrouter" || app === "composite" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" || app === "openrouter" || app === "composite" || app === "inferencedahl" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;
@@ -362,6 +363,8 @@ async function askPlan(): Promise<RunPlan> {
     if (domain && domain.startsWith("temp.")) {
       domain = domain.slice(5);
     }
+    limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
+  } else if (app === "inferencedahl") {
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
   } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io" || app === "inferbase" || app === "openrouter") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
     const requireKey = app === "tokenharbor" && (gsuiteMode === "fetch_existing" || gsuiteMode === "create_new_key");

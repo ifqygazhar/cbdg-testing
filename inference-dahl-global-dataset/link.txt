@@ -1,0 +1,9 @@
+signup and sign in with random username from website : https://inference.dahl.global/
+
+simpan fingerprint ke akun-result-inferencedahl.txt dengan format fingerprint:apikey dan apikey simpan ke apikey-inferencedahl.txt setelah signup
+
+setelah signup berhasil otomatis menuju kesini : https://inference.dahl.global/account
+
+setelah di halaman ini https://inference.dahl.global/account selanjutnya klik tombol allocate terus nanti muncul popup modal klik tombol max lalu klik tombol allocate lagi
+
+jika sukses maka tanda nya element di bagian ini seperti ini ada active dan 100M : /home/azhar/Documents/project/cbdg/inference-dahl-global-dataset/allocate-modal-popup.html
