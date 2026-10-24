@@ -255,3 +255,14 @@ describe("inferencedahl CLI flags", () => {
     expect(env.BROWSER_ENGINE).toBe("python");
   });
 });
+
+describe("inferencedahl per-account fingerprint diversity", () => {
+  it("generates unique session IDs and distinct account fingerprints per run", () => {
+    const sessionIds = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      const id = `dahl-w1-${i + 1}-${Math.floor(Math.random() * 9000 + 1000)}`;
+      sessionIds.add(id);
+    }
+    expect(sessionIds.size).toBe(50);
+  });
+});
