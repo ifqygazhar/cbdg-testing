@@ -1009,6 +1009,7 @@ async def main():
                 logger.info(f"Progress: {success_count}/{count} accounts succeeded.")
 
             if success_count < count and args.delay > 0:
+                logger.info(f"Worker #{worker_id} cooling down for {args.delay}s before next account...")
                 await asyncio.sleep(args.delay)
 
     workers = [asyncio.create_task(dahl_worker(i + 1)) for i in range(worker_count)]
