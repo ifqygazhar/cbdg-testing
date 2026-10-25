@@ -83,7 +83,14 @@ interface CliConfig {
   limit?: number;
 }
 
-function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim" | "tokenharbor" | "llm7io"): string {
+function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim" | "tokenharbor" | "llm7io" | "inferencedahl"): string {
+  if (provider === "inferencedahl") {
+    if (existsSync(resolve(process.cwd(), "apikey-inferencedahl.txt"))) return "apikey-inferencedahl.txt";
+    if (existsSync(resolve(process.cwd(), "akun-result-inferencedahl.txt"))) return "akun-result-inferencedahl.txt";
+    if (existsSync(resolve(process.cwd(), "inference-dahl-global-dataset/apikey-inferencedahl.txt"))) return "inference-dahl-global-dataset/apikey-inferencedahl.txt";
+    if (existsSync(resolve(process.cwd(), "vps/apikey-inferencedahl.txt"))) return "vps/apikey-inferencedahl.txt";
+    return "apikey-inferencedahl.txt";
+  }
   if (provider === "llm7io") {
     if (existsSync(resolve(process.cwd(), "apikey-llm7io.txt"))) return "apikey-llm7io.txt";
     if (existsSync(resolve(process.cwd(), "akun-result-llm7io.txt"))) return "akun-result-llm7io.txt";
@@ -111,7 +118,9 @@ function resolveDefaultKeysFile(provider?: "fastrouter" | "crusoe" | "entrim" | 
     if (existsSync(resolve(process.cwd(), "apikey.txt"))) return "apikey.txt";
     return "apikey.txt";
   }
-  // Fallback umum: prioritaskan apikey-llm7io.txt jika ada, akun-result-tokenharbor.txt, apikey.txt, apikey-fastrouter.txt
+  // Fallback umum: prioritaskan apikey-inferencedahl.txt, apikey-llm7io.txt jika ada, akun-result-tokenharbor.txt, apikey.txt, apikey-fastrouter.txt
+  if (existsSync(resolve(process.cwd(), "apikey-inferencedahl.txt"))) return "apikey-inferencedahl.txt";
+  if (existsSync(resolve(process.cwd(), "akun-result-inferencedahl.txt"))) return "akun-result-inferencedahl.txt";
   if (existsSync(resolve(process.cwd(), "apikey-llm7io.txt"))) return "apikey-llm7io.txt";
   if (existsSync(resolve(process.cwd(), "akun-result-tokenharbor.txt"))) return "akun-result-tokenharbor.txt";
   if (existsSync(resolve(process.cwd(), "apikey.txt"))) return "apikey.txt";
@@ -169,7 +178,15 @@ function getCandidateKeysFiles(provider?: string): CandidateFile[] {
     }
   };
 
-  if (provider === "llm7io") {
+  if (provider === "inferencedahl") {
+    checkAndAdd("apikey-inferencedahl.txt", "apikey-inferencedahl.txt", "Daftar API key Inference Dahl");
+    checkAndAdd("akun-result-inferencedahl.txt", "akun-result-inferencedahl.txt", "Hasil pendaftaran Inference Dahl (username:key)");
+    checkAndAdd("akun-good-inferencedahl.txt", "akun-good-inferencedahl.txt", "Akun terverifikasi aktif");
+    checkAndAdd("akun-bad-inferencedahl.txt", "akun-bad-inferencedahl.txt", "Akun terindikasi gagal / invalid");
+    checkAndAdd("apikey-ratelimit-inferencedahl.txt", "apikey-ratelimit-inferencedahl.txt", "Key terkena Rate Limit");
+    checkAndAdd("inference-dahl-global-dataset/apikey-inferencedahl.txt", "inference-dahl-global-dataset/apikey-inferencedahl.txt", "Dataset Inference Dahl");
+    checkAndAdd("vps/apikey-inferencedahl.txt", "vps/apikey-inferencedahl.txt", "VPS dataset Inference Dahl");
+  } else if (provider === "llm7io") {
     checkAndAdd("apikey-llm7io.txt", "apikey-llm7io.txt", "Daftar API key LLM7.io");
     checkAndAdd("akun-result-llm7io.txt", "akun-result-llm7io.txt", "Hasil pendaftaran LLM7.io lengkap (email:password:key)");
     checkAndAdd("akun-bad-llm7io.txt", "akun-bad-llm7io.txt", "Akun terindikasi gagal / invalid");
@@ -199,6 +216,8 @@ function getCandidateKeysFiles(provider?: string): CandidateFile[] {
   }
 
   // File umum
+  checkAndAdd("apikey-inferencedahl.txt", "apikey-inferencedahl.txt", "Daftar API key Inference Dahl");
+  checkAndAdd("akun-result-inferencedahl.txt", "akun-result-inferencedahl.txt", "Hasil akun Inference Dahl");
   checkAndAdd("apikey-llm7io.txt", "apikey-llm7io.txt", "File apikey LLM7.io");
   checkAndAdd("apikey-unli.txt", "apikey-unli.txt", "Daftar API key unli");
   checkAndAdd("apikey-ratelimit.txt", "apikey-ratelimit.txt", "File key terkena Rate Limit");
@@ -223,6 +242,9 @@ function buildAccountLookupMap(): Map<string, AccountInfo> {
 
   // 1. Scan semua file akun teks potensial
   const candidateTextFiles = [
+    "akun-result-inferencedahl.txt",
+    "akun-good-inferencedahl.txt",
+    "apikey-inferencedahl.txt",
     "akun-result-llm7io.txt",
     "akun-good-llm7io.txt",
     "akun-result-tokenharbor.txt",
@@ -253,9 +275,17 @@ function buildAccountLookupMap(): Map<string, AccountInfo> {
           const email = parts[0].trim();
           const last = parts[parts.length - 1].trim();
           const pwd = parts.slice(1, parts.length - 1).join(":").trim();
-          if (last.startsWith("thk_") || last.startsWith("sk-") || last.length >= 25) {
+          if (last.startsWith("dahl_") || last.startsWith("thk_") || last.startsWith("sk-") || last.length >= 25) {
             if (!lookup.has(last)) {
               lookup.set(last, { email, password: pwd, source: relPath });
+            }
+          }
+        } else if (parts.length === 2) {
+          const user = parts[0].trim();
+          const last = parts[1].trim();
+          if (last.startsWith("dahl_") || last.startsWith("thk_") || last.startsWith("sk-") || last.length >= 25) {
+            if (!lookup.has(last)) {
+              lookup.set(last, { email: user, source: relPath });
             }
           }
         }
@@ -265,6 +295,7 @@ function buildAccountLookupMap(): Map<string, AccountInfo> {
 
   // 2. Scan file JSONL state (state.jsonl, state-tokenharbor.jsonl, dll)
   const candidateJsonlFiles = [
+    "state-inferencedahl.jsonl",
     "state-llm7io.jsonl",
     "state.jsonl",
     "state-tokenharbor.jsonl",
@@ -335,7 +366,7 @@ function printBanner() {
   console.log(`
 ${c.cyan("  ╔═══════════════════════════════════════════════════════════════════════════╗")}
 ${c.cyan("  ║")}  ${c.bold(c.white("⚡ MULTI-PROVIDER BULK API KEY INSPECTOR"))}   ${c.yellow("v2.4 (Interactive TUI)")} ${c.cyan("║")}
-${c.cyan("  ║")}  ${c.dim("Crusoe • FastRouter • TokenHarbor • Entrim • OpenAI • Groq • Direct")}     ${c.cyan("║")}
+${c.cyan("  ║")}  ${c.dim("Dahl • LLM7.io • TokenHarbor • Crusoe • FastRouter • Entrim • Groq")}      ${c.cyan("║")}
 ${c.cyan("  ╚═══════════════════════════════════════════════════════════════════════════╝")}
 `);
 }
@@ -481,7 +512,31 @@ function parseArguments(): Partial<CliConfig> {
     const arg = args[i];
     const next = args[i + 1];
 
-    if (arg === "--llm7io" || arg === "--llm7") {
+    if (arg === "--inferencedahl" || arg === "--dahl") {
+      config.baseUrl = "https://inference.dahl.global/v1";
+      if (!config.targetModel) config.targetModel = "deepseek-ai/DeepSeek-V4-Flash-0731";
+      config.mode = "chat";
+      if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("inferencedahl");
+      if (!config.outputValid) config.outputValid = "akun-good-inferencedahl.txt";
+      if (!config.outputBad) config.outputBad = "akun-bad-inferencedahl.txt";
+      if (!config.outputRateLimit) config.outputRateLimit = "apikey-ratelimit-inferencedahl.txt";
+    } else if (arg === "--dahl-glm") {
+      config.baseUrl = "https://inference.dahl.global/v1";
+      config.targetModel = "zai-org/GLM-5.3-Flash";
+      config.mode = "chat";
+      if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("inferencedahl");
+      if (!config.outputValid) config.outputValid = "akun-good-inferencedahl.txt";
+      if (!config.outputBad) config.outputBad = "akun-bad-inferencedahl.txt";
+      if (!config.outputRateLimit) config.outputRateLimit = "apikey-ratelimit-inferencedahl.txt";
+    } else if (arg === "--dahl-minimax") {
+      config.baseUrl = "https://inference.dahl.global/v1";
+      config.targetModel = "MiniMaxAI/MiniMax-M2.7";
+      config.mode = "chat";
+      if (!config.keysFile) config.keysFile = resolveDefaultKeysFile("inferencedahl");
+      if (!config.outputValid) config.outputValid = "akun-good-inferencedahl.txt";
+      if (!config.outputBad) config.outputBad = "akun-bad-inferencedahl.txt";
+      if (!config.outputRateLimit) config.outputRateLimit = "apikey-ratelimit-inferencedahl.txt";
+    } else if (arg === "--llm7io" || arg === "--llm7") {
       config.baseUrl = "https://api.llm7.io/v1";
       config.targetModel = "DeepSeek-V4.1-Flash";
       config.mode = "chat";
@@ -584,6 +639,9 @@ ${c.bold("PENGGUNAAN:")}
   bun run entrim_crusoe_key_checker_cli.ts [OPSI...]    ${c.dim("(Mode CLI Langsung)")}
 
 ${c.bold("OPSI:")}
+  --inferencedahl, --dahl  Preset Inference Dahl AI (https://inference.dahl.global/v1 • deepseek-ai/DeepSeek-V4-Flash-0731)
+  --dahl-glm               Preset Inference Dahl AI dengan model zai-org/GLM-5.3-Flash
+  --dahl-minimax           Preset Inference Dahl AI dengan model MiniMaxAI/MiniMax-M2.7
   --llm7io, --llm7         Preset LLM7.io AI (https://api.llm7.io/v1 • DeepSeek-V4.1-Flash)
   --tokenharbor, --th      Preset TokenHarbor AI (https://tokenharbor.ai/v1 • deepseek-v4.1-flash:free)
   --th-v41, --th-v4.1      Preset TokenHarbor AI dengan model deepseek-v4.1-flash:free
@@ -663,14 +721,14 @@ function parseLineToKeyEntry(line: string): KeyEntry | null {
     }
   }
 
-  // Deteksi format akun: email:password:apikey
+  // Deteksi format akun: email:password:apikey atau username:apikey
   if (cleanLine.includes(":")) {
     const parts = cleanLine.split(":");
     if (parts.length >= 3) {
       const first = parts[0].trim();
       const last = parts[parts.length - 1].trim();
       // Format email:password:apikey
-      if (first.includes("@") || last.startsWith("thk_") || last.startsWith("sk-") || last.length > 25) {
+      if (first.includes("@") || last.startsWith("dahl_") || last.startsWith("thk_") || last.startsWith("sk-") || last.length > 25) {
         const email = first;
         const key = last;
         const password = parts.slice(1, parts.length - 1).join(":");
@@ -679,6 +737,16 @@ function parseLineToKeyEntry(line: string): KeyEntry | null {
           rawLine: `${email}:${password}:${key}`,
           email,
           password,
+        };
+      }
+    } else if (parts.length === 2) {
+      const first = parts[0].trim();
+      const last = parts[1].trim();
+      if (last.startsWith("dahl_") || last.startsWith("thk_") || last.startsWith("sk-") || last.length > 25) {
+        return {
+          key: last,
+          rawLine: `${first}:${last}`,
+          email: first,
         };
       }
     }
@@ -729,14 +797,18 @@ async function verifyKey(
   const cleanBase = config.baseUrl.replace(/\/+$/, "");
   const startTime = performance.now();
   const isSkipModelsCheck =
+    cleanBase.includes("dahl") ||
     cleanBase.includes("fastrouter") ||
     cleanBase.includes("llm7") ||
     key.startsWith("sk-v1-") ||
+    key.startsWith("dahl_") ||
     ((cleanBase.includes("tokenharbor") || key.startsWith("thk_") || config.outputValid?.includes("tokenharbor")) && config.mode !== "models");
   const isPublicModelsEndpoint =
+    cleanBase.includes("dahl") ||
     cleanBase.includes("fastrouter") ||
     cleanBase.includes("llm7") ||
-    key.startsWith("sk-v1-");
+    key.startsWith("sk-v1-") ||
+    key.startsWith("dahl_");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
@@ -896,6 +968,9 @@ async function verifyKey(
 
     if (response.status === 429 || response.status === 402) {
       const errJson = (await response.json().catch(() => null)) as any;
+      const retryAfter = response.headers.get("retry-after");
+      const errCode = errJson?.error?.code ? ` [${errJson.error.code}]` : "";
+      const retrySuffix = retryAfter ? ` (Retry-After: ${retryAfter}s)` : "";
       const msg =
         errJson?.error?.message ||
         (Array.isArray(errJson?.errors) ? errJson.errors[0] : null) ||
@@ -906,7 +981,7 @@ async function verifyKey(
         status: "QUOTA",
         httpStatus: response.status,
         latencyMs,
-        message: msg,
+        message: `${msg}${errCode}${retrySuffix}`,
         proxyUsed: proxyUrl,
       };
     }
@@ -1283,6 +1358,11 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
   const rateLimited = results.filter(isRateLimitResult);
   const bad = results.filter((r) => r.status !== "VALID" && r.status !== "NEED_VERIF" && !isRateLimitResult(r));
 
+  const isDahl =
+    config.baseUrl.includes("dahl") ||
+    config.outputValid.includes("dahl") ||
+    config.keysFile.includes("dahl");
+
   const isTokenHarbor =
     config.baseUrl.includes("tokenharbor") ||
     config.outputValid.includes("tokenharbor") ||
@@ -1301,12 +1381,14 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
       `${c.green("✔")} ${c.bold(valid.length)} Akun/Key aktif (GOOD) disimpan ke: ${c.bold(c.cyan(config.outputValid))}`
     );
 
-    // Simpan juga file plain keys murni jika target adalah TokenHarbor / LLM7 atau ada format akun
+    // Simpan juga file plain keys murni jika target adalah Dahl / TokenHarbor / LLM7 atau ada format akun
     const hasAccountInfo = valid.some((r) => !!r.entry.email);
 
     if (hasAccountInfo && config.outputValid !== "valid_keys.txt") {
       const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
-      const plainKeyFile = isTokenHarbor
+      const plainKeyFile = isDahl
+        ? "apikey-good-inferencedahl.txt"
+        : isTokenHarbor
         ? "apikey-good-tokenharbor.txt"
         : isLlm7
         ? "apikey-good-llm7io.txt"
@@ -1314,6 +1396,12 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
       writeFileSync(plainKeyFile, plainKeys, "utf-8");
       console.log(
         `${c.green("✔")} ${c.bold(valid.length)} Plain API key valid juga disimpan ke: ${c.bold(c.cyan(plainKeyFile))}`
+      );
+    } else if (isDahl && config.outputValid !== "apikey-good-inferencedahl.txt") {
+      const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
+      writeFileSync("apikey-good-inferencedahl.txt", plainKeys, "utf-8");
+      console.log(
+        `${c.green("✔")} ${c.bold(valid.length)} Plain API key valid juga disimpan ke: ${c.bold(c.cyan("apikey-good-inferencedahl.txt"))}`
       );
     } else if (isTokenHarbor && config.outputValid !== "apikey-good-tokenharbor.txt") {
       const plainKeys = valid.map((r) => r.key).join("\n") + "\n";
@@ -1330,9 +1418,9 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
     }
   }
 
-  // 2. Simpan Rate Limited results (ke apikey-ratelimit.txt dan akun-ratelimit-tokenharbor.txt)
+  // 2. Simpan Rate Limited results
   if (rateLimited.length > 0) {
-    const rateLimitFile = config.outputRateLimit || "apikey-ratelimit.txt";
+    const rateLimitFile = config.outputRateLimit || (isDahl ? "apikey-ratelimit-inferencedahl.txt" : "apikey-ratelimit.txt");
     const plainRateKeys = rateLimited.map((r) => r.key).join("\n") + "\n";
     writeFileSync(rateLimitFile, plainRateKeys, "utf-8");
     console.log(
@@ -1341,7 +1429,9 @@ function saveOutputs(results: KeyCheckResult[], config: CliConfig) {
 
     const hasAccountInfo = rateLimited.some((r) => !!r.entry.email);
     if (hasAccountInfo) {
-      const rateLimitAccountFile = isTokenHarbor
+      const rateLimitAccountFile = isDahl
+        ? "akun-ratelimit-inferencedahl.txt"
+        : isTokenHarbor
         ? "akun-ratelimit-tokenharbor.txt"
         : "akun-ratelimit.txt";
       const accountLines = rateLimited.map((r) => r.entry.rawLine).join("\n") + "\n";
@@ -1419,20 +1509,38 @@ export async function main() {
     baseUrl: cliArgs.baseUrl || "https://api.inference.crusoecloud.com/v1",
     targetModel:
       cliArgs.targetModel ||
-      (cliArgs.baseUrl?.includes("tokenharbor")
+      (cliArgs.baseUrl?.includes("dahl")
+        ? "deepseek-ai/DeepSeek-V4-Flash-0731"
+        : cliArgs.baseUrl?.includes("tokenharbor")
         ? "deepseek-v4.1-flash:free"
         : "deepseek-ai/Deepseek-V4-Flash"),
     mode:
       cliArgs.mode ||
-      (cliArgs.baseUrl?.includes("tokenharbor") ? "chat" : "smart"),
+      (cliArgs.baseUrl?.includes("dahl") || cliArgs.baseUrl?.includes("tokenharbor") ? "chat" : "smart"),
     concurrency: cliArgs.concurrency || 5,
     timeoutMs: cliArgs.timeoutMs || 12000,
     keysFile: cliArgs.keysFile || defaultKeys,
     proxiesFile: cliArgs.proxiesFile !== undefined ? cliArgs.proxiesFile : "",
     proxyList: [],
-    outputValid: cliArgs.outputValid || (cliArgs.baseUrl?.includes("tokenharbor") ? "akun-good-tokenharbor.txt" : "valid_keys.txt"),
-    outputBad: cliArgs.outputBad || (cliArgs.baseUrl?.includes("tokenharbor") ? "akun-bad-tokenharbor.txt" : "bad_keys.txt"),
-    outputRateLimit: cliArgs.outputRateLimit || "apikey-ratelimit.txt",
+    outputValid:
+      cliArgs.outputValid ||
+      (cliArgs.baseUrl?.includes("dahl")
+        ? "akun-good-inferencedahl.txt"
+        : cliArgs.baseUrl?.includes("tokenharbor")
+        ? "akun-good-tokenharbor.txt"
+        : "valid_keys.txt"),
+    outputBad:
+      cliArgs.outputBad ||
+      (cliArgs.baseUrl?.includes("dahl")
+        ? "akun-bad-inferencedahl.txt"
+        : cliArgs.baseUrl?.includes("tokenharbor")
+        ? "akun-bad-tokenharbor.txt"
+        : "bad_keys.txt"),
+    outputRateLimit:
+      cliArgs.outputRateLimit ||
+      (cliArgs.baseUrl?.includes("dahl")
+        ? "apikey-ratelimit-inferencedahl.txt"
+        : "apikey-ratelimit.txt"),
     outputCsv: cliArgs.outputCsv || "check_results.csv",
     limit: cliArgs.limit,
   };
@@ -1457,6 +1565,20 @@ export async function main() {
     const providerChoice = await selectMenu<ProviderPreset | "custom">(
       "Pilih Target Provider API",
       [
+        {
+          label: "Inference Dahl AI",
+          badge: c.bgGreen("DeepSeek V4 Flash"),
+          desc: "https://inference.dahl.global/v1 • deepseek-ai/DeepSeek-V4-Flash-0731 / GLM-5.3 • Max 15 Concurrency",
+          value: {
+            url: "https://inference.dahl.global/v1",
+            model: "deepseek-ai/DeepSeek-V4-Flash-0731",
+            mode: "chat",
+            defaultKeysFile: resolveDefaultKeysFile("inferencedahl"),
+            outputValid: "akun-good-inferencedahl.txt",
+            outputBad: "akun-bad-inferencedahl.txt",
+            outputRateLimit: "apikey-ratelimit-inferencedahl.txt",
+          },
+        },
         {
           label: "LLM7.io AI",
           badge: c.bgGreen("DeepSeek V4.1"),
@@ -1573,6 +1695,49 @@ export async function main() {
         config.outputRateLimit = providerChoice.outputRateLimit;
       }
 
+      // Khusus Inference Dahl: Sub-menu interaktif untuk memilih model target
+      if (providerChoice.url.includes("dahl") && !cliArgs.targetModel) {
+        const modelChoice = await selectMenu<string>(
+          "Pilih Model Inference Dahl untuk Diuji",
+          [
+            {
+              label: "deepseek-ai/DeepSeek-V4-Flash-0731",
+              badge: c.bgGreen("V4 Flash (Rekomendasi)"),
+              desc: "DeepSeek V4 Flash 0731 - Cepat & responsif",
+              value: "deepseek-ai/DeepSeek-V4-Flash-0731",
+            },
+            {
+              label: "zai-org/GLM-5.3-Flash",
+              badge: c.bgCyan("GLM-5.3 Flash"),
+              desc: "Zhipu AI GLM-5.3 Flash",
+              value: "zai-org/GLM-5.3-Flash",
+            },
+            {
+              label: "MiniMaxAI/MiniMax-M2.7",
+              badge: c.bgPurple("MiniMax M2.7"),
+              desc: "MiniMax M2.7 Reasoning Model",
+              value: "MiniMaxAI/MiniMax-M2.7",
+            },
+            {
+              label: "Model Kustom (Ketik Manual)",
+              badge: c.bgYellow("Custom"),
+              desc: "Ketik sendiri ID model yang tersedia di Inference Dahl",
+              value: "custom",
+            },
+          ],
+          0
+        );
+
+        if (modelChoice === "custom") {
+          config.targetModel = await promptInput(
+            "Masukkan ID Model Inference Dahl Target Ping",
+            "deepseek-ai/DeepSeek-V4-Flash-0731"
+          );
+        } else {
+          config.targetModel = modelChoice;
+        }
+      }
+
       // Khusus TokenHarbor: Sub-menu interaktif untuk memilih model target
       if (providerChoice.url.includes("tokenharbor") && !cliArgs.targetModel) {
         const modelChoice = await selectMenu<string>(
@@ -1613,7 +1778,9 @@ export async function main() {
 
     // 1b. Pilih File Sumber API Key / Akun Target (jika tidak ditentukan via flag --keys)
     if (!cliArgs.keysFile) {
-      const providerKey = config.baseUrl.includes("llm7")
+      const providerKey = config.baseUrl.includes("dahl")
+        ? "inferencedahl"
+        : config.baseUrl.includes("llm7")
         ? "llm7io"
         : config.baseUrl.includes("tokenharbor")
         ? "tokenharbor"
@@ -1659,7 +1826,7 @@ export async function main() {
     }
 
     // 2. Pilih Mode Uji
-    const defaultModeIndex = (config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7") || config.baseUrl.includes("tokenharbor")) ? 1 : 0;
+    const defaultModeIndex = (config.baseUrl.includes("dahl") || config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7") || config.baseUrl.includes("tokenharbor")) ? 1 : 0;
     config.mode = await selectMenu<"smart" | "chat" | "models">(
       "Pilih Metode Pengujian",
       [
@@ -1671,13 +1838,13 @@ export async function main() {
         },
         {
           label: "Direct Chat Ping (/chat/completions)",
-          badge: (config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7") || config.baseUrl.includes("tokenharbor")) ? c.bgGreen("Rekomendasi Uji Model") : undefined,
+          badge: (config.baseUrl.includes("dahl") || config.baseUrl.includes("fastrouter") || config.baseUrl.includes("llm7") || config.baseUrl.includes("tokenharbor")) ? c.bgGreen("Rekomendasi Uji Model") : undefined,
           desc: "Kirim pesan 1-kata untuk verifikasi inferensi live secara langsung dengan model pilihan",
           value: "chat",
         },
         {
           label: "Quick Auth Saja (/models)",
-          desc: "Hanya cek validitas token tanpa mengonsumsi kuota inferensi (tidak untuk FastRouter & LLM7.io)",
+          desc: "Hanya cek validitas token tanpa mengonsumsi kuota inferensi (tidak untuk Dahl, FastRouter & LLM7.io)",
           value: "models",
         },
       ],

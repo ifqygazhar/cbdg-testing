@@ -81,3 +81,8 @@ akun-result-inferencedahl.txt
 akun-failed-inferencedahl.txt
 screenshots-inferencedahl/
 apikey-inferencedahl.txt
+akun-bad-inferencedahl.txt
+akun-good-inferencedahl.txt
+apikey-good-inferencedahl.txt
+apikey-ratelimit-inferencedahl.txt
+akun-ratelimit-inferencedahl.txt
