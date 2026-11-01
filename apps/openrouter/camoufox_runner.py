@@ -701,7 +701,7 @@ async def run_openrouter_single(
 
                     # Cloudflare Turnstile bot check
                     logger.info("checking for Cloudflare Turnstile on register...")
-                    turnstile_solved = await resolve_turnstile_if_present(page, logger)
+                    turnstile_solved = await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
                     if turnstile_solved:
                         logger.info("✅ Cloudflare Turnstile resolved!")
                         await human_delay(1000, 2000)
@@ -714,7 +714,7 @@ async def run_openrouter_single(
                     await human_delay(2500, 4000)
 
                     # Turnstile check after submit if challenged
-                    await resolve_turnstile_if_present(page, logger)
+                    await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
 
                     # Wait for verification email link from TempMail
                     logger.info(f"waiting for Clerk verification email on {email}...")
@@ -741,7 +741,7 @@ async def run_openrouter_single(
                         cur_u = page.url or ""
                         if any(target in cur_u for target in ["/onboarding", "/workspaces", "/dashboard", "/selection"]):
                             break
-                        await resolve_turnstile_if_present(page, logger)
+                        await resolve_turnstile_if_present(page, timeout_sec=20, logger=logger)
                         await asyncio.sleep(1)
 
             # ── Complete Onboarding ──────────────────────────────────────────

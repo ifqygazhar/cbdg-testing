@@ -279,7 +279,7 @@ describe("seeds + warnings", () => {
     expect(w.join(" ")).toContain("0 detik");
   });
   it("proxy-capable list is exactly the apps that read the proxy file", () => {
-    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter", "composite", "inferencedahl"]);
+    expect(PROXY_CAPABLE).toEqual(["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter", "composite", "inferencedahl", "zromoonmath"]);
   });
 
   it("getRemainingAccountsForApp differentiates ALREADY_REGISTERED based on requireApiKey", () => {
@@ -368,6 +368,31 @@ describe("key-dedupe as a menu action", () => {
   it("takes no run-shaping flags", () => {
     expect(buildArgs(plan)).toEqual([]);
     expect(commandLine(plan)).toBe("bun run key-dedupe");
+  });
+  it("passes target and format flags when set", () => {
+    const withFlags: RunPlan = {
+      ...plan,
+      keyDedupeTarget: "all",
+      keyFormatStyle: "plain",
+      keyDedupeStrategy: "exact",
+      keyDedupeBackup: false,
+    };
+    expect(buildArgs(withFlags)).toEqual(["--all", "--format", "plain", "--strategy", "exact", "--no-backup"]);
+  });
+  it("passes provider flag when provider chosen", () => {
+    const withProvider: RunPlan = {
+      ...plan,
+      keyDedupeTarget: "inferencedahl",
+      keyFormatStyle: "account",
+    };
+    expect(buildArgs(withProvider)).toEqual(["--inferencedahl", "--format", "account"]);
+  });
+  it("passes file flag when custom file chosen", () => {
+    const withFile: RunPlan = {
+      ...plan,
+      keyDedupeTarget: "my-keys.txt",
+    };
+    expect(buildArgs(withFile)).toEqual(["-f", "my-keys.txt"]);
   });
   it("is flagged as a tool, not an account run", () => {
     expect(IS_TOOL["key-dedupe"]).toBe(true);

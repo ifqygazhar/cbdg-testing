@@ -514,6 +514,12 @@ async def resolve_turnstile_if_present(
     Detects and clicks the Cloudflare Turnstile CAPTCHA checkbox if present.
     Safely targets only the checkbox square and avoids clicking help / troubleshooting links.
     """
+    # Defensive guard in case logger was accidentally passed as second positional argument
+    if not isinstance(timeout_sec, (int, float)):
+        if isinstance(timeout_sec, Logger) or hasattr(timeout_sec, "info"):
+            logger = timeout_sec
+        timeout_sec = 25
+
     start_time = time.time()
     click_attempts = 0
 

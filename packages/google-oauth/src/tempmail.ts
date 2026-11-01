@@ -177,7 +177,7 @@ export class TempMailClient {
         for (const mail of mails) {
           const senderMatches = !filterSender || mail.sender.toLowerCase().includes(filterSender);
           if (senderMatches) {
-            const body = `${mail["content-plain"] ?? ""} ${mail["content-html"] ?? ""}`;
+            const body = `${mail.subject ?? ""} ${mail["content-plain"] ?? ""} ${mail["content-html"] ?? ""}`;
             // 1. Try matching bold 6 digits inside <b> tags in html (e.g. Clerk / FastRouter templates)
             const mBold = body.match(/<b>\s*(\d{6})\s*<\/b>/);
             if (mBold && mBold[1]) return mBold[1];

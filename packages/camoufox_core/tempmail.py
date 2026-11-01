@@ -173,7 +173,8 @@ class TempMailClient:
 
                     for mail in mails:
                         sender = mail.get("sender", "").lower()
-                        if not filter_sender_lower or filter_sender_lower in sender:
+                        subject = mail.get("subject", "").lower()
+                        if not filter_sender_lower or (filter_sender_lower in sender or filter_sender_lower in subject):
                             clean_link = extract_link_from_mail(
                                 mail,
                                 pattern=link_pattern,
@@ -223,8 +224,9 @@ class TempMailClient:
                         logger.info(f"📬 TempMail: {len(mails)} message(s) in inbox for {clean_address}")
                     for mail in mails:
                         sender = mail.get("sender", "").lower()
-                        if not filter_sender_lower or filter_sender_lower in sender:
-                            body = f"{mail.get('content-plain', '')} {mail.get('content-html', '')}"
+                        subject = mail.get("subject", "").lower()
+                        if not filter_sender_lower or (filter_sender_lower in sender or filter_sender_lower in subject):
+                            body = f"{mail.get('subject', '')} {mail.get('content-plain', '')} {mail.get('content-html', '')}"
                             # 1. Match bold 6 digits in html
                             m_bold = re.search(r"<b>\s*(\d{6})\s*</b>", body)
                             if m_bold:

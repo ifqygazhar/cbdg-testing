@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseLineToKeyRecord, dedupeLines, maskKey } from "./apikey-dedupe.js";
+import { parseLineToKeyRecord, dedupeLines, maskKey, formatKeyRecord } from "./apikey-dedupe.js";
 
 describe("parseLineToKeyRecord", () => {
   it("parses plain API keys", () => {
@@ -7,6 +7,21 @@ describe("parseLineToKeyRecord", () => {
     expect(res).not.toBeNull();
     expect(res?.key).toBe("inf_eFwqF9i6iyUHYigvFFpKL-eNzZWX6zxGDTAjpZ0RH7-d85J9");
     expect(res?.hasCredentials).toBe(false);
+  });
+
+  it("parses dahl keys without credentials", () => {
+    const res = parseLineToKeyRecord("dahl_LCX3vddhv4juRrBz79GGir4APeLi5mAhT");
+    expect(res).not.toBeNull();
+    expect(res?.key).toBe("dahl_LCX3vddhv4juRrBz79GGir4APeLi5mAhT");
+    expect(res?.hasCredentials).toBe(false);
+  });
+
+  it("parses dahl username:key format", () => {
+    const res = parseLineToKeyRecord("9b4cf1b375a237164290f6f3aa0dad95:dahl_LCX3vddhv4juRrBz79GGir4APeLi5mAhT");
+    expect(res).not.toBeNull();
+    expect(res?.key).toBe("dahl_LCX3vddhv4juRrBz79GGir4APeLi5mAhT");
+    expect(res?.email).toBe("9b4cf1b375a237164290f6f3aa0dad95");
+    expect(res?.hasCredentials).toBe(true);
   });
 
   it("parses account line with email:password:apikey", () => {
@@ -97,6 +112,53 @@ describe("dedupeLines", () => {
     expect(res.cleanLines).toEqual(["inf_key1"]);
     expect(res.duplicateCount).toBe(1);
     expect(res.emptyOrCommentLines).toBe(4);
+  });
+
+  it("formats lines as plain keys when formatStyle is plain", () => {
+    const raw = [
+      "user1@test.com:pass123:dahl_key1",
+      "dahl_key2",
+      "user1@test.com:pass123:dahl_key1",
+    ];
+    const res = dedupeLines(raw, "smart", "plain");
+    expect(res.cleanLines).toEqual(["dahl_key1", "dahl_key2"]);
+    expect(res.duplicateCount).toBe(1);
+  });
+
+  it("formats lines as account format when formatStyle is account", () => {
+    const raw = [
+      "dahl_key1",
+      "user1@test.com:pass123:dahl_key1",
+      "user2@test.com:pass456:dahl_key2",
+    ];
+    const res = dedupeLines(raw, "smart", "account");
+    expect(res.cleanLines).toEqual([
+      "user1@test.com:pass123:dahl_key1",
+      "user2@test.com:pass456:dahl_key2",
+    ]);
+    expect(res.duplicateCount).toBe(1);
+  });
+});
+
+describe("formatKeyRecord", () => {
+  const rec = {
+    key: "sk-12345",
+    rawLine: "user@test.com:pass1:sk-12345",
+    email: "user@test.com",
+    password: "pass1",
+    hasCredentials: true,
+  };
+
+  it("formats as plain key", () => {
+    expect(formatKeyRecord(rec, "plain")).toBe("sk-12345");
+  });
+
+  it("formats as account string", () => {
+    expect(formatKeyRecord(rec, "account")).toBe("user@test.com:pass1:sk-12345");
+  });
+
+  it("keeps rawLine in smart mode", () => {
+    expect(formatKeyRecord(rec, "smart")).toBe("user@test.com:pass1:sk-12345");
   });
 });
 

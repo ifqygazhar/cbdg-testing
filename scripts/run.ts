@@ -48,7 +48,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "webshare", label: "webshare", hint: "daftar via Google → panen proxy gratis ke proxy.txt" },
     { value: "proxy-check", label: "cek proxy", hint: "proxy.txt → uji hidup/mati / format & dedupe unik" },
     { value: "key-checker", label: "cek apikey", hint: "uji status valid / kuota / rate limit API key berbagai provider" },
-    { value: "key-dedupe", label: "dedupe apikey", hint: "hapus duplikat API key TokenHarbor, Inferbase, GroqCloud, dll." },
+    { value: "key-dedupe", label: "format & dedupe apikey", hint: "bersihkan duplikat / format ulang (plain/akun) API key semua provider" },
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
     { value: "fastrouter", label: "fastrouter", hint: "daftar FastRouter → kredit $1 + API key ke apikey-fastrouter" },
     { value: "cbdg", label: "cbdg", hint: "daftar CodeBuddy → kredit new-user (+ VCC opsional)" },
@@ -59,10 +59,107 @@ async function askPlan(): Promise<RunPlan> {
     { value: "openrouter", label: "openrouter", hint: "daftar OpenRouter (TempMail / Google OAuth) → API key ke apikey-openrouter.txt" },
     { value: "composite", label: "composite", hint: "daftar Composite Lucidity (TempMail + Turnstile) → API key ke apikey-composite.txt" },
     { value: "inferencedahl", label: "inferencedahl", hint: "daftar Inference Dahl Global (Auto Username + Allocate 100M) → API key ke apikey-inferencedahl.txt" },
+    { value: "zromoonmath", label: "zromoonmath", hint: "daftar Zro MoonMath (TempMail / Google OAuth) → API key ke apikey-zro.txt" },
   ]);
 
   if (IS_TOOL[app]) {
-    if (app === "key-checker" || app === "key-dedupe") {
+    if (app === "key-dedupe") {
+      const dedupeAction = await select<"dedupe" | "interactive">("Pilih aksi untuk pembersih API key:", [
+        {
+          value: "dedupe",
+          label: "Format & Hapus Duplikat Cepat (Quick Clean & Format)",
+          hint: "pilih target provider/file, format output, dan bersihkan duplikat secara langsung",
+        },
+        {
+          value: "interactive",
+          label: "Buka Menu Interaktif Penuh (Interactive Suite)",
+          hint: "jalankan TUI mandiri dengan ringkasan statistik duplikasi mendalam per file",
+        },
+      ]);
+
+      if (dedupeAction === "interactive") {
+        return {
+          app,
+          pace: "human",
+          headless: false,
+          retryFailed: false,
+          dryRun: false,
+          delaySec: 0,
+          workers: 1,
+        };
+      }
+
+      const targetChoice = await select<string>("Pilih target file API key yang ingin diformat & dibersihkan:", [
+        { value: "all", label: "🌟 Semua File Sekaligus (Workspace-wide)", hint: "bersihkan seluruh file API key di proyek" },
+        { value: "inferencedahl", label: "Inference Dahl", hint: "apikey-inferencedahl.txt, akun-result, dataset" },
+        { value: "tokenharbor", label: "TokenHarbor", hint: "apikey-tokenharbor.txt, apikey-unli.txt, good, ratelimit, dll." },
+        { value: "llm7io", label: "LLM7.io", hint: "apikey-llm7io.txt, apikey-good-llm7io.txt, vps" },
+        { value: "inferbase", label: "Inferbase", hint: "apikey-inferbase.txt, dataset" },
+        { value: "groqcloud", label: "GroqCloud", hint: "apikey-groqcloud.txt, dataset" },
+        { value: "fastrouter", label: "FastRouter", hint: "apikey-fastrouter.txt, dataset" },
+        { value: "crusoe", label: "Crusoe Cloud", hint: "apikey.txt, keys.txt" },
+        { value: "custom", label: "✏️ Ketik Path File Kustom...", hint: "masukkan path file spesifik secara manual" },
+      ]);
+
+      let finalTarget = targetChoice;
+      if (targetChoice === "custom") {
+        finalTarget = await askText("Masukkan path file API key:", "apikey-inferencedahl.txt");
+      }
+
+      const formatStyle = await select<"smart" | "plain" | "account">("Format penulisan output API key?", [
+        {
+          value: "smart",
+          label: "Format Asli Bersih (Smart / Raw - Default)",
+          hint: "pertahankan kredensial akun jika ada, hapus whitespace & duplikat",
+        },
+        {
+          value: "plain",
+          label: "Hanya Plain Key Murni (Ekstrak Key Saja)",
+          hint: "ekstrak hanya string API key per baris (buang email/pass/json)",
+        },
+        {
+          value: "account",
+          label: "Format Akun Standar (email:password:key / user:key)",
+          hint: "seragamkan baris yang memiliki data akun ke format email:password:key",
+        },
+      ]);
+
+      const strategy = await select<"smart" | "first" | "exact">("Strategi deduplikasi?", [
+        {
+          value: "smart",
+          label: "Smart (Prioritaskan format lengkap / akun)",
+          hint: "jika ada baris plain dan baris akun untuk key yang sama, simpan baris akun",
+        },
+        {
+          value: "first",
+          label: "First-Seen (Pertahankan baris pertama)",
+          hint: "pertahankan kemunculan baris pertama yang ditemukan, buang setelahnya",
+        },
+        {
+          value: "exact",
+          label: "Exact Line (Sama persis)",
+          hint: "hanya buang baris yang 100% sama persis kata demi kata",
+        },
+      ]);
+
+      const doBackup = await confirm("Buat file cadangan backup (.bak) sebelum overwrite?", true);
+
+      return {
+        app,
+        pace: "human",
+        headless: false,
+        retryFailed: false,
+        dryRun: false,
+        delaySec: 0,
+        workers: 1,
+        keyDedupeTarget: finalTarget,
+        keyFormatStyle: formatStyle,
+        keyDedupeStrategy: strategy,
+        keyDedupeBackup: doBackup,
+      };
+    }
+
+    if (app === "key-checker") {
       return {
         app,
         pace: "human",
@@ -159,7 +256,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" || app === "openrouter" || app === "composite" || app === "inferencedahl" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" || app === "openrouter" || app === "composite" || app === "inferencedahl" || app === "zromoonmath" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;
@@ -260,9 +357,9 @@ async function askPlan(): Promise<RunPlan> {
   let authMethod: "google" | "tempmail" | undefined;
   if (app === "composite") {
     authMethod = "tempmail";
-  } else if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io" || app === "inferbase" || app === "openrouter")) {
+  } else if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath")) {
     authMethod = await select<"tempmail" | "google">(
-      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : app === "inferbase" ? "Inferbase" : app === "openrouter" ? "OpenRouter" : "FastRouter"}?`,
+      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : app === "inferbase" ? "Inferbase" : app === "openrouter" ? "OpenRouter" : app === "zromoonmath" ? "Zro MoonMath" : "FastRouter"}?`,
       [
         {
           value: "google",
@@ -275,7 +372,7 @@ async function askPlan(): Promise<RunPlan> {
           hint: "otomatis buat email & verif link / OTP",
         },
       ],
-      app === "inferbase" || app === "openrouter" ? 1 : (seeds.accounts > 0 ? 0 : 1),
+      app === "inferbase" || app === "openrouter" || app === "zromoonmath" ? 1 : (seeds.accounts > 0 ? 0 : 1),
     );
   }
 
@@ -338,7 +435,7 @@ async function askPlan(): Promise<RunPlan> {
       defaultLimit,
       " akun",
     );
-  } else if (app === "groqcloud" || app === "composite" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io" || app === "inferbase" || app === "openrouter") && authMethod === "tempmail")) {
+  } else if (app === "groqcloud" || app === "composite" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath") && authMethod === "tempmail")) {
     domain = await select<string>(
       app === "llm7io"
         ? "Domain TempMail? (Catatan: LLM7.io memblokir ifqy.net, meongtopup.my.id, huzt.my.id)"
@@ -366,7 +463,7 @@ async function askPlan(): Promise<RunPlan> {
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
   } else if (app === "inferencedahl") {
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
-  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io" || app === "inferbase" || app === "openrouter") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
+  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
     const requireKey = app === "tokenharbor" && (gsuiteMode === "fetch_existing" || gsuiteMode === "create_new_key");
     const rem = getRemainingAccountsForApp(app, undefined, requireKey);
     if (rem.completed > 0) {
@@ -401,13 +498,35 @@ async function askPlan(): Promise<RunPlan> {
 function review(plan: RunPlan): void {
   const seeds = readSeeds();
   if (IS_TOOL[plan.app]) {
-    console.log(`
-${ui.bold("Rencana")}
-  ${ui.dim("app".padEnd(8))} ${plan.app}`);
+    const toolRows: Array<[string, string]> = [["app", plan.app]];
+    if (plan.app === "key-dedupe") {
+      if (plan.keyDedupeTarget) {
+        toolRows.push(["target", plan.keyDedupeTarget === "all" ? "semua file API key" : plan.keyDedupeTarget]);
+      }
+      if (plan.keyFormatStyle) {
+        toolRows.push(["format", plan.keyFormatStyle === "plain" ? "plain API key murni" : plan.keyFormatStyle === "account" ? "format akun lengkap" : "asli bersih (smart)"]);
+      }
+      if (plan.keyDedupeStrategy) {
+        toolRows.push(["strategi", plan.keyDedupeStrategy]);
+      }
+      if (plan.keyDedupeBackup !== undefined) {
+        toolRows.push(["backup", plan.keyDedupeBackup ? "buat .bak" : "tanpa backup"]);
+      }
+    } else if (plan.app === "proxy-check") {
+      if (plan.proxyDedupe) {
+        toolRows.push(["aksi", "format & dedupe"]);
+        toolRows.push(["target", plan.proxyDedupeTarget || "proxy.txt"]);
+        toolRows.push(["format", plan.proxyFormatStyle || "raw"]);
+      } else {
+        toolRows.push(["target", plan.proxyTarget || "umum (ipv4.webshare.io)"]);
+        toolRows.push(["mode", plan.proxyAppend ? "append" : "tulis baru"]);
+      }
+    }
+    console.log(`\n${ui.bold("Rencana")}`);
+    for (const [k, v] of toolRows) console.log(`  ${ui.dim(k.padEnd(8))} ${v}`);
     const toolWarnings = warningsFor(plan, seeds);
     for (const w of toolWarnings) console.log(`  ${ui.yellow("!")} ${w}`);
-    console.log(`
-${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
+    console.log(`\n${ui.dim("perintah:")} ${ui.cyan(commandLine(plan))}`);
     return;
   }
   const rows: Array<[string, string]> = [

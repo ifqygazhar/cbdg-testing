@@ -87,10 +87,64 @@ export const KNOWN_PROVIDERS: ProviderPreset[] = [
   {
     id: "llm7io",
     name: "LLM7.io",
-    hint: "apikey-llm7io.txt, vps/apikey-llm7io.txt",
+    hint: "apikey-llm7io.txt, apikey-good-llm7io.txt, vps/apikey-llm7io.txt",
     files: [
       "apikey-llm7io.txt",
+      "apikey-good-llm7io.txt",
+      "akun-result-llm7io.txt",
       "vps/apikey-llm7io.txt",
+    ],
+  },
+  {
+    id: "inferencedahl",
+    name: "Inference Dahl",
+    hint: "apikey-inferencedahl.txt, akun-result-inferencedahl.txt, dataset",
+    files: [
+      "apikey-inferencedahl.txt",
+      "apikey-good-inferencedahl.txt",
+      "akun-result-inferencedahl.txt",
+      "akun-good-inferencedahl.txt",
+      "apikey-ratelimit-inferencedahl.txt",
+      "vps/apikey-inferencedahl.txt",
+      "inference-dahl-global-dataset/apikey-inferencedahl.txt",
+    ],
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    hint: "apikey-openrouter.txt, dataset",
+    files: [
+      "apikey-openrouter.txt",
+      "akun-result-openrouter.txt",
+      "openrouter-dataset/apikey-openrouter.txt",
+    ],
+  },
+  {
+    id: "composite",
+    name: "Composite Lucidity",
+    hint: "apikey-composite.txt",
+    files: [
+      "apikey-composite.txt",
+      "akun-result-composite.txt",
+    ],
+  },
+  {
+    id: "cbdg",
+    name: "CodeBuddy (CBDG)",
+    hint: "apikey-cbdg.txt, akun-result.txt",
+    files: [
+      "apikey-cbdg.txt",
+      "akun-result.txt",
+    ],
+  },
+  {
+    id: "zromoonmath",
+    name: "Zro MoonMath",
+    hint: "apikey-zro.txt, dataset",
+    files: [
+      "apikey-zro.txt",
+      "akun-result-zro.txt",
+      "zromoonshotai-dataset/apikey-zro.txt",
     ],
   },
   {
@@ -144,13 +198,21 @@ export function parseLineToKeyRecord(line: string): KeyRecord | null {
     }
   }
 
-  // 3. Colon-delimited formats (e.g. email:password:apikey or email:apikey)
+  // 3. Colon-delimited formats (e.g. email:password:apikey, email:apikey, or username:apikey)
   if (clean.includes(":")) {
     const parts = clean.split(":");
     if (parts.length >= 3) {
       const first = parts[0].trim();
       const last = parts[parts.length - 1].trim();
-      if (first.includes("@") || last.startsWith("thk_") || last.startsWith("inf_") || last.startsWith("gsk_") || last.startsWith("sk-") || last.length >= 20) {
+      if (
+        first.includes("@") ||
+        last.startsWith("dahl_") ||
+        last.startsWith("thk_") ||
+        last.startsWith("inf_") ||
+        last.startsWith("gsk_") ||
+        last.startsWith("sk-") ||
+        last.length >= 20
+      ) {
         return {
           key: last,
           rawLine: clean,
@@ -162,7 +224,15 @@ export function parseLineToKeyRecord(line: string): KeyRecord | null {
     } else if (parts.length === 2) {
       const first = parts[0].trim();
       const second = parts[1].trim();
-      if (first.includes("@")) {
+      if (
+        first.includes("@") ||
+        second.startsWith("dahl_") ||
+        second.startsWith("thk_") ||
+        second.startsWith("inf_") ||
+        second.startsWith("gsk_") ||
+        second.startsWith("sk-") ||
+        second.length >= 20
+      ) {
         return {
           key: second,
           rawLine: clean,
@@ -182,6 +252,31 @@ export function parseLineToKeyRecord(line: string): KeyRecord | null {
 }
 
 /**
+ * Supported output formatting styles.
+ */
+export type FormatStyle = "smart" | "plain" | "account";
+
+/**
+ * Formats a KeyRecord into the target format string.
+ */
+export function formatKeyRecord(record: KeyRecord, formatStyle: FormatStyle = "smart"): string {
+  if (formatStyle === "plain") {
+    return record.key;
+  }
+  if (formatStyle === "account") {
+    if (record.email && record.password) {
+      return `${record.email}:${record.password}:${record.key}`;
+    }
+    if (record.email) {
+      return `${record.email}:${record.key}`;
+    }
+    return record.key;
+  }
+  // "smart" / default: preserve clean rawLine
+  return record.rawLine;
+}
+
+/**
  * Masks an API key for safe terminal display.
  */
 export function maskKey(key: string): string {
@@ -190,11 +285,12 @@ export function maskKey(key: string): string {
 }
 
 /**
- * Deduplicates an array of lines according to specified strategy.
+ * Deduplicates an array of lines according to specified strategy and format style.
  */
 export function dedupeLines(
   rawLines: string[],
   strategy: "smart" | "exact" | "first" = "smart",
+  formatStyle: FormatStyle = "smart",
 ): DedupeStats {
   const cleanLines: string[] = [];
   const duplicateSample: string[] = [];
@@ -208,13 +304,15 @@ export function dedupeLines(
         emptyOrCommentLines++;
         continue;
       }
-      if (seen.has(trimmed)) {
+      const record = parseLineToKeyRecord(trimmed);
+      const outLine = record ? formatKeyRecord(record, formatStyle) : trimmed;
+      if (seen.has(outLine)) {
         if (duplicateSample.length < 5) {
-          duplicateSample.push(trimmed);
+          duplicateSample.push(outLine);
         }
       } else {
-        seen.add(trimmed);
-        cleanLines.push(trimmed);
+        seen.add(outLine);
+        cleanLines.push(outLine);
       }
     }
     return {
@@ -248,12 +346,12 @@ export function dedupeLines(
       // In "smart" mode: if the new record has email/password credentials and the existing one does not,
       // replace the plain key with the richer credentials line!
       if (strategy === "smart" && record.hasCredentials && !existing.record.hasCredentials) {
-        cleanLines[existing.index] = record.rawLine;
         existing.record = record;
+        cleanLines[existing.index] = formatKeyRecord(record, formatStyle);
       }
     } else {
       const index = cleanLines.length;
-      cleanLines.push(record.rawLine);
+      cleanLines.push(formatKeyRecord(record, formatStyle));
       keyMap.set(record.key, { record, index });
     }
   }
@@ -291,7 +389,10 @@ export function discoverAllApiKeyFiles(root = process.cwd()): string[] {
           scanDir(full, depth + 1);
         } else if (st.isFile()) {
           const lower = entry.toLowerCase();
-          if ((lower.includes("apikey") || lower.includes("api-key")) && lower.endsWith(".txt")) {
+          if (
+            (lower.includes("apikey") || lower.includes("api-key") || lower.startsWith("akun-result")) &&
+            lower.endsWith(".txt")
+          ) {
             results.push(rel);
           }
         }
@@ -321,6 +422,7 @@ export function discoverAllApiKeyFiles(root = process.cwd()): string[] {
 export function inspectFileDedupe(
   relPath: string,
   strategy: "smart" | "exact" | "first" = "smart",
+  formatStyle: FormatStyle = "smart",
   root = process.cwd(),
 ): DedupeStats | null {
   const fullPath = resolve(root, relPath);
@@ -329,7 +431,7 @@ export function inspectFileDedupe(
   try {
     const content = readFileSync(fullPath, "utf-8");
     const rawLines = content.split(/\r?\n/);
-    const stats = dedupeLines(rawLines, strategy);
+    const stats = dedupeLines(rawLines, strategy, formatStyle);
     stats.filePath = relPath;
     return stats;
   } catch {
@@ -504,10 +606,29 @@ ${ui.dim("Pembersih dan penghapus duplikat API Key (TokenHarbor, Inferbase, Groq
     },
   ]);
 
-  // 3. Backup confirmation
+  // 3. Select format style
+  const formatStyle = await select<FormatStyle>("Pilih format output penulisan API key:", [
+    {
+      value: "smart",
+      label: "Format Asli Bersih (Smart / Raw - Default)",
+      hint: "pertahankan kredensial email:pass:key jika ada, hapus whitespace & duplikat",
+    },
+    {
+      value: "plain",
+      label: "Hanya Plain Key Murni (Ekstrak Key Saja)",
+      hint: "ekstrak hanya string API key per baris (buang email/pass/json)",
+    },
+    {
+      value: "account",
+      label: "Format Akun Standar (email:password:key / user:key)",
+      hint: "seragamkan baris yang memiliki data akun ke format email:password:key",
+    },
+  ]);
+
+  // 4. Backup confirmation
   const createBak = await confirm("Buat file cadangan backup (.bak) sebelum overwrite?", true);
 
-  // 4. Calculate inspection
+  // 5. Calculate inspection
   console.log(`\n${ui.bold("Ringkasan Analisis Duplikasi:")}`);
   let totalOriginal = 0;
   let totalClean = 0;
@@ -515,7 +636,7 @@ ${ui.dim("Pembersih dan penghapus duplikat API Key (TokenHarbor, Inferbase, Groq
 
   const targetStats: DedupeStats[] = [];
   for (const f of selectedFiles) {
-    const st = inspectFileDedupe(f, strategy);
+    const st = inspectFileDedupe(f, strategy, formatStyle);
     if (st) {
       targetStats.push(st);
       totalOriginal += st.totalLines;
@@ -581,12 +702,20 @@ PENGGUNAAN:
 OPSI:
   --all                     Bersihkan semua file API key di project sekaligus
   -f, --file <path>         Target file tertentu (misal: apikey-inferbase.txt)
-  --inferbase               Target seluruh file Inferbase
+  --inferencedahl, --dahl   Target seluruh file Inference Dahl
   --tokenharbor             Target seluruh file TokenHarbor
+  --llm7io                  Target seluruh file LLM7.io
+  --inferbase               Target seluruh file Inferbase
   --groqcloud               Target seluruh file GroqCloud
   --fastrouter              Target seluruh file FastRouter
-  --llm7io                  Target seluruh file LLM7.io
   --crusoe                  Target seluruh file Crusoe
+  --openrouter              Target seluruh file OpenRouter
+  --composite               Target seluruh file Composite
+  --cbdg                    Target seluruh file CodeBuddy (CBDG)
+  --zromoonmath, --zro      Target seluruh file Zro MoonMath
+  --format <smart|plain|account>  Format penulisan output (Default: smart)
+  --plain                   Hanya ekstrak string plain API key saja (shorthand --format plain)
+  --account                 Format ke format akun (email:pass:key atau user:key)
   --strategy <smart|first|exact>  Strategi deduplikasi (Default: smart)
   --backup                  Buat file cadangan .bak sebelum menimpa (Default)
   --no-backup               Jangan buat file backup
@@ -596,9 +725,10 @@ OPSI:
 CONTOH:
   ${ui.cyan("bun run key-dedupe")}
   ${ui.cyan("bun run scripts/apikey-dedupe.ts --all")}
-  ${ui.cyan("bun run scripts/apikey-dedupe.ts --inferbase")}
-  ${ui.cyan("bun run scripts/apikey-dedupe.ts -f apikey-inferbase.txt")}
-  ${ui.cyan("bun run scripts/apikey-dedupe.ts --tokenharbor --dry-run")}
+  ${ui.cyan("bun run scripts/apikey-dedupe.ts --inferencedahl")}
+  ${ui.cyan("bun run scripts/apikey-dedupe.ts --tokenharbor --plain")}
+  ${ui.cyan("bun run scripts/apikey-dedupe.ts -f apikey-inferbase.txt --strategy smart")}
+  ${ui.cyan("bun run scripts/apikey-dedupe.ts --all --dry-run")}
 `);
 }
 
@@ -617,6 +747,7 @@ async function main() {
   let providerArg: string | null = null;
   let customFile: string | null = null;
   let strategy: "smart" | "exact" | "first" = "smart";
+  let formatStyle: FormatStyle = "smart";
   let backup = true;
   let dryRun = false;
 
@@ -628,12 +759,23 @@ async function main() {
     }
     if (a === "--all") doAll = true;
     else if (a === "-f" || a === "--file") customFile = argv[++i];
-    else if (a === "--inferbase") providerArg = "inferbase";
+    else if (a === "--inferencedahl" || a === "--dahl") providerArg = "inferencedahl";
     else if (a === "--tokenharbor") providerArg = "tokenharbor";
+    else if (a === "--llm7io") providerArg = "llm7io";
+    else if (a === "--inferbase") providerArg = "inferbase";
     else if (a === "--groqcloud") providerArg = "groqcloud";
     else if (a === "--fastrouter") providerArg = "fastrouter";
-    else if (a === "--llm7io") providerArg = "llm7io";
     else if (a === "--crusoe") providerArg = "crusoe";
+    else if (a === "--openrouter") providerArg = "openrouter";
+    else if (a === "--composite") providerArg = "composite";
+    else if (a === "--cbdg") providerArg = "cbdg";
+    else if (a === "--zromoonmath" || a === "--zro") providerArg = "zromoonmath";
+    else if (a === "--format" || a === "--style") {
+      const st = argv[++i]?.toLowerCase();
+      if (st === "plain" || st === "account" || st === "smart") formatStyle = st;
+    }
+    else if (a === "--plain") formatStyle = "plain";
+    else if (a === "--account") formatStyle = "account";
     else if (a === "--strategy" || a === "-s") {
       const s = argv[++i]?.toLowerCase();
       if (s === "smart" || s === "exact" || s === "first") strategy = s;
@@ -666,12 +808,12 @@ async function main() {
     return;
   }
 
-  console.log(`\n${ui.bold("API Key Deduplicator")} (strategy=${strategy}, backup=${backup}, dryRun=${dryRun})`);
+  console.log(`\n${ui.bold("API Key Deduplicator")} (strategy=${strategy}, format=${formatStyle}, backup=${backup}, dryRun=${dryRun})`);
   let totalCleaned = 0;
   let filesModified = 0;
 
   for (const f of filesToProcess) {
-    const st = inspectFileDedupe(f, strategy);
+    const st = inspectFileDedupe(f, strategy, formatStyle);
     if (!st) continue;
 
     if (st.duplicateCount > 0) {

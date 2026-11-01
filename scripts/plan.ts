@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "openrouter" | "composite" | "inferencedahl" | "proxy-check" | "key-checker" | "key-dedupe";
+export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "openrouter" | "composite" | "inferencedahl" | "zromoonmath" | "proxy-check" | "key-checker" | "key-dedupe";
 
 /** Maintenance actions have no accounts, pace or proxy of their own. */
 export const IS_TOOL: Record<AppName, boolean> = {
@@ -19,6 +19,7 @@ export const IS_TOOL: Record<AppName, boolean> = {
   openrouter: false,
   composite: false,
   inferencedahl: false,
+  zromoonmath: false,
   "proxy-check": true,
   "key-checker": true,
   "key-dedupe": true,
@@ -29,7 +30,7 @@ export type CbdgMode = "signup" | "full";
 export type BrowserEngine = "bun" | "python";
 export type GsuiteMode = "create_new_key" | "skip_existing" | "fetch_existing";
 
-export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter", "composite", "inferencedahl"];
+export const ENGINE_CAPABLE: AppName[] = ["fastrouter", "crusoe", "webshare", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter", "composite", "inferencedahl", "zromoonmath"];
 
 export interface RunPlan {
   app: AppName;
@@ -62,6 +63,10 @@ export interface RunPlan {
   proxyDedupe?: boolean;
   proxyDedupeTarget?: string;
   proxyFormatStyle?: "raw" | "url" | "colon";
+  keyDedupeTarget?: string;
+  keyFormatStyle?: "smart" | "plain" | "account";
+  keyDedupeStrategy?: "smart" | "first" | "exact";
+  keyDedupeBackup?: boolean;
   reEnableFree?: boolean;
   reverifyEmail?: boolean;
   accountsFile?: string;
@@ -80,6 +85,7 @@ export const APP_ENTRY: Record<AppName, string> = {
   openrouter: "apps/openrouter/src/cli.ts",
   composite: "apps/composite/src/cli.ts",
   inferencedahl: "apps/inferencedahl/src/cli.ts",
+  zromoonmath: "apps/zromoonmath/src/cli.ts",
   "proxy-check": "scripts/proxy-check.ts",
   "key-checker": "entrim_crusoe_key_checker_cli.ts",
   "key-dedupe": "scripts/apikey-dedupe.ts",
@@ -87,7 +93,7 @@ export const APP_ENTRY: Record<AppName, string> = {
 
 
 /** Apps whose accounts can be spread over the harvested proxies. */
-export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter", "composite", "inferencedahl"];
+export const PROXY_CAPABLE: AppName[] = ["cbdg", "crusoe", "fastrouter", "tokenharbor", "groqcloud", "llm7io", "inferbase", "openrouter", "composite", "inferencedahl", "zromoonmath"];
 
 /**
  * Whether Google's sign-in will bypass the proxy on this run. Defaults on; the
@@ -115,7 +121,31 @@ export function buildArgs(plan: RunPlan): string[] {
   // The checker takes no run-shaping flags: it reads proxy.txt and writes
   // proxy-live.txt with its own defaults. Optional target & append flags can be passed.
   if (IS_TOOL[plan.app]) {
-    if (plan.app === "key-checker" || plan.app === "key-dedupe") return [];
+    if (plan.app === "key-checker") return [];
+    if (plan.app === "key-dedupe") {
+      const toolArgs: string[] = [];
+      if (plan.keyDedupeTarget === "all") {
+        toolArgs.push("--all");
+      } else if (plan.keyDedupeTarget) {
+        if (
+          ["inferencedahl", "dahl", "tokenharbor", "llm7io", "inferbase", "groqcloud", "fastrouter", "crusoe", "openrouter", "composite", "cbdg", "zromoonmath", "zro"].includes(plan.keyDedupeTarget)
+        ) {
+          toolArgs.push(`--${plan.keyDedupeTarget}`);
+        } else {
+          toolArgs.push("-f", plan.keyDedupeTarget);
+        }
+      }
+      if (plan.keyFormatStyle && plan.keyFormatStyle !== "smart") {
+        toolArgs.push("--format", plan.keyFormatStyle);
+      }
+      if (plan.keyDedupeStrategy && plan.keyDedupeStrategy !== "smart") {
+        toolArgs.push("--strategy", plan.keyDedupeStrategy);
+      }
+      if (plan.keyDedupeBackup === false) {
+        toolArgs.push("--no-backup");
+      }
+      return toolArgs;
+    }
     const toolArgs: string[] = [];
     if (plan.proxyDedupe) {
       toolArgs.push("--dedupe");
@@ -262,6 +292,7 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd(), requ
     openrouter: ["akun-result-openrouter.txt", "vps/akun-result-openrouter.txt", "apikey-openrouter.txt", "openrouter-dataset/akun-result-openrouter.txt"],
     composite: ["akun-result-composite.txt", "vps/akun-result-composite.txt", "apikey-composite.txt", "composite_dataset/akun-result-composite.txt"],
     inferencedahl: ["akun-result-inferencedahl.txt", "vps/akun-result-inferencedahl.txt", "apikey-inferencedahl.txt", "inference-dahl-global-dataset/akun-result-inferencedahl.txt"],
+    zromoonmath: ["akun-result-zro.txt", "vps/akun-result-zro.txt", "apikey-zro.txt", "zromoonshotai-dataset/akun-result-zro.txt"],
     "proxy-check": [],
     "key-checker": [],
     "key-dedupe": [],
@@ -279,6 +310,7 @@ export function getCompletedEmailsForApp(app: AppName, cwd = process.cwd(), requ
     openrouter: ["state-openrouter.jsonl", "state.jsonl"],
     composite: ["state-composite.jsonl", "state.jsonl"],
     inferencedahl: ["state-inferencedahl.jsonl", "state.jsonl"],
+    zromoonmath: ["state-zro.jsonl", "state.jsonl"],
     "proxy-check": [],
     "key-checker": [],
     "key-dedupe": [],
@@ -387,6 +419,7 @@ export function warningsFor(plan: RunPlan, seeds: SeedInfo): string[] {
     plan.app === "openrouter" ||
     plan.app === "composite" ||
     plan.app === "inferencedahl" ||
+    plan.app === "zromoonmath" ||
     ((plan.app === "tokenharbor" || plan.app === "fastrouter" || plan.app === "llm7io" || plan.app === "inferbase") && plan.authMethod !== "google");
   if (!isTempMail && !plan.reEnableFree && !plan.reverifyEmail && seeds.accounts === 0) {
     out.push("gsuite.txt kosong — tidak ada akun untuk diproses.");
