@@ -47,6 +47,7 @@ async function askPlan(): Promise<RunPlan> {
   const app = await select<AppName>("Mau jalankan yang mana?", [
     { value: "webshare", label: "webshare", hint: "daftar via Google → panen proxy gratis ke proxy.txt" },
     { value: "proxy-check", label: "cek proxy", hint: "proxy.txt → uji hidup/mati / format & dedupe unik" },
+    { value: "warp", label: "cloudflare warp", hint: "status, on/off, dan TUI switch/ganti IP WARP" },
     { value: "key-checker", label: "cek apikey", hint: "uji status valid / kuota / rate limit API key berbagai provider" },
     { value: "key-dedupe", label: "format & dedupe apikey", hint: "bersihkan duplikat / format ulang (plain/akun) API key semua provider" },
     { value: "crusoe", label: "crusoe", hint: "daftar Crusoe → bonus $5 + API key ke apikey.txt" },
@@ -64,6 +65,17 @@ async function askPlan(): Promise<RunPlan> {
   ]);
 
   if (IS_TOOL[app]) {
+    if (app === "warp") {
+      return {
+        app,
+        pace: "human",
+        headless: false,
+        retryFailed: false,
+        dryRun: false,
+        delaySec: 0,
+        workers: 1,
+      };
+    }
     if (app === "key-dedupe") {
       const dedupeAction = await select<"dedupe" | "interactive">("Pilih aksi untuk pembersih API key:", [
         {

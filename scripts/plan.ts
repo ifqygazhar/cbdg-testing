@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "openrouter" | "composite" | "inferencedahl" | "zromoonmath" | "gpt" | "proxy-check" | "key-checker" | "key-dedupe";
+export type AppName = "cbdg" | "crusoe" | "webshare" | "fastrouter" | "tokenharbor" | "groqcloud" | "llm7io" | "inferbase" | "openrouter" | "composite" | "inferencedahl" | "zromoonmath" | "gpt" | "proxy-check" | "key-checker" | "key-dedupe" | "warp";
 
 /** Maintenance actions have no accounts, pace or proxy of their own. */
 export const IS_TOOL: Record<AppName, boolean> = {
@@ -24,6 +24,7 @@ export const IS_TOOL: Record<AppName, boolean> = {
   "proxy-check": true,
   "key-checker": true,
   "key-dedupe": true,
+  warp: true,
 };
 
 export type Pace = "fast" | "human" | "careful";
@@ -91,6 +92,7 @@ export const APP_ENTRY: Record<AppName, string> = {
   "proxy-check": "scripts/proxy-check.ts",
   "key-checker": "entrim_crusoe_key_checker_cli.ts",
   "key-dedupe": "scripts/apikey-dedupe.ts",
+  warp: "scripts/warp.ts",
 };
 
 
@@ -123,6 +125,7 @@ export function buildArgs(plan: RunPlan): string[] {
   // The checker takes no run-shaping flags: it reads proxy.txt and writes
   // proxy-live.txt with its own defaults. Optional target & append flags can be passed.
   if (IS_TOOL[plan.app]) {
+    if (plan.app === "warp") return [];
     if (plan.app === "key-checker") return [];
     if (plan.app === "key-dedupe") {
       const toolArgs: string[] = [];
