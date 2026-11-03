@@ -93,3 +93,7 @@ screenshots-zro/
 apikey-zro.txt
 apikey-tokenharbor2.txt
 submitapikey-cf.js
+state-gpt.jsonl
+akun-gpt.txt
+akun-gpt-failed.txt
+screenshots-gpt/

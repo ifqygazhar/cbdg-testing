@@ -158,13 +158,26 @@ export class TempMailClient {
    */
   async waitForVerificationOtp(
     address: string,
-    opts: {
-      timeoutMs?: number;
-      intervalMs?: number;
-      filterSender?: string;
-      codeRegex?: RegExp;
-    } = {},
+    optsOrTimeout:
+      | number
+      | {
+          timeoutMs?: number;
+          intervalMs?: number;
+          filterSender?: string;
+          codeRegex?: RegExp;
+        } = {},
+    legacyInterval?: number,
+    legacyFilterSender?: string,
   ): Promise<string> {
+    const opts =
+      typeof optsOrTimeout === "number"
+        ? {
+            timeoutMs: optsOrTimeout > 1000 ? optsOrTimeout : optsOrTimeout * 1000,
+            intervalMs: legacyInterval ? (legacyInterval > 1000 ? legacyInterval : legacyInterval * 1000) : 3000,
+            filterSender: legacyFilterSender,
+          }
+        : optsOrTimeout;
+
     const timeoutMs = opts.timeoutMs ?? 75000;
     const intervalMs = opts.intervalMs ?? 3000;
     const filterSender = (opts.filterSender ?? "").toLowerCase();
@@ -179,23 +192,24 @@ export class TempMailClient {
           if (senderMatches) {
             const body = `${mail.subject ?? ""} ${mail["content-plain"] ?? ""} ${mail["content-html"] ?? ""}`;
             // 1. Try matching bold 6 digits inside <b> tags in html (e.g. Clerk / FastRouter templates)
-            const mBold = body.match(/<b>\s*(\d{6})\s*<\/b>/);
+            const mBold = body.match(/<(?:b|strong|span|div)[^>]*>\s*(\d{6})\s*<\/(?:b|strong|span|div)>/i);
             if (mBold && mBold[1]) return mBold[1];
 
-            // 2. Strip HTML tags to avoid false positives with CSS hex colors (#111827, #000000)
+            // 2. Strip HTML tags and collapse whitespace to avoid false positives and distance issues
             const cleanText = body.replace(/<[^>]+>/g, " ");
-            const mPrompt = cleanText.match(/(?:verification code|enter the following|code when prompted)[\s\S]{0,100}?(\d{6})/i);
+            const normText = cleanText.replace(/\s+/g, " ");
+            const mPrompt = normText.match(/(?:verification code|temporary verification code|code to continue|enter this temporary|enter the following|code when prompted)[\s\S]{0,400}?(\d{6})/i);
             if (mPrompt && mPrompt[1]) return mPrompt[1];
 
             // 3. Match explicit codeRegex or standalone 6-digit number
             if (opts.codeRegex) {
-              const mCustom = cleanText.match(opts.codeRegex);
+              const mCustom = normText.match(opts.codeRegex) || cleanText.match(opts.codeRegex);
               if (mCustom) {
                 const code = mCustom[1] || mCustom[0];
                 if (/^\d{6}$/.test(code)) return code;
               }
             } else {
-              const mAny = cleanText.match(/\b(\d{6})\b/);
+              const mAny = normText.match(/\b(\d{6})\b/);
               if (mAny && mAny[1]) return mAny[1];
             }
           }

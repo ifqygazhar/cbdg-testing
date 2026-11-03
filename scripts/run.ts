@@ -60,6 +60,7 @@ async function askPlan(): Promise<RunPlan> {
     { value: "composite", label: "composite", hint: "daftar Composite Lucidity (TempMail + Turnstile) → API key ke apikey-composite.txt" },
     { value: "inferencedahl", label: "inferencedahl", hint: "daftar Inference Dahl Global (Auto Username + Allocate 100M) → API key ke apikey-inferencedahl.txt" },
     { value: "zromoonmath", label: "zromoonmath", hint: "daftar Zro MoonMath (TempMail / Google OAuth) → API key ke apikey-zro.txt" },
+    { value: "gpt", label: "ChatGPT (gpt)", hint: "daftar ChatGPT (TempMail + OTP) → akun-gpt.txt" },
   ]);
 
   if (IS_TOOL[app]) {
@@ -256,7 +257,7 @@ async function askPlan(): Promise<RunPlan> {
         label: "Bun (Puppeteer / Chromium)",
         hint: "Engine Chromium bawaan",
       },
-    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" || app === "openrouter" || app === "composite" || app === "inferencedahl" || app === "zromoonmath" ? 0 : 1);
+    ], app === "fastrouter" || app === "tokenharbor" || app === "groqcloud" || app === "llm7io" || app === "webshare" || app === "inferbase" || app === "openrouter" || app === "composite" || app === "inferencedahl" || app === "zromoonmath" || app === "gpt" ? 0 : 1);
   }
 
   let useProxy: boolean | undefined;
@@ -357,9 +358,9 @@ async function askPlan(): Promise<RunPlan> {
   let authMethod: "google" | "tempmail" | undefined;
   if (app === "composite") {
     authMethod = "tempmail";
-  } else if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath")) {
+  } else if (!reEnableFree && !reverifyEmail && (app === "fastrouter" || app === "tokenharbor" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath" || app === "gpt")) {
     authMethod = await select<"tempmail" | "google">(
-      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : app === "inferbase" ? "Inferbase" : app === "openrouter" ? "OpenRouter" : app === "zromoonmath" ? "Zro MoonMath" : "FastRouter"}?`,
+      `Metode pendaftaran ${app === "tokenharbor" ? "TokenHarbor" : app === "llm7io" ? "LLM7.io" : app === "inferbase" ? "Inferbase" : app === "openrouter" ? "OpenRouter" : app === "zromoonmath" ? "Zro MoonMath" : app === "gpt" ? "ChatGPT" : "FastRouter"}?`,
       [
         {
           value: "google",
@@ -372,7 +373,7 @@ async function askPlan(): Promise<RunPlan> {
           hint: "otomatis buat email & verif link / OTP",
         },
       ],
-      app === "inferbase" || app === "openrouter" || app === "zromoonmath" ? 1 : (seeds.accounts > 0 ? 0 : 1),
+      app === "inferbase" || app === "openrouter" || app === "zromoonmath" || app === "gpt" ? 1 : (seeds.accounts > 0 ? 0 : 1),
     );
   }
 
@@ -435,7 +436,7 @@ async function askPlan(): Promise<RunPlan> {
       defaultLimit,
       " akun",
     );
-  } else if (app === "groqcloud" || app === "composite" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath") && authMethod === "tempmail")) {
+  } else if (app === "groqcloud" || app === "composite" || ((app === "tokenharbor" || app === "fastrouter" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath" || app === "gpt") && authMethod === "tempmail")) {
     domain = await select<string>(
       app === "llm7io"
         ? "Domain TempMail? (Catatan: LLM7.io memblokir ifqy.net, meongtopup.my.id, huzt.my.id)"
@@ -463,7 +464,7 @@ async function askPlan(): Promise<RunPlan> {
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
   } else if (app === "inferencedahl") {
     limit = await askNumber("Berapa banyak akun yang ingin dibuat?", 5, " akun");
-  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
+  } else if ((app === "tokenharbor" || app === "fastrouter" || app === "cbdg" || app === "crusoe" || app === "llm7io" || app === "inferbase" || app === "openrouter" || app === "zromoonmath" || app === "gpt") && (authMethod === "google" || app === "cbdg" || app === "crusoe")) {
     const requireKey = app === "tokenharbor" && (gsuiteMode === "fetch_existing" || gsuiteMode === "create_new_key");
     const rem = getRemainingAccountsForApp(app, undefined, requireKey);
     if (rem.completed > 0) {

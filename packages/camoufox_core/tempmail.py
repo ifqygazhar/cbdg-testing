@@ -119,13 +119,14 @@ class TempMailClient:
 
     def create_email(self, domain: Optional[str] = None, username: Optional[str] = None) -> Dict[str, Any]:
         """Creates a new temporary email address."""
-        target_domain = (domain or self.default_domain).lower().strip()
+        target_domain = (domain or self.default_domain or "ifqy.net").lower().strip().lstrip("@")
         if target_domain.startswith("temp."):
             target_domain = target_domain[5:]
         if "://" in target_domain:
             target_domain = target_domain.split("://")[1].split("/")[0]
             if target_domain.startswith("temp."):
                 target_domain = target_domain[5:]
+        target_domain = target_domain.lstrip("@").strip()
 
         payload: Dict[str, str] = {"domain": target_domain}
         if username:
@@ -227,32 +228,42 @@ class TempMailClient:
                         subject = mail.get("subject", "").lower()
                         if not filter_sender_lower or (filter_sender_lower in sender or filter_sender_lower in subject):
                             body = f"{mail.get('subject', '')} {mail.get('content-plain', '')} {mail.get('content-html', '')}"
+                            import html
+                            unescaped = html.unescape(body)
+
                             # 1. Match bold 6 digits in html
-                            m_bold = re.search(r"<b>\s*(\d{6})\s*</b>", body)
+                            m_bold = re.search(r"<(?:b|strong|span|div)[^>]*>\s*(\d{6})\s*</(?:b|strong|span|div)>", unescaped, re.I)
                             if m_bold:
                                 return m_bold.group(1)
 
-                            # 2. Strip HTML tags to avoid false positives with CSS hex colors (#111827, #000000)
-                            clean_text = re.sub(r"<[^>]+>", " ", body)
+                            # 2. Strip HTML tags and collapse whitespace to avoid large gap timeouts
+                            clean_text = re.sub(r"<[^>]+>", " ", unescaped)
+                            norm_text = re.sub(r"\s+", " ", clean_text)
                             m_prompt = re.search(
-                                r"(?:verification code|enter the following|code when prompted)[\s\S]{0,100}?(\d{6})",
-                                clean_text,
+                                r"(?:verification code|enter the following|code when prompted|code to continue|enter this temporary)[\s\S]{0,400}?(\d{6})",
+                                norm_text,
                                 re.I,
                             )
                             if m_prompt:
                                 return m_prompt.group(1)
 
-                            # 3. Match explicit code_pattern or standalone 6 digits
+                            # 3. Match explicit code_pattern on both normalized and clean text
                             if code_pattern:
-                                m_custom = code_pattern.search(clean_text)
+                                m_custom = code_pattern.search(norm_text) or code_pattern.search(clean_text)
                                 if m_custom:
                                     code = m_custom.group(1) if m_custom.groups() else m_custom.group(0)
                                     if re.match(r"^\d{6}$", code):
                                         return code
-                            else:
-                                m_any = re.search(r"\b(\d{6})\b", clean_text)
-                                if m_any:
-                                    return m_any.group(1)
+
+                            # 4. Standalone 6-digit line in plain text
+                            m_line = re.search(r"^\s*(\d{6})\s*$", mail.get("content-plain", ""), re.M)
+                            if m_line:
+                                return m_line.group(1)
+
+                            # 5. Fallback 6 digits
+                            m_any = re.search(r"\b(\d{6})\b", norm_text)
+                            if m_any:
+                                return m_any.group(1)
             except Exception as e:
                 if logger and (asyncio.get_event_loop().time() - last_log_time >= 15):
                     logger.warning(f"⚠️ TempMail get_inbox error for {clean_address}: {e}")
