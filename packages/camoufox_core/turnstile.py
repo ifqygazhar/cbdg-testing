@@ -452,45 +452,58 @@ async def is_turnstile_solved(page: Page) -> bool:
         if "accounts.google.com" in url or "/sign-up/continue" in url or "/welcome" in url:
             return True
         val = await page.evaluate("""() => {
-            const inp = document.querySelector('input[name="cf-turnstile-response"], [name="cf-turnstile-response"]');
-            return inp ? inp.value : '';
+            const dialog = document.querySelector('[role="dialog"]');
+            if (dialog) {
+                const inps = dialog.querySelectorAll('input[name="cf-turnstile-response"], [name="cf-turnstile-response"]');
+                for (const inp of inps) {
+                    if (inp && inp.value && inp.value.length > 10) return inp.value;
+                }
+            }
+            const inps = document.querySelectorAll('input[name="cf-turnstile-response"], [name="cf-turnstile-response"]');
+            for (const inp of inps) {
+                if (inp && inp.value && inp.value.length > 10) return inp.value;
+            }
+            return '';
         }""")
         return bool(val and len(val) > 10)
     except Exception:
         return False
 
 async def dismiss_turnstile_modal(page: Page, logger: Optional[Logger] = None) -> bool:
-    """Closes Cloudflare Turnstile error/troubleshooting popup modal if present."""
+    """Closes Cloudflare Turnstile error/troubleshooting popup modal if present within challenge frames."""
     dismissed = False
-    try:
-        await page.keyboard.press("Escape")
-    except Exception:
-        pass
 
+    # 1. Check within challenge frames (challenges.cloudflare.com)
     try:
         for f in page.frames:
-            try:
-                res = await f.evaluate("""() => {
-                    const closeBtns = document.querySelectorAll('button[aria-label*="close" i], button[aria-label*="關閉" i], [role="dialog"] button, button.close, svg[aria-label*="close" i]');
-                    for (const b of closeBtns) {
-                        b.click();
-                        return true;
-                    }
-                    return false;
-                }""")
-                if res:
-                    dismissed = True
-            except Exception:
-                pass
+            url = f.url or ""
+            if "challenges.cloudflare.com" in url or "turnstile" in url:
+                try:
+                    res = await f.evaluate("""() => {
+                        const closeBtns = document.querySelectorAll('button[aria-label*="close" i], button[aria-label*="關閉" i], button.close, svg[aria-label*="close" i]');
+                        for (const b of closeBtns) {
+                            b.click();
+                            return true;
+                        }
+                        return false;
+                    }""")
+                    if res:
+                        dismissed = True
+                except Exception:
+                    pass
     except Exception:
         pass
 
+    # 2. Check main page ONLY for Cloudflare-specific challenge popup containers, NEVER application modals
     try:
         res = await page.evaluate("""() => {
-            const closeBtns = document.querySelectorAll('button[aria-label*="close" i], button[aria-label*="關閉" i], [role="dialog"] button, button.close');
-            for (const b of closeBtns) {
-                b.click();
-                return true;
+            const cfModals = document.querySelectorAll('.cf-turnstile-popup, [id*="cf-stage"] [role="dialog"], [data-ray-id]');
+            for (const m of cfModals) {
+                const btn = m.querySelector('button[aria-label*="close" i], button.close');
+                if (btn) {
+                    btn.click();
+                    return true;
+                }
             }
             return false;
         }""")

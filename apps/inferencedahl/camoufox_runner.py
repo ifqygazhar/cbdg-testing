@@ -45,6 +45,8 @@ from packages.camoufox_core import (
     Logger,
     resolve_turnstile_if_present,
     setup_turnstile_interceptor,
+    find_turnstile_target,
+    is_turnstile_failed,
     TurnstileFailedException,
 )
 
@@ -343,19 +345,26 @@ async def setup_dahl_credential_hooks(page: Page) -> Dict[str, Any]:
     async def handle_response(response):
         try:
             url = response.url
-            if "/v1/auth/signup" in url and response.request.method == "POST" and response.status == 200:
-                data = await response.json()
-                fp = data.get("fingerprint") or ""
-                if FINGERPRINT_RE.search(fp):
-                    captured["fingerprint"] = FINGERPRINT_RE.search(fp).group(0)
-                api_obj = data.get("api_key") or {}
-                tok = api_obj.get("token") if isinstance(api_obj, dict) else (data.get("apiKey") or data.get("token") or "")
-                clean_k = extract_clean_dahl_key(tok)
-                if clean_k:
-                    captured["api_key"] = clean_k
-                user_obj = data.get("user") or {}
-                if isinstance(user_obj, dict) and user_obj.get("username"):
-                    captured["username"] = user_obj.get("username")
+            if "/v1/auth/signup" in url and response.request.method == "POST":
+                if response.status in (200, 201):
+                    data = await response.json()
+                    fp = data.get("fingerprint") or ""
+                    if FINGERPRINT_RE.search(fp):
+                        captured["fingerprint"] = FINGERPRINT_RE.search(fp).group(0)
+                    api_obj = data.get("api_key") or {}
+                    tok = api_obj.get("token") if isinstance(api_obj, dict) else (data.get("apiKey") or data.get("token") or "")
+                    clean_k = extract_clean_dahl_key(tok)
+                    if clean_k:
+                        captured["api_key"] = clean_k
+                    user_obj = data.get("user") or {}
+                    if isinstance(user_obj, dict) and user_obj.get("username"):
+                        captured["username"] = user_obj.get("username")
+                else:
+                    try:
+                        err_text = await response.text()
+                        captured["last_signup_error"] = f"HTTP {response.status}: {err_text[:200]}"
+                    except Exception:
+                        captured["last_signup_error"] = f"HTTP {response.status}"
             elif "/v1/account/keys" in url and response.status == 200:
                 data = await response.json()
                 keys_list = data.get("keys") if isinstance(data.get("keys"), list) else ([data.get("key")] if data.get("key") else [])
@@ -567,8 +576,8 @@ async def run_inferencedahl_single(
             await page.goto(DEFAULT_LANDING_URL, wait_until="domcontentloaded", timeout=40000)
             await human_delay(1200, 2200, pace=args.pace)
 
-            # Check if Turnstile is present on landing
-            await resolve_turnstile_if_present(page, timeout_sec=15, logger=logger)
+            # Check if Turnstile is present on landing (short check)
+            await resolve_turnstile_if_present(page, timeout_sec=6, logger=logger)
 
             # Open SIGN IN modal if not already open
             dialog = page.locator('[role="dialog"]')
@@ -625,67 +634,131 @@ async def run_inferencedahl_single(
 
                 await human_delay(600, 1100, pace=args.pace)
 
-            # Wait for auto-generated username input (#signup-username) and click it to enable submit button
+            # Wait for auto-generated username input (#signup-username)
             await username_input.first.wait_for(state="visible", timeout=15000)
-            username_val = ""
+            username_val = (await username_input.first.input_value() or "").strip()
 
-            for attempt in range(1, 6):
-                logger.info(f"clicking auto-generated username field (#signup-username) [attempt {attempt}]...")
-                await username_input.first.click()
-                await page.evaluate("""() => {
-                    const inp = document.querySelector('input#signup-username');
-                    if (inp) {
-                        inp.focus();
-                        inp.dispatchEvent(new Event('input', { bubbles: true }));
-                        inp.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
+            # Ensure field has focus and change event fired
+            await page.evaluate("""() => {
+                const inp = document.querySelector('input#signup-username');
+                if (inp) {
+                    inp.focus();
+                    inp.dispatchEvent(new Event('input', { bubbles: true }));
+                    inp.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }""")
+
+            # Modal verification loop:
+            # - Wait for username availability (/v1/auth/check-username)
+            # - Wait for & resolve Cloudflare Turnstile inside signup dialog (<Pt action="signup" siteKey="0x4AAAAAAFo5t2cRvAgWO-5T" />)
+            # - Do NOT click Regenerate while Turnstile is "Checking your browser..." (which resets Turnstile state)
+            btn_enabled = False
+            t_modal_start = time.time()
+            regen_count = 0
+            last_turnstile_check = 0.0
+
+            while time.time() - t_modal_start < 45.0:
+                state = await page.evaluate("""() => {
+                    const dialog = document.querySelector('[role="dialog"]');
+                    if (!dialog) return { exists: false, enabled: false };
+                    const btn = dialog.querySelector('form button[type="submit"]');
+                    const inp = dialog.querySelector('input#signup-username');
+                    const isDis = !btn || btn.disabled || btn.hasAttribute('disabled') || btn.classList.contains('pointer-events-none');
+                    const btnText = btn ? (btn.textContent || '').trim() : '';
+                    
+                    const tInp = dialog.querySelector('input[name="cf-turnstile-response"]');
+                    const tVal = tInp ? (tInp.value || '').trim() : '';
+                    const turnstileSolved = tVal.length > 10;
+                    
+                    const isBrowserChecking = /checking your browser|browser checking|проверка браузера/i.test(btnText);
+                    const dialogText = (dialog.textContent || '').toLowerCase();
+                    const isTaken = dialogText.includes('taken') || dialogText.includes('already in use') || dialogText.includes('занято');
+                    
+                    return {
+                        exists: !!btn,
+                        enabled: !isDis,
+                        btnText,
+                        turnstileSolved,
+                        isBrowserChecking,
+                        isTaken,
+                        username: inp ? inp.value.trim() : ''
+                    };
                 }""")
-                await human_delay(500, 900, pace=args.pace)
 
-                # Wait up to 5s for username availability check to complete and 'Create account' submit button to enable
-                t_wait = time.time()
-                btn_enabled = False
-                while time.time() - t_wait < 5.0:
-                    username_val = (await username_input.first.input_value() or "").strip()
-                    btn_state = await page.evaluate("""() => {
-                        const btn = document.querySelector('[role="dialog"] form button[type="submit"]');
-                        if (!btn) return { exists: false, enabled: false };
-                        const isDis = btn.disabled || btn.hasAttribute('disabled') || btn.classList.contains('pointer-events-none');
-                        return { exists: true, enabled: !isDis };
-                    }""")
+                if not state.get("exists"):
+                    await asyncio.sleep(0.5)
+                    continue
 
-                    if username_val and btn_state.get("enabled"):
-                        btn_enabled = True
-                        break
+                username_val = state.get("username") or username_val
 
-                    dialog_txt = await page.locator('[role="dialog"]').first.text_content() or ""
-                    if "taken" in dialog_txt.lower() or "already" in dialog_txt.lower():
-                        break
-                    await asyncio.sleep(0.3)
-
-                if btn_enabled:
+                if state.get("enabled"):
+                    btn_enabled = True
+                    logger.info(f"✅ 'Create account' button ready & enabled (username: '{username_val}')")
                     break
 
-                logger.info(f"username '{username_val}' not yet enabled/available, clicking Regenerate...")
-                regen_btn = page.locator('[role="dialog"] button[aria-label="Regenerate"]').first
-                if await regen_btn.count() > 0 and await regen_btn.is_visible():
-                    await regen_btn.click()
-                    await human_delay(600, 1000, pace=args.pace)
+                # If IP was flagged/failed by Turnstile
+                if await is_turnstile_failed(page):
+                    logger.warn("❌ Turnstile explicitly reported verification failure (blocked/flagged IP).")
+                    raise TurnstileFailedException("Cloudflare Turnstile Verification failed (dirty/flagged IP)")
+
+                # If username is taken, click Regenerate
+                if state.get("isTaken"):
+                    if regen_count < 5:
+                        regen_count += 1
+                        logger.info(f"username '{username_val}' is taken, clicking Regenerate [#{regen_count}]...")
+                        regen_btn = page.locator('[role="dialog"] button[aria-label="Regenerate"]').first
+                        if await regen_btn.count() > 0 and await regen_btn.is_visible():
+                            await regen_btn.click()
+                            await human_delay(600, 1100, pace=args.pace)
+                    else:
+                        raise RuntimeError(f"Username remained unavailable/taken after {regen_count} regenerate attempts.")
+                    continue
+
+                # If Turnstile is pending ("Checking your browser..." or token empty)
+                if state.get("isBrowserChecking") or not state.get("turnstileSolved"):
+                    now = time.time()
+                    if now - last_turnstile_check > 3.0:
+                        last_turnstile_check = now
+                        target = await find_turnstile_target(page)
+                        if target:
+                            logger.info(f"[turnstile] Interactive challenge detected in dialog via {target.get('source')}! Resolving...")
+                            await resolve_turnstile_if_present(page, timeout_sec=8, logger=logger)
+                        else:
+                            logger.info(f"⏳ Waiting for Turnstile verification (btn: '{state.get('btnText')}') [elapsed: {now-t_modal_start:.1f}s]...")
+
+                await asyncio.sleep(0.8)
+
+            if not btn_enabled:
+                if state.get("isBrowserChecking") or not state.get("turnstileSolved"):
+                    raise RuntimeError(f"Turnstile verification timed out in signup modal (button stayed '{state.get('btnText')}'). IP may be flagged or rate-limited by Cloudflare.")
+                raise RuntimeError(f"Signup submit button remained disabled (username='{username_val}', btn='{state.get('btnText')}').")
 
             logger.info(f"submitting 'Create account' with auto-generated username: {username_val}")
             submit_btn = page.locator('[role="dialog"] form button[type="submit"]:not([disabled])').first
             try:
-                await submit_btn.wait_for(state="visible", timeout=10000)
+                await submit_btn.wait_for(state="visible", timeout=8000)
                 await submit_btn.click()
             except Exception:
                 await page.evaluate("""() => {
                     const btn = document.querySelector('[role="dialog"] form button[type="submit"]');
-                    if (btn) btn.click();
+                    if (btn && !btn.disabled) btn.click();
                 }""")
 
             # Wait for 'Save your fingerprint' modal
             logger.info("waiting for 'Save your fingerprint' modal...")
             save_fp_heading = page.locator('[role="dialog"] h2:has-text("Save your fingerprint")').first
+            try:
+                await save_fp_heading.wait_for(state="visible", timeout=25000)
+            except Exception as e:
+                err_txt = await page.evaluate("""() => {
+                    const dialog = document.querySelector('[role="dialog"]') || document.body;
+                    const errEls = dialog.querySelectorAll('[role="alert"], .text-red-500, p[aria-live="polite"]');
+                    return Array.from(errEls).map(el => (el.textContent || '').trim()).filter(Boolean).join('; ');
+                }""")
+                last_err = captured.get("last_signup_error", "")
+                ss_path = os.path.join(screenshot_dir, f"signup-fail-{int(time.time())}.png")
+                await page.screenshot(path=ss_path)
+                raise RuntimeError(f"Failed to reach fingerprint modal. UI error: '{err_txt}' | API error: '{last_err}' | Screenshot: {ss_path}") from e
             await save_fp_heading.wait_for(state="visible", timeout=20000)
             await human_delay(600, 1200, pace=args.pace)
 
